@@ -66,8 +66,27 @@ class testPAW(unittest.TestCase):
         mydf = PAW.from_mf(mf_mol_rhf_paw, cell).build()
         mf_mol_rhf_paw.with_df = mydf
         
-        # TODO: initial energy is wrong already, check energy exp, dm etc..
-        # TODO: why does the first iteration take so long, ewald components??
+        mf_mol_rhf_paw.kernel()
+        e_occri = mf_mol_rhf_paw.e_tot/cell.natm
+
+        # Check convergence and energy agreement
+        self.assertTrue(mf_mol_rhf_paw.converged)
+        self.assertAlmostEqual(e_ref, e_occri, places=3)
+
+    def test_molecular_dft(self):
+        """Test RHF at gamma point against FFTDF reference"""
+        # Reference molecular calculation
+        mf_mol_rhf = scf.RKS(mol)
+        mf_mol_rhf.init_guess = init_guess
+        mf_mol_rhf.kernel()
+        e_ref = mf_mol_rhf.e_tot/cell.natm
+
+        # OCCRI calculation
+        mf_mol_rhf_paw = scf.RKS(mol).density_fit()
+        mf_mol_rhf_paw.init_guess = init_guess
+        mydf = PAW.from_mf(mf_mol_rhf_paw, cell).build()
+        mf_mol_rhf_paw.with_df = mydf
+        
         mf_mol_rhf_paw.kernel()
         e_occri = mf_mol_rhf_paw.e_tot/cell.natm
 
