@@ -1,15 +1,17 @@
-import jax.numpy as jnp
-import numpy as np
-from pyscf import gto, df
-from jax import vmap, jit, lax
-import jax
-from . import ClebschGordan
-import jax.scipy as jsp
-import pyscf
-from pyscf.pbc import gto as pgto
+import numpy
+import scipy
 
 import jax
+import jax.numpy as jnp
+from jax import vmap, jit, lax
+import jax.scipy as jsp
 jax.config.update("jax_enable_x64",True)
+
+import pyscf
+from pyscf import gto, lib
+from pyscf.pbc import gto as pgto
+
+from . import ClebschGordan
 
 
 def prepareMolForPAW(mol):
@@ -41,33 +43,33 @@ def getAtomsL(bas, env, cart=False):
     l, atmId, nexp = bas[:,1], bas[:,0], bas[:,3]
 
     if not cart :
-        L     = np.concatenate([(2*l[i]+1)*[l[i]]*nexp[i] for i in range(len(l))])
-        M     = np.concatenate([[1,-1,0]*nexp[i] if l[i] == 1 else list(range(-l[i],l[i]+1))*nexp[i] for i in range(len(l)) ])
-        atoms = np.concatenate([(2*l[i]+1)*[atmId[i]]*nexp[i] for i in range(len(l))])
+        L     = numpy.concatenate([(2*l[i]+1)*[l[i]]*nexp[i] for i in range(len(l))])
+        M     = numpy.concatenate([[1,-1,0]*nexp[i] if l[i] == 1 else list(range(-l[i],l[i]+1))*nexp[i] for i in range(len(l)) ])
+        atoms = numpy.concatenate([(2*l[i]+1)*[atmId[i]]*nexp[i] for i in range(len(l))])
     else :
-        L     = np.concatenate([(l[i]+1)*(l[i]+2)//2*[l[i]]*nexp[i] for i in range(len(l))])
-        M     = np.concatenate([[1,2,3]*nexp[i] if l[i] == 1 else list(range(tillL(l[i]-1),tillL(l[i]-1)+(l[i]+1)*(l[i]+2)//2))*nexp[i] for i in range(len(l)) ])
-        atoms = np.concatenate([(l[i]+1)*(l[i]+2)//2*[atmId[i]]*nexp[i] for i in range(len(l))])
+        L     = numpy.concatenate([(l[i]+1)*(l[i]+2)//2*[l[i]]*nexp[i] for i in range(len(l))])
+        M     = numpy.concatenate([[1,2,3]*nexp[i] if l[i] == 1 else list(range(tillL(l[i]-1),tillL(l[i]-1)+(l[i]+1)*(l[i]+2)//2))*nexp[i] for i in range(len(l)) ])
+        atoms = numpy.concatenate([(l[i]+1)*(l[i]+2)//2*[atmId[i]]*nexp[i] for i in range(len(l))])
     return atoms, L, M
 
 def getAlphaAtomsL(bas, env, cart=False):
     # should only use for primitive basis!!
-    assert(len(np.unique(bas[:, 2])) == 1)
-    assert(np.unique(bas[:, 2])[0] == 1)
+    assert(len(numpy.unique(bas[:, 2])) == 1)
+    assert(numpy.unique(bas[:, 2])[0] == 1)
     l, atmId = bas[:,1], bas[:,0]
-    # alpha    = np.concatenate([env[bas[i,5]:bas[i,6]] for i in range(bas.shape[0])])
-    alpha    = np.concatenate([env[bas[i,5]:bas[i,5]+1] for i in range(bas.shape[0])])
+    # alpha    = numpy.concatenate([env[bas[i,5]:bas[i,6]] for i in range(bas.shape[0])])
+    alpha    = numpy.concatenate([env[bas[i,5]:bas[i,5]+1] for i in range(bas.shape[0])])
 
     if not cart :
-        alpha = np.concatenate([(2*li+1)*[a] for li,a in zip(l, alpha)])
-        L     = np.concatenate([(2*li+1)*[li] for li,a in zip(l, alpha)])
-        M     = np.concatenate([[1,-1,0] if li == 1 else list(range(-li,li+1)) for li,a in zip(l, alpha) ])
-        atoms = np.concatenate([(2*li+1)*[a] for li,a in zip(l, atmId)])
+        alpha = numpy.concatenate([(2*li+1)*[a] for li,a in zip(l, alpha)])
+        L     = numpy.concatenate([(2*li+1)*[li] for li,a in zip(l, alpha)])
+        M     = numpy.concatenate([[1,-1,0] if li == 1 else list(range(-li,li+1)) for li,a in zip(l, alpha) ])
+        atoms = numpy.concatenate([(2*li+1)*[a] for li,a in zip(l, atmId)])
     else :
-        alpha = np.concatenate([(li+1)*(li+2)//2*[a] for li,a in zip(l, alpha)])
-        L     = np.concatenate([(li+1)*(li+2)//2*[li] for li,a in zip(l, alpha)])
-        M     = np.concatenate([[1,2,3] if li == 1 else list(range(tillL(li-1),tillL(li-1)+(li+1)*(li+2)//2)) for li,a in zip(l, alpha) ])
-        atoms = np.concatenate([(li+1)*(li+2)//2*[a] for li,a in zip(l, atmId)])
+        alpha = numpy.concatenate([(li+1)*(li+2)//2*[a] for li,a in zip(l, alpha)])
+        L     = numpy.concatenate([(li+1)*(li+2)//2*[li] for li,a in zip(l, alpha)])
+        M     = numpy.concatenate([[1,2,3] if li == 1 else list(range(tillL(li-1),tillL(li-1)+(li+1)*(li+2)//2)) for li,a in zip(l, alpha) ])
+        atoms = numpy.concatenate([(li+1)*(li+2)//2*[a] for li,a in zip(l, atmId)])
 
     return alpha, atoms, L, M
 
@@ -105,7 +107,7 @@ def compensatingCharge(mol, alpha0, Rgrid, epsilon, Periodic = False):
     for atomI in range(mol._atm.shape[0]):
         idx  = (atoms==atomI)
         idxg = (atomsG==atomI)
-        lmax = np.max(L[idx])
+        lmax = numpy.max(L[idx])
         gIdx.append(idxg)
 
         @jit
@@ -117,7 +119,7 @@ def compensatingCharge(mol, alpha0, Rgrid, epsilon, Periodic = False):
         M_PQL = vmap(vmap(vmap(getmpql, (None,None,None,None,0,0,None,None,0)), (0,0,None,None,None,None,0,None,None)), (None,None,0,0,None,None,None,0,None)) (L[idx], M[idx], L[idx], M[idx], LG[idxg], MG[idxg], alpha[idx], alpha[idx], alphaG[idxg])
         M_PQLarray.append(M_PQL)
 
-        shellsA, shellsB = np.where(mol._bas[:,0] == atomI)[0], np.where(gmol._bas[:,0] == atomI)[0]
+        shellsA, shellsB = numpy.where(mol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
 
         if (not Periodic):
             VPQL = intor_cross('int3c2e', mol, gmol,  
@@ -134,13 +136,13 @@ def compensatingCharge(mol, alpha0, Rgrid, epsilon, Periodic = False):
             #j3c2e = pyscf.pbc.df.incore.aux_e2(gmolAtom, gmolAtomAux).reshape(gmolAtom.nao, gmolAtom.nao, -1)
 
             dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(gmolAtom, gmolAtomAux).build()
-            j2c = dfbuilder.get_2c2e(np.zeros((1, 3)))[0]
+            j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
             V_LLarray.append(j2c)
 
             mydf = pyscf.pbc.df.RSDF(gmolAtom)
             mydf.auxbasis = gmol.basis
 
-            eri_3d = np.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
+            eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
             eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
             V_PQLarray.append(eri_3d.reshape((gmolAtom.nao, gmolAtom.nao, gmolAtomAux.nao)))
 
@@ -177,29 +179,29 @@ def intor_cross(intor, mol1, mol2, shls_slice, comp=None):
         return gto.numpy.dot(mol1.cart2sph_coeff().T, mat)
 
 def get_Gv(nmesh,reciprocal_vecs):
-    rx = np.fft.fftfreq(nmesh[0], 1./nmesh[0])
-    ry = np.fft.fftfreq(nmesh[1], 1./nmesh[1])
-    rz = np.fft.fftfreq(nmesh[2], 1./nmesh[2])
-    return np.dot(pyscf.lib.cartesian_prod((rx,ry,rz)), reciprocal_vecs).astype(np.float64)
+    rx = numpy.fft.fftfreq(nmesh[0], 1./nmesh[0])
+    ry = numpy.fft.fftfreq(nmesh[1], 1./nmesh[1])
+    rz = numpy.fft.fftfreq(nmesh[2], 1./nmesh[2])
+    return numpy.dot(pyscf.lib.cartesian_prod((rx,ry,rz)), reciprocal_vecs).astype(numpy.float64)
 
 def getFormFactor_Truncated(nmesh,cell):
     L = cell.lattice_vectors().max()/2.
     G2 = get_Gv(nmesh,cell.reciprocal_vectors())**2
-    G2 = np.sum( G2, axis = 1)
+    G2 = numpy.sum( G2, axis = 1)
 
     idx = G2 < 1.e-10
     G2[idx] = 1.e-8    
     G = G2**0.5
-    FF = 2 * (np.sin(G * L /2.)/G)**2
+    FF = 2 * (numpy.sin(G * L /2.)/G)**2
     FF[idx] = L**2/2.
-    return FF * 4 *np.pi
+    return FF * 4 *numpy.pi
 
 def getFormFactor(nmesh,cell):
     G2 = get_Gv(nmesh,cell.reciprocal_vectors())**2
-    G2 = np.sum( G2, axis = 1)
-    FF = np.zeros((G2.shape[0]), np.float64)
-    idx = np.greater( G2, 0.)
-    FF[idx] = 4. * np.pi /G2[idx]
+    G2 = numpy.sum( G2, axis = 1)
+    FF = numpy.zeros((G2.shape[0]), numpy.float64)
+    idx = numpy.greater( G2, 0.)
+    FF[idx] = 4. * numpy.pi /G2[idx]
     return FF
 
 def getE(Hx, dm, CoreH, nuc):
@@ -249,20 +251,20 @@ def partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0):
     def reconstructAOFromPrim():
         count_prim = 0
         count_contracted = 0
-        # aoOnR_from_prim = np.zeros_like(aoOnR)
-        aoOnR_tilde = np.zeros_like(aoOnR)
+        # aoOnR_from_prim = numpy.zeros_like(aoOnR)
+        aoOnR_tilde = numpy.zeros_like(aoOnR)
         for coeff in ctr_coeff:
             nprim = coeff.shape[0]
             ncontracted = coeff.shape[1]
             
             alphaa = alpha[count_prim: count_prim+nprim]
-            diffuseIdx = np.where(alphaa < alpha0)[0]
+            diffuseIdx = numpy.where(alphaa < alpha0)[0]
 
             aoOnR_p = aoOnR_prim[:, count_prim: count_prim+nprim]
 
             # assertions
-            LL = np.unique(L[count_prim: count_prim+nprim])
-            aa = np.unique(atoms[count_prim: count_prim+nprim])
+            LL = numpy.unique(L[count_prim: count_prim+nprim])
+            aa = numpy.unique(atoms[count_prim: count_prim+nprim])
             assert(len(LL) == 1)
             assert(len(aa) == 1)
             ###
@@ -279,7 +281,7 @@ def partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0):
         return aoOnR, aoOnR_tilde
     
     # test differences
-    # print(np.max(np.abs(aoOnR_from_prim - aoOnR)))
+    # print(numpy.max(numpy.abs(aoOnR_from_prim - aoOnR)))
 
 
     return reconstructAOFromPrim()
@@ -327,16 +329,24 @@ def get_PAW_inUsefulFormForJax(PAWdata):
         gOnRJax     = gOnRJax    .at[jnp.ix_(row1, rowGrid, rowg)].set(gOnR[i])
 
         # locDiffIdx = jnp.where(jnp.isin(localIdx[i], localDiffuseIdx[i]))[0]
-        #Ftilde_Pmu.append(0.*np.array(F_Pmu[i]))
+        #Ftilde_Pmu.append(0.*numpy.array(F_Pmu[i]))
         #Ftilde_Pmu[i][:,locDiffIdx] = F_Pmu[i][:,locDiffIdx]
 
     return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
 
-def getj_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, Periodic = False):
+def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    # TODO: generalize to multiple k-points
+    
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
-    DM = occMo @ occMo.T
 
-    Ng = np.prod(mesh)
+    ### the factors of two come from RHF
+    # TODO: generalize to beyond RHF
+    occ_cut = 1e-12 # TODO: is this reasonable?
+    dm, mo_coeff, mo_occ = jnp.array(dm[0, 0, :, :]/2), dm.mo_coeff[0, 0, :, :], dm.mo_occ[0, 0, :]
+    occMo = jnp.array(mo_coeff[:,numpy.abs(mo_occ)>occ_cut] * mo_occ[numpy.abs(mo_occ)>occ_cut]/2)
+    ###
+
+    Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
 
@@ -348,12 +358,12 @@ def getj_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, Periodic = Fals
     ##diffuse density
     density = jnp.zeros((Ng,))
     density, _ = lax.scan(dens, density, occMo.T)
-    # density = np.array(density)
+    # density = numpy.array(density)
 
     @jit
     def atomContribution(density, xs):
         f_pmu, ftilde_pmu, m_pql, gonr, idxAtom, grididx = xs
-        subMat = DM[idxAtom][:,idxAtom]
+        subMat = dm[idxAtom][:,idxAtom]
         DPQ      = jnp.einsum('Pm, Qn, mn',      f_pmu,      f_pmu, subMat)
         DPQtilde = jnp.einsum('Pm, Qn, mn', ftilde_pmu, ftilde_pmu, subMat)
         zg = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
@@ -376,7 +386,7 @@ def getj_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, Periodic = Fals
     @jit
     def atomContributionToJ(J, xs):
         f_pmu, ftilde_pmu, m_pql, gonr, idxAtom, grididx, vpqrs, vpql, vlm = xs
-        subMat = DM[idxAtom][:,idxAtom]
+        subMat = dm[idxAtom][:,idxAtom]
         DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      f_pmu,      f_pmu, subMat)
         DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftilde_pmu, ftilde_pmu, subMat)
         zg  = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
@@ -403,7 +413,7 @@ def getj_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, Periodic = Fals
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
 
-    return J*2.
+    return numpy.asarray(J*2)
 
 def outerFun_loopOverj(mesh):
     @jit
@@ -425,12 +435,19 @@ def outerFun_loopOverj(mesh):
         return (carry[0], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, Gi, Gtildei), None
     return loopOverj
 
-def getk_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+    # TODO: generalize to multiple k-points
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
-    DM = occMo @ occMo.T
+    
+    ### the factors of two come from RHF
+    # TODO: generalize to beyond RHF
+    occ_cut = 1e-12 # TODO: is this reasonable?
+    dm, mo_coeff, mo_occ = jnp.array(dm[0, 0, :, :]/2), dm.mo_coeff[0, 0, :, :], dm.mo_occ[0, 0, :]
+    occMo = jnp.array(mo_coeff[:,numpy.abs(mo_occ)>occ_cut] * mo_occ[numpy.abs(mo_occ)>occ_cut]/2)
+    ###
 
     nao, nmo = occMo.shape[0], occMo.shape[1]
-    Ng = np.prod(mesh)
+    Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
 
@@ -445,9 +462,6 @@ def getk_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, S, Periodic = F
     loopOverj = outerFun_loopOverj(mesh)
     for i in range(nmo):
         phi_i = occMo[:,i] @ aoOnR_tilde.T
-        
-
-
         carry = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, jnp.array(FF), F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
         carry, _ = lax.scan(loopOverj, carry, (occMo.T, jnp.transpose(G, (2,0,1)), jnp.transpose(Gtilde, (2,0,1)))) 
         Kimu = Kimu.at[i].set(carry[0]+Kimu[i])
@@ -457,8 +471,8 @@ def getk_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, S, Periodic = F
     @jit
     def localAtomContribution(k, xs):
         fpmu, ftildepmu, localidx, vpqrs, vpql, mpql, vlm = xs
-        DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      fpmu,      fpmu, DM[localidx][:,localidx])
-        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, DM[localidx][:,localidx])
+        DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      fpmu,      fpmu, dm[localidx][:,localidx])
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm[localidx][:,localidx])
 
         # sharp-sharp
         Katom = jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS',vpqrs, DPQ), fpmu)
@@ -469,7 +483,7 @@ def getk_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, S, Periodic = F
         Katom -= jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde), ftildepmu)
 
         # mixed terms
-        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, DM[localidx][:,localidx])
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm[localidx][:,localidx])
         PQRS = B - jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
         Ktemp   = jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde),  fpmu)
         Katom -= Ktemp + Ktemp.T # 4 terms
@@ -485,7 +499,7 @@ def getk_PAW_JAX(cell, occMo, aoOnR, aoOnR_tilde, mesh, PAWdata, S, Periodic = F
 
     K = K + getFullK_fromoccRI(Kimu, occMo, S)
 
-    return K*2.
+    return numpy.asarray(K*2)
 
 
 def makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, Rgrid, Rb=None, epsilon=1.e-5):
@@ -506,10 +520,10 @@ def makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, Rgrid, Rb=N
 
     gridIdx, masked_gridIdx, masks, Rs = [], [], [], []
     for atomI in range(mol._atm.shape[0]):
-        idx = jnp.where(np.max(np.abs(sharpAOonR[:, Sharpatoms==atomI]), axis=1) > epsilon)[0]
+        idx = jnp.where(numpy.max(numpy.abs(sharpAOonR[:, Sharpatoms==atomI]), axis=1) > epsilon)[0]
         maxR = jnp.max(atomGridDist[atomI, idx]) if Rb==None else Rb
         # print(f'The augmentation radius is: {maxR}')
-        allIdx = np.where(atomGridDist[atomI, :] < maxR)[0]
+        allIdx = numpy.where(atomGridDist[atomI, :] < maxR)[0]
         mask = grid2Atom[allIdx] == atomI
         masked_idx = allIdx[mask] # ensure the grids are in the aug sphere
 
@@ -531,7 +545,7 @@ def getPrimIdxFromAOIdx(mol, pmol):
         nprim = bas[2]
         nao = bas[3]
 
-        primIdx = np.arange((2*l+1)*nprim) + count
+        primIdx = numpy.arange((2*l+1)*nprim) + count
         ao2prim.extend([primIdx for _ in range((2*l+1)*nao)])
 
         count = primIdx[-1] + 1
@@ -547,13 +561,13 @@ def getContMatFromID(idx, primIdx, ctr_coeff, labels, mol):
     '''
     Nao = len(idx)
     NPrim = len(primIdx)
-    C_mua = np.zeros((NPrim, Nao))
+    C_mua = numpy.zeros((NPrim, Nao))
 
     # determine which shell a given AO is in
-    binId = np.digitize(idx, labels)
+    binId = numpy.digitize(idx, labels)
 
     # determine the relative index with in the shell of a given AO
-    labels_buff = np.append(labels, 0)
+    labels_buff = numpy.append(labels, 0)
     aoIdInBin = idx - labels_buff[binId-1]
 
     count = 0 # adding AOs one by one
@@ -575,7 +589,7 @@ def getContMatFromID(idx, primIdx, ctr_coeff, labels, mol):
     return C_mua
 
 def labelShellWithIdx(ctr_coeff, mol):
-    labels = np.zeros((len(ctr_coeff),), dtype=int)
+    labels = numpy.zeros((len(ctr_coeff),), dtype=int)
 
     count = 0
     for i, c in enumerate(ctr_coeff):
@@ -642,7 +656,7 @@ def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Periodic
         Ctilde_Pa = Ctilde_Pa.at[diffuseAcenteredPrimMask, :].set(C_Pa[diffuseAcenteredPrimMask, :])
         assert(C_Pa.shape[0] == F_Pmu.shape[0])
         assert(Ctilde_Pa.shape[0] == Ftilde_Pmu.shape[0])
-        assert(np.isin(ACenteredAOId, locId).all())
+        assert(numpy.isin(ACenteredAOId, locId).all())
         F_Pmu = F_Pmu.at[:, idxToSet].set(C_Pa)
         Ftilde_Pmu = Ftilde_Pmu.at[:, idxToSet].set(Ctilde_Pa)
 
@@ -653,7 +667,7 @@ def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Periodic
         Ftilde_PmuArr.append(Ftilde_Pmu)
 
         # local 4-index integral
-        idx = np.where(pmol._bas[:,0] == atomI)[0]
+        idx = numpy.where(pmol._bas[:,0] == atomI)[0]
 
         if Periodic :
             molAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a) 
@@ -689,14 +703,14 @@ def getIntegralDiff(dmol, L, Rgrid, mesh, FF, Ng, f, Periodic=False, diag=True, 
     # calculate analytical integral
     if not Periodic:
         integral = dmol.intor('int2c2e')
-        VLL_analytical = np.diag(integral) if diag else integral
+        VLL_analytical = numpy.diag(integral) if diag else integral
     else:
         mydf = pyscf.pbc.df.MDF(dmol)
         # not sure if this is the right way to do periodic integral
-        integral = mydf.get_2c2e(np.zeros((1, 3)))[0]
-        VLL_analytical = np.diag(integral) if diag else integral
+        integral = mydf.get_2c2e(numpy.zeros((1, 3)))[0]
+        VLL_analytical = numpy.diag(integral) if diag else integral
 
-    return np.abs(VLL_numeric - VLL_analytical)
+    return numpy.abs(VLL_numeric - VLL_analytical)
 
 def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alpha0_cutoff=(1,10), Periodic=False):
     '''
@@ -704,12 +718,12 @@ def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alp
     given Rgrid up to tolerance, also return the next biggest exponent
     '''
     # sort all exponents in ascending order
-    alphaSorted = np.unique(alpha)
+    alphaSorted = numpy.unique(alpha)
     # the range 1 to 10 should cover all practical alpha's in reality
     alphaSorted = alphaSorted[(alpha0_cutoff[0] < alphaSorted) & (alphaSorted < alpha0_cutoff[1])]
 
     # initialize dummy atom at the center of unit cell
-    center_coords = np.sum(pmol.a, axis=0) * 0.5
+    center_coords = numpy.sum(pmol.a, axis=0) * 0.5
     atom = f'He {center_coords[0]} {center_coords[1]} {center_coords[2]}'
 
     # s-type function for each exponent
@@ -719,7 +733,7 @@ def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alp
     VLL_diff = getIntegralDiff(dmol, len(alphaSorted), Rgrid, mesh, FF, Ng, f)
 
     # determine which exponents are too sharp to be represented by PWs
-    sharpIdx = np.where(VLL_diff > tol)[0]
+    sharpIdx = numpy.where(VLL_diff > tol)[0]
     minSharpIdx = sharpIdx[0]
     assert(len(sharpIdx) == len(alphaSorted)-minSharpIdx) # this should be true ideally
     # assert(sharpIdx[0]+1 == sharpIdx[1])
@@ -737,10 +751,10 @@ def fineGrainAlpha0(maxSoftAlpha, minSharpAlpha, pmol, Rgrid, mesh, FF, Ng, f, t
     We want to use the result of this as our exponent for compensating charge
     '''
     # fine grain the compensating charge exponent
-    alphas = np.linspace(maxSoftAlpha, minSharpAlpha, nsteps)
+    alphas = numpy.linspace(maxSoftAlpha, minSharpAlpha, nsteps)
 
     # initialize dummy atom at the center of unit cell
-    center_coords = np.sum(pmol.a, axis=0) * 0.5
+    center_coords = numpy.sum(pmol.a, axis=0) * 0.5
     atom = f'He {center_coords[0]} {center_coords[1]} {center_coords[2]}'
 
     # s-type function for each exponent
@@ -749,7 +763,7 @@ def fineGrainAlpha0(maxSoftAlpha, minSharpAlpha, pmol, Rgrid, mesh, FF, Ng, f, t
     VLL_diff_fine = getIntegralDiff(dmol, nsteps, Rgrid, mesh, FF, Ng, f, Periodic)
 
     # pick the biggest one for compensating charge exponent
-    maxSoftIdx = np.where(VLL_diff_fine < tol)[0][-1]
+    maxSoftIdx = numpy.where(VLL_diff_fine < tol)[0][-1]
     alpha0 = alphas[maxSoftIdx]
     alpha0_wf = alpha0 / 2
 
@@ -762,7 +776,7 @@ def getAlpha0(pmol, Rgrid, mesh, Periodic=False, tol=1e-3):
     '''
     alpha, atoms, _, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     FF = getFormFactor(mesh, pmol).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, pmol).reshape(mesh)
-    Ng = np.prod(mesh)
+    Ng = numpy.prod(mesh)
     f = (pmol.vol/Ng)
 
     maxSoftAlpha, minSharpAlpha = getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f,
@@ -772,3 +786,49 @@ def getAlpha0(pmol, Rgrid, mesh, Periodic=False, tol=1e-3):
 
     print(f'Recommended alpha0 for the given PW cutoff {alpha0}')
     return alpha0, alpha0_wf
+
+
+def make_natural_orbitals(cell, kpts, dms):
+    """
+    Construct natural orbitals from density matrix.
+
+    This is a pure mathematical operation that performs eigenvalue decomposition
+    of density matrices to obtain natural orbitals and their occupations.
+
+    Parameters:
+    -----------
+    cell : Cell
+        PySCF cell object
+    kpts : ndarray
+        K-point coordinates
+    dms : ndarray
+        Density matrices with shape (nset, nk, nao, nao)
+
+    Returns:
+    --------
+    ndarray
+        Tagged density matrix array with mo_coeff and mo_occ attributes
+    """
+    nk = kpts.shape[0]
+    nao = cell.nao
+    nset = dms.shape[0]
+
+    # Compute k-point dependent overlap matrices
+    sk = cell.pbc_intor('int1e_ovlp', hermi=1, kpts=kpts)
+    if abs(dms.imag).max() < 1.0e-6:
+        sk = [s.real.astype(numpy.float64) for s in sk]
+
+    mo_coeff = numpy.zeros_like(dms)
+    mo_occ = numpy.zeros((nset, nk, nao), numpy.float64)
+
+    for i, dm in enumerate(dms):
+        for k, s in enumerate(sk):
+            # Diagonalize the DM in AO basis: S^{1/2} * DM * S^{1/2}
+            A = lib.reduce(numpy.dot, (s, dm[k], s))
+            w, v = scipy.linalg.eigh(A, b=s)
+
+            # Sort eigenvalues/eigenvectors in descending order
+            mo_occ[i][k] = numpy.flip(w)
+            mo_coeff[i][k] = numpy.flip(v, axis=1)
+
+    return lib.tag_array(dms, mo_coeff=mo_coeff, mo_occ=mo_occ)

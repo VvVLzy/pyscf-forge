@@ -1,93 +1,333 @@
+from pyscf.pbc.df.fft import FFTDF
+from pyscf.pbc.df.aft import _check_kpts
+from pyscf.pbc.tools.k2gamma import kpts_to_kmesh
+from pyscf import lib
+from pyscf import __config__
+from pyscf.df import df_jk
+
 import pyscf
 import numpy
+
+from . import PAWutils
+
 import time
-from pyscf import lib
-from pyscf.paw import PAWutils
 
-"""
-This file is part of a proprietary software owned by Sandeep Sharma (sanshar@gmail.com).
-Unless the parties otherwise agree in writing, users are subject to the following terms.
 
-(0) This notice supersedes all of the header license statements.
-(1) Users are not allowed to show the source code to others, discuss its contents, 
-    or place it in a location that is accessible by others.
-(2) Users can freely use resulting graphics for non-commercial purposes. 
-    Credits shall be given to the future software of Sandeep Sharma as appropriate.
-(3) Sandeep Sharma reserves the right to revoke the access to the code any time, 
-    in which case the users must discard their copies immediately.
-    """
+def getPAWdata(mol, PAWorbitalCutOff=1.e-5, PWAccuracy=1e-5, printLevel = 1, Periodic = False, alpha0=None):
 
-class OCCRI(pyscf.pbc.df.fft.FFTDF):
+    mol.build()
+    if (not Periodic):
+        mol                          = PAWutils.prepareMolForPAW(mol)
+    # uncontract basis
+    pmol, ctr_coeff = mol.decontract_basis()
 
-    def __init__(self, mydf, kmesh = [1,1,1], **kwargs,):
+    # initialize grids
+    mf = pyscf.scf.RKS(pmol)
+    mf.grids.build()
+    mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
+    Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
+
+    # get alpha0
+    if alpha0 is None:
+        alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+    else:
+        _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+
+    alpha0_wf = alpha0 # it seems that this works better in practice
+
+    # PAWData
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(pmol, mol, ctr_coeff, mf.grids, alpha0_wf, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(pmol, alpha0,  Rgrid, PAWorbitalCutOff, Periodic = Periodic) 
+
+    # Evaluate AOs on uniform grid
+    aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+    gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
+    
+
+    # JAX version of PAWdata
+    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR)
+    PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
+
+    
+
+    if (printLevel > 0):
+        # print ("Rb          : {0:<10.2f}".format(Rb))
+        print ("alpha0      : {0:<10.2f}".format(alpha0))
+        print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
+    return PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol
+
+def tag_dm(mydf, dm, cell, kpts, nk, nao):
+    if mydf.scf_iter == 0:
+        dm = numpy.asarray(dm)
+    if getattr(dm, 'mo_coeff', None) is None:
+        dm = PAWutils.make_natural_orbitals(cell, kpts,
+                                            dm.reshape(-1, nk, nao, nao))
+    else:
+        mo_coeff = numpy.asarray(dm.mo_coeff).reshape(-1, nk, nao, nao)
+        mo_occ = numpy.asarray(dm.mo_occ).reshape(-1, nk, nao)
+        dm = lib.tag_array(dm.reshape(-1, nk, nao, nao), mo_coeff=mo_coeff, mo_occ=mo_occ)
+    return dm
+
+def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
+                    with_j=True, with_k=True, omega=None, exxdiv=None):
+
+    # TODO: this might be problematic
+    if omega is not None:  # J/K for RSH functionals
+        with mydf.range_coulomb(omega) as rsh_df:
+            return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                    omega=None, exxdiv=exxdiv)
+
+    kpts, is_single_kpt = _check_kpts(mydf, kpts)
+
+    # recreate occMo from DM if not available
+    cell = mydf.cell
+    if isinstance(dm, list):
+        dm = numpy.asarray(dm)
+    nk = mydf.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+    nao = cell.nao
+    # if with_k:
+    if with_j or with_k:
+        dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
+
+    if is_single_kpt:
+        # TODO: test paw jk here
+        vj = vk = None
+        if with_j:
+            vj = PAWutils.getj_PAW_JAX(cell, dm, 
+                                        mydf.aoOnR_tilde,
+                                        mydf.mesh,
+                                        mydf.PAWdata,
+                                        Periodic=mydf.Periodic)
+        if with_k:
+            vk = PAWutils.getk_PAW_JAX(cell, dm,
+                                        mydf.aoOnR_tilde,
+                                        mydf.mesh,
+                                        mydf.PAWdata,
+                                        mydf.S,
+                                        Periodic=mydf.Periodic)
+    else:
+        # TODO: implement this
+        raise NotImplementedError('get J and K for kpts not implemented.')
+        vj = vk = None
+        if with_k:
+            vk = fft_jk.get_k_kpts(mydf, dm, hermi, kpts, kpts_band, exxdiv)
+        if with_j:
+            vj = fft_jk.get_j_kpts(mydf, dm, hermi, kpts, kpts_band)
+
+    mydf.scf_iter += 1
+
+    import pdb; pdb.set_trace()
+    return vj, vk
+
+def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
+           direct_scf_tol=getattr(__config__, 'scf_hf_SCF_direct_scf_tol', 1e-13),
+           omega=None):
+    # TODO: this might be problematic
+    # A temporary treatment for RSH-DF integrals
+    if omega is not None:
+        with mydf.range_coulomb(omega) as rsh_df:
+            return df_jk.get_jk(rsh_df, dm, hermi, with_j, with_k, direct_scf_tol)
+
+    kpts, is_single_kpt = _check_kpts(mydf, mydf.kpts)
+
+    assert(is_single_kpt) # only makes sense for molecular case
+
+    # recreate occMo from DM if not available
+    cell = mydf.cell
+    if isinstance(dm, list):
+        dm = numpy.asarray(dm)
+    nk = kpts.shape[0]
+    nao = cell.nao
+    # if with_k:
+    if with_j or with_k:
+        dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
+
+    vj = vk = None
+    if with_j:
+        vj = PAWutils.getj_PAW_JAX(cell, dm, 
+                                    mydf.aoOnR_tilde,
+                                    mydf.mesh,
+                                    mydf.PAWdata,
+                                    Periodic=mydf.Periodic)
+    if with_k:
+        # TODO: get k here has some problems
+        # different nmo than GAPW
+        vk = PAWutils.getk_PAW_JAX(cell, dm,
+                                    mydf.aoOnR_tilde,
+                                    mydf.mesh,
+                                    mydf.PAWdata,
+                                    mydf.S,
+                                    Periodic=mydf.Periodic)
+    return vj, vk
+
+class PAW(FFTDF):
+    def __init__(
+            self,
+            cell,
+            kpts=None,
+            printLevel=1,
+            PAWorbitalCutOff=1e-5,
+            PWAccuracy=1e-5,
+            Periodic=False,
+            alpha0=None,
+    ):
         
-        self.method = mydf.__module__.rsplit('.', 1)[-1]
-        self.df_obj = mydf
-        
-        assert self.method in ['hf', 'uhf', 'khf', 'kuhf', 'rks', 'uks', 'krks', 'kuks']
-        
-        self.StartTime = time.time()
-        cell = mydf.cell
-        super().__init__(cell=cell)  # Need this for pyscf's eval_ao function
-        self.exxdiv = "ewald"
-        self.cell = cell
-        self.kmesh = kmesh
-        
-        self.Nk = numpy.prod(self.kmesh)
-        self.kpts = self.cell.make_kpts(
-            self.kmesh, space_group_symmetry=False, time_reversal_symmetry=False, wrap_around=True
+        self.scf_iter = 0
+
+        # PAW init
+        self.printLevel = printLevel
+        self.PAWorbitalCutOff = PAWorbitalCutOff
+        self.PWAccuracy = PWAccuracy
+        self.Periodic = Periodic
+        self.alpha0 = alpha0
+        self.Times_ = {
+            "Diagonalize":0.,
+            "Exchange"   :0.,
+            "Direct"     :0.,
+            "1e-orbs"    :0.,
+            "PAWinit"    :0.,
+            "AOs"        :0.,
+            "Fock"       :0.
+        }
+
+        self.initPAW(cell)
+
+        # not sure what this part do
+        if kpts is None:
+            self.kpts = numpy.zeros(3, numpy.float64)
+            self.kmesh = [1, 1, 1]
+        else:
+            self.kmesh = kpts_to_kmesh(self.cell, kpts, precision=None, rcut=None)
+            self.kpts = self.cell.make_kpts(
+                self.kmesh,
+                space_group_symmetry=False,
+                time_reversal_symmetry=False,
+                wrap_around=True,
+            )
+        super().__init__(cell=self.cell, kpts=self.kpts)
+
+        # update get_jk
+        if self.Periodic:
+            self.get_jk = get_jk_periodic.__get__(self, self.__class__)
+        else:
+            self.get_jk = get_jk_molecule.__get__(self, self.__class__)
+        ###
+
+    def initPAW(self, cell):
+        t0 = time.time()
+        PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdata(
+            cell,
+            printLevel=self.printLevel,
+            PAWorbitalCutOff=self.PAWorbitalCutOff,
+            PWAccuracy=self.PWAccuracy,
+            Periodic=self.Periodic,
+            alpha0=self.alpha0
         )
 
-        self.joblib_njobs = lib.numpy_helper._np_helper.get_omp_threads()
-
-        self.get_j = pyscf.pbc.df.fft_jk.get_j_kpts
-
-        if str(self.method[0]) == 'k':
-            self.get_jk = self.get_jk_kpts
-            self.get_k = occri_k.get_k_occRI_kpts
-        else:
-            self.get_k = occri_k.occRI_get_k
-
-    def get_jk(
-        self,
-        dm=None,
-        hermi=1,
-        kpt=None,
-        kpts_band=None,
-        with_j=None,
-        with_k=None,
-        omega=None,
-        exxdiv=None,
-        **kwargs,
-    ):
-        dm_shape = dm.shape
-        dm = dm.reshape(-1, dm_shape[-2], dm_shape[-1])
         
-        if with_j:
-            vj = self.get_j(self, dm)
+        self.Times_["PAWinit"] += time.time()-t0
 
-        if with_k:
-            vk = self.get_k(self, dm, exxdiv)
+        nelec, nao = cell.nelectron, cell.nao
+        # nocc = nelec//2
+        # madelung = pyscf.pbc.tools.pbc.madelung(self.cell, self.cell.make_kpts([1,1,1])) if self.Periodic else 0.
 
-        if with_j:
-            vj = numpy.asarray(vj, dtype=dm.dtype).reshape(dm_shape)
+        mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis))
+
+        t0 = time.time()
+        # hcore = mf.get_hcore().reshape((nao,nao))
+        S = mf.get_ovlp().reshape((nao,nao))
+        # X = get_transformation_matrix(S)
+        # nuc = mf.energy_nuc()
+        self.Times_["1e-orbs"] += time.time()-t0
+
+        self.cell = cell
+        self.S = S
+        self.aoOnR_tilde = aoOnR_tilde
+        self.mesh = mesh
+        self.PAWdata = PAWdata
+        
+        if (self.printLevel > 0):
+            print ("Nelection   : {0:<10d}".format(nelec))
+            print ("Ngrid points: {0:<10d}".format(numpy.prod(self.cell.mesh)))
+            print ("delta-a     : {0:<10.2f}".format((self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.)))
+
+    
+
+    @classmethod
+    def from_mf(cls, mf, cell=None):
+        """Create OCCRI instance from mean-field object
+
+        Parameters
+        ----------
+        mf : pyscf mean-field object
+            Mean-field instance (RHF, UHF, RKS, UKS, etc.)
+        disable_c : bool, optional
+            If True, use pure Python implementation
+        **kwargs
+            Additional arguments passed to OCCRI constructor
+
+        Returns
+        -------
+        OCCRI
+            OCCRI density fitting instance configured for the given mean-field methods
+
+
+        Example
+        -------
+        from pyscf.pbc import gto, scf
+        from pyscf.occri import OCCRI
+
+        # Set up cell
+        cell = gto.Cell()
+        cell.atom = 'H 0 0 0; H 0 0 1'
+        cell.basis = 'sto3g'
+        cell.build()
+
+        # Create mean-field object
+        mf = scf.RHF(cell)
+
+        # Use factory method to create OCCRI
+        mf.with_df = OCCRI.from_mf(mf)
+
+        # Run calculation
+        energy = mf.kernel()
+
+        Alternative direct construction:
+
+        # You can also create OCCRI directly if you have cell and kpts
+        # However! It will default to the incore algo if memory is sufficient
+        occri = OCCRI(cell, kpts=None)  # Direct construction
+        mf.with_df = occri
+        """
+        # Validate mean-field instance
+        mf._is_mem_enough = lambda: False
+
+        # Extract method information
+        method = mf.__module__.rsplit('.', 1)[-1]
+        # assert method in [
+        #     'hf',
+        #     'uhf',
+        #     'khf',
+        #     'kuhf',
+        #     'rks',
+        #     'uks',
+        #     'krks',
+        #     'kuks',
+        # ], f'Unsupported mean-field method: {method}'
+
+        # Create OCCRI instance
+        if getattr(mf, 'cell', False):
+            # Periodic
+            assert(cell is None)
+            occri = cls(mf.cell, mf.kpts, Periodic=True) ## change this
         else:
-            vj = None
+            assert(getattr(mf, 'mol'))
+            assert(cell is not None)
+            # molecular
+            occri = cls(cell, Periodic=False)
+        occri.method = method
 
-        if with_k:
-            vk = numpy.asarray(vk, dtype=dm.dtype).reshape(dm_shape)
-        else:
-            vk = None
+        # cell will be modified for molecular case
+        
 
-        return vj, vk
-
-    def __del__(self):
-        return
-
-    def copy(self):
-        """Returns a shallow copy"""
-        return self.view(self.__class__)
-
-    def get_keyword_arguments(self):
-        # Retrieve all attributes, excluding those in cell
-        return {key: value for key, value in self.__dict__.items() if key != "cell"}
+        return occri
