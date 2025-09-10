@@ -173,6 +173,21 @@ class PAW(FFTDF):
     ):
         
         self.scf_iter = 0
+        self.cell = cell
+
+        # not sure what this part do
+        if kpts is None:
+            self.kpts = numpy.zeros(3, numpy.float64)
+            self.kmesh = [1, 1, 1]
+        else:
+            self.kmesh = kpts_to_kmesh(self.cell, kpts, precision=None, rcut=None)
+            self.kpts = self.cell.make_kpts(
+                self.kmesh,
+                space_group_symmetry=False,
+                time_reversal_symmetry=False,
+                wrap_around=True,
+            )
+        super().__init__(cell=self.cell, kpts=self.kpts)
 
         # PAW init
         self.printLevel = printLevel
@@ -192,19 +207,7 @@ class PAW(FFTDF):
 
         self.initPAW(cell)
 
-        # not sure what this part do
-        if kpts is None:
-            self.kpts = numpy.zeros(3, numpy.float64)
-            self.kmesh = [1, 1, 1]
-        else:
-            self.kmesh = kpts_to_kmesh(self.cell, kpts, precision=None, rcut=None)
-            self.kpts = self.cell.make_kpts(
-                self.kmesh,
-                space_group_symmetry=False,
-                time_reversal_symmetry=False,
-                wrap_around=True,
-            )
-        super().__init__(cell=self.cell, kpts=self.kpts)
+        
 
         # update get_jk
         if self.Periodic:
@@ -240,7 +243,6 @@ class PAW(FFTDF):
         # nuc = mf.energy_nuc()
         self.Times_["1e-orbs"] += time.time()-t0
 
-        self.cell = cell
         self.S = S
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
@@ -254,7 +256,7 @@ class PAW(FFTDF):
     
 
     @classmethod
-    def from_mf(cls, mf, cell=None):
+    def from_mf(cls, mf, cell=None, **kwargs):
         """Create OCCRI instance from mean-field object
 
         Parameters
@@ -319,12 +321,12 @@ class PAW(FFTDF):
         if getattr(mf, 'cell', False):
             # Periodic
             assert(cell is None)
-            occri = cls(mf.cell, mf.kpts, Periodic=True) ## change this
+            occri = cls(mf.cell, mf.kpts, Periodic=True, **kwargs) ## change this
         else:
             assert(getattr(mf, 'mol'))
             assert(cell is not None)
             # molecular
-            occri = cls(cell, Periodic=False)
+            occri = cls(cell, Periodic=False, **kwargs)
         occri.method = method
 
         # cell will be modified for molecular case
