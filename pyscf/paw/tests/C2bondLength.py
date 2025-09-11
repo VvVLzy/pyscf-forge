@@ -10,8 +10,8 @@ from pyscf.paw import PAW
 
 # specify C2
 r1      = 0.    # location of first carbon
-r       = 1.33    # C=C bond length
-atom    = f'C {r1} {r1} {r1}; C {r1+r/3.**0.5} {r1+r/3.**0.5} {r1+r/3.**0.5}'
+r0       = 1.33    # C=C bond length
+atom    = f'C {r1} {r1} {r1}; C {r1+r0/3.**0.5} {r1+r0/3.**0.5} {r1+r0/3.**0.5}'
 
 # other params
 verbose     = 4
@@ -76,7 +76,7 @@ for rscale in np.linspace(0.7, 1.5, 15):
 # write to csv
 import csv
 
-path = 'data/C2bondLength.csv'
+path = f'data/C2bondLength{ke_cutoff: .2f}.csv'
 print(f'Calculation done. Saving data to {path}...')
 with open(path, "w", newline="") as f:
     writer = csv.writer(f)
