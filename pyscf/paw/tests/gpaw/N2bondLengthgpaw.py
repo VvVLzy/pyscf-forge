@@ -11,14 +11,14 @@ factor = 4  # this is the factor to convert pyscf cutoff to gpaw cutoff
 rs, etot_gpaw, converged_gpaw = [], [], []
 for rscale in np.linspace(0.7, 1.5, 15):
     # geometry: two C atoms separated by r (Angstrom)
-    r1 = 10.
+    r1 = 15.
     r = 1.10*rscale  # bond length in Angstrom (you can change to 1.5)
     pos1 = np.array([r1, r1, r1])
     pos2 = np.array([r / np.sqrt(3), r / np.sqrt(3), r / np.sqrt(3)]) + pos1  # diagonal placement so distance = r
     atoms = Atoms('N2', positions=[pos1, pos2])
 
     # cell and periodicity
-    a = np.eye(3) * 20.0  # 20 Å cubic cell (large vacuum)
+    a = np.eye(3) * r1*2
     atoms.set_cell(a)
     atoms.set_pbc([True, True, True])  # PW mode expects periodic cell; large cell -> isolated molecule
 
@@ -32,7 +32,7 @@ for rscale in np.linspace(0.7, 1.5, 15):
     calc = GPAW(mode=PW(ecut),           # plane-wave cutoff in eV
                 xc='PBE',                # PBE functional
                 kpts=(1, 1, 1),          # Gamma point (isolated molecule in big cell)
-                txt=f'out/gpaw_N2_pbe_{r: .2f}.txt')   # output log
+                txt=f'out/gpaw_N2_pbe_{r:.2f}_{int(r1*2)}.txt')   # output log
 
     atoms.set_calculator(calc)
 
@@ -47,7 +47,7 @@ for rscale in np.linspace(0.7, 1.5, 15):
 # write to csv
 import csv
 
-path = f'../data/N2bondLengthgpaw_{ke_cut/factor: .2f}.csv'
+path = f'../data/N2bondLengthgpaw_{ke_cut/factor:.2f}_{int(r1*2)}.csv'
 print(f'Calculation done. Saving data to {path}...')
 with open(path, "w", newline="") as f:
     writer = csv.writer(f)
