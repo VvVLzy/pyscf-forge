@@ -1,5 +1,5 @@
 import numpy
-import scipy
+import scipy, time
 
 import jax
 import jax.numpy as jnp
@@ -436,6 +436,9 @@ def outerFun_loopOverj(mesh):
     return loopOverj
 
 def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+    print("entering exchange")
+    t0 = time.time()
+
     # TODO: generalize to multiple k-points
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
     
@@ -447,9 +450,11 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     ###
 
     nao, nmo = occMo.shape[0], occMo.shape[1]
+    print(f'nmo: {nmo}')
     Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    FF = jnp.array(FF)
 
     Kimu = 0.*occMo.T  ##occRI exchange i, mu
 
@@ -458,15 +463,30 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     Gtilde = vmap(lambda f, l: f @ occMo[l], (0,0))(Ftilde_Pmu, localIdx)
     natom = localIdx.shape[0]
 
-
+    start1 = time.time()
     loopOverj = outerFun_loopOverj(mesh)
     for i in range(nmo):
         phi_i = occMo[:,i] @ aoOnR_tilde.T
-        carry = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, jnp.array(FF), F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        start10 = time.time()
+        carry = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        end10 = time.time()
+
+        start11 = time.time()
         carry, _ = lax.scan(loopOverj, carry, (occMo.T, jnp.transpose(G, (2,0,1)), jnp.transpose(Gtilde, (2,0,1)))) 
+        end11 = time.time()
+
+        start12 = time.time()
         Kimu = Kimu.at[i].set(carry[0]+Kimu[i])
+        end12 = time.time()
+        print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12))
+        print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}')
+        # import pdb; pdb.set_trace()
+    end1 = time.time()
+    print(f'PW part: {end1-start1}')
 
-
+    start2 = time.time()
     K = jnp.zeros((nao,nao))
     @jit
     def localAtomContribution(k, xs):
@@ -496,8 +516,10 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
             ) , None
 
     K, _ = lax.scan(localAtomContribution, K, (F_Pmu, Ftilde_Pmu, localIdx, VPQRSarray, V_PQLarr, M_PQLarr, V_LMarr)) 
+    end2 = time.time()
 
     K = K + getFullK_fromoccRI(Kimu, occMo, S)
+    print("Atom part: ",(end2-start2))
 
     return numpy.asarray(K*2)
 
