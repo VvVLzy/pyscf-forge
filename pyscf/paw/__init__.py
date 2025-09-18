@@ -152,7 +152,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
     if with_k:
         # TODO: get k here has some problems
         # different nmo than GAPW
-        vk = PAWutils.getk_PAW_JAX(cell, dm,
+        vk = PAWutils.getk_PAW_loop(cell, dm,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
                                     mydf.PAWdata,
