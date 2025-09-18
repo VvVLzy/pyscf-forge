@@ -415,27 +415,10 @@ def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
     return numpy.asarray(J*2)
 
-def outerFun_loopOverj(mesh):
-    @jit
-    def loopOverj(carry, xs):
-        occMoj, Gj, Gtildej = xs
+## below I try to fix the jax problem of getk
 
-        kimu, aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, Gi, Gtildei = carry
-
-        phi_j = occMoj @ aoOnR_tilde.T
-        Rho_ij = phi_i * phi_j
-
-        Rho_ij, _ = lax.scan(updateRho, Rho_ij, (gridIdx, Gi, Gj, Gtildei, Gtildej, M_PQLarr, gOnR))
-
-        potential_ij = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
-
-        kimu = jnp.einsum('r,r,rm->m', potential_ij, phi_j, aoOnR_tilde) * f +\
-                kimu
-        carry, _ = lax.scan(updateKimu, (kimu, potential_ij, f), (gridIdx, Gj, Gtildej, M_PQLarr, gOnR, localIdx, F_Pmu, Ftilde_Pmu))
-        return (carry[0], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, Gi, Gtildei), None
-    return loopOverj
-
-def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+# this is the original get k
+def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     print("entering exchange")
     t0 = time.time()
 
@@ -459,29 +442,48 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     Kimu = 0.*occMo.T  ##occRI exchange i, mu
 
 
-    G = vmap(lambda f, l: f @ occMo[l], (0,0))(F_Pmu, localIdx)
+    G = vmap(lambda f, l: f @ occMo[l], (0,0))(F_Pmu, localIdx)             # shape: (atom, P, MO)
     Gtilde = vmap(lambda f, l: f @ occMo[l], (0,0))(Ftilde_Pmu, localIdx)
     natom = localIdx.shape[0]
 
     start1 = time.time()
-    loopOverj = outerFun_loopOverj(mesh)
+    @jit
+    def loopOverj(carry, xs):
+        occMoj, Gj, Gtildej = xs
+
+        kimu, phi_i, Gi, Gtildei = carry
+
+        phi_j = occMoj @ aoOnR_tilde.T # this is pretty slow
+        Rho_ij = phi_i * phi_j
+
+        Rho_ij, _ = lax.scan(updateRho, Rho_ij, (gridIdx, Gi, Gj, Gtildei, Gtildej, M_PQLarr, gOnR)) # looping over atom
+
+        potential_ij = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+
+        kimu = jnp.einsum('r,r,rm->m', potential_ij, phi_j, aoOnR_tilde) * f +\
+                kimu #
+        carry, _ = lax.scan(updateKimu, (kimu, potential_ij, f), (gridIdx, Gj, Gtildej, M_PQLarr, gOnR, localIdx, F_Pmu, Ftilde_Pmu)) # 19 seconds
+
+        return (carry[0], phi_i, Gi, Gtildei), None
+
+    Gj , Gtildej = jnp.transpose(G, (2,0,1)), jnp.transpose(Gtilde, (2,0,1)) # shape: (MO, atom, P)
     for i in range(nmo):
         phi_i = occMo[:,i] @ aoOnR_tilde.T
-        start10 = time.time()
-        carry = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        # start10 = time.time()
+        carry = (Kimu[i], phi_i, G[:,:,i], Gtilde[:,:,i])
         # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
         # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
-        end10 = time.time()
+        # end10 = time.time()
 
-        start11 = time.time()
-        carry, _ = lax.scan(loopOverj, carry, (occMo.T, jnp.transpose(G, (2,0,1)), jnp.transpose(Gtilde, (2,0,1)))) 
-        end11 = time.time()
+        # start11 = time.time()
+        carry, _ = lax.scan(loopOverj, carry, (occMo.T, Gj, Gtildej)) 
+        # end11 = time.time()
 
         start12 = time.time()
         Kimu = Kimu.at[i].set(carry[0]+Kimu[i])
-        end12 = time.time()
-        print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12))
-        print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}')
+        # end12 = time.time()
+        # print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
+        # print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
         # import pdb; pdb.set_trace()
     end1 = time.time()
     print(f'PW part: {end1-start1}')
@@ -522,6 +524,342 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     print("Atom part: ",(end2-start2))
 
     return numpy.asarray(K*2)
+
+
+# update Kimu for each i one time instead of j times
+def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+    print("entering exchange")
+    t0 = time.time()
+
+    # TODO: generalize to multiple k-points
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    
+    ### the factors of two come from RHF
+    # TODO: generalize to beyond RHF
+    occ_cut = 1e-12 # TODO: is this reasonable?
+    dm, mo_coeff, mo_occ = jnp.array(dm[0, 0, :, :]/2), dm.mo_coeff[0, 0, :, :], dm.mo_occ[0, 0, :]
+    occMo = jnp.array(mo_coeff[:,numpy.abs(mo_occ)>occ_cut] * mo_occ[numpy.abs(mo_occ)>occ_cut]/2)
+    ###
+
+    nao, nmo = occMo.shape[0], occMo.shape[1]
+    print(f'nmo: {nmo}')
+    Ng = numpy.prod(mesh)
+    f = (cell.vol/Ng)
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    FF = jnp.array(FF)
+
+    Kimu = 0.*occMo.T  ##occRI exchange i, mu
+
+
+    G = vmap(lambda f, l: f @ occMo[l], (0,0))(F_Pmu, localIdx)             # shape: (atom, P, MO)
+    Gtilde = vmap(lambda f, l: f @ occMo[l], (0,0))(Ftilde_Pmu, localIdx)
+    natom = localIdx.shape[0]
+
+    start1 = time.time()
+    @jit
+    def loopOverj(carry, xs):
+        occMoj, Gj, Gtildej = xs
+
+        kimu, phi_i, Gi, Gtildei = carry
+
+        phi_j = occMoj @ aoOnR_tilde.T
+        Rho_ij = phi_i * phi_j
+
+        Rho_ij, _ = lax.scan(updateRho, Rho_ij, (gridIdx, Gi, Gj, Gtildei, Gtildej, M_PQLarr, gOnR)) # looping over atom
+
+        potential_ij = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+
+        potential_phi_i = potential_ij*phi_j
+
+        carry, _ = lax.scan(updateKimu, (kimu, potential_ij, f), (gridIdx, Gj, Gtildej, M_PQLarr, gOnR, localIdx, F_Pmu, Ftilde_Pmu))
+
+        return (carry[0], phi_i, Gi, Gtildei), (potential_phi_i,)
+
+    Gj , Gtildej = jnp.transpose(G, (2,0,1)), jnp.transpose(Gtilde, (2,0,1)) # shape: (MO, atom, P)
+    for i in range(nmo):
+        phi_i = occMo[:,i] @ aoOnR_tilde.T
+        start10 = time.time()
+        carry = (Kimu[i], phi_i, G[:,:,i], Gtilde[:,:,i])
+        # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        end10 = time.time()
+
+        start11 = time.time()
+        carry, ys = lax.scan(loopOverj, carry, (occMo.T, Gj, Gtildej))
+        potential_phi_i = jnp.sum(ys[0], axis=0)
+        Kimu = Kimu.at[i].set(jnp.einsum('r,rm->m', potential_phi_i, aoOnR_tilde) * f +\
+                carry[0])
+        end11 = time.time()
+
+        start12 = time.time()
+        # Kimu = Kimu.at[i].set(carry[0]+Kimu[i])
+        end12 = time.time()
+        print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
+        print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
+        # import pdb; pdb.set_trace()
+    end1 = time.time()
+    print(f'PW part: {end1-start1}')
+
+    start2 = time.time()
+    K = jnp.zeros((nao,nao))
+    @jit
+    def localAtomContribution(k, xs):
+        fpmu, ftildepmu, localidx, vpqrs, vpql, mpql, vlm = xs
+        DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      fpmu,      fpmu, dm[localidx][:,localidx])
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm[localidx][:,localidx])
+
+        # sharp-sharp
+        Katom = jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS',vpqrs, DPQ), fpmu)
+
+        ##diffuse-diffuse
+        B = jnp.einsum('PQg, RSg->PQRS', vpql, mpql)
+        PQRS = vpqrs - B - B.T + jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql) # 4 terms
+        Katom -= jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde), ftildepmu)
+
+        # mixed terms
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm[localidx][:,localidx])
+        PQRS = B - jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Ktemp   = jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde),  fpmu)
+        Katom -= Ktemp + Ktemp.T # 4 terms
+
+        PQRS = jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Katom -= jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQ),  fpmu) # 1 term
+
+        return k.at[jnp.ix_(localidx, localidx)].set(
+            k[localidx][:, localidx]  + Katom
+            ) , None
+
+    K, _ = lax.scan(localAtomContribution, K, (F_Pmu, Ftilde_Pmu, localIdx, VPQRSarray, V_PQLarr, M_PQLarr, V_LMarr)) 
+    end2 = time.time()
+
+    K = K + getFullK_fromoccRI(Kimu, occMo, S)
+    print("Atom part: ",(end2-start2))
+
+    return numpy.asarray(K*2)
+
+# test function for fft only
+def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+    print("entering exchange")
+    # TODO: rewrite this whole thing in jax
+    # aoOnR_tilde = jnp.array(aoOnR_tilde)
+    # TODO: generalize to multiple k-points
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    
+    ### the factors of two come from RHF
+    # TODO: generalize to beyond RHF
+    occ_cut = 1e-12 # TODO: is this reasonable?
+    dm, mo_coeff, mo_occ = jnp.array(dm[0, 0, :, :]/2), dm.mo_coeff[0, 0, :, :], dm.mo_occ[0, 0, :]
+    occMo = jnp.array(mo_coeff[:,numpy.abs(mo_occ)>occ_cut] * mo_occ[numpy.abs(mo_occ)>occ_cut]/2)
+    aoOnR_tilde = jnp.array(aoOnR_tilde.T)
+    ###
+
+    nao, nmo = occMo.shape[0], occMo.shape[1]
+    print(f'nmo: {nmo}')
+    Ng = numpy.prod(mesh)
+    f = (cell.vol/Ng)
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    FF = jnp.array(FF)
+
+    Kimu = 0.*occMo.T  ##occRI exchange i, mu
+
+    G = vmap(lambda f, l: f @ occMo[l], (0,0))(F_Pmu, localIdx)             # shape: (atom, P, MO)
+    Gtilde = vmap(lambda f, l: f @ occMo[l], (0,0))(Ftilde_Pmu, localIdx)
+    natom = localIdx.shape[0]
+
+    def loopOverj(carry, xs):
+        occMoj, Gj, Gtildej = xs
+
+        kimu, phi_i, Gi, Gtildei = carry
+
+        phi_j = occMoj @ aoOnR_tilde
+        Rho_ij = phi_i * phi_j
+
+        Rho_ij, _ = lax.scan(updateRho, Rho_ij, (gridIdx, Gi, Gj, Gtildei, Gtildej, M_PQLarr, gOnR)) # looping over atom
+
+        potential_ij = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+
+        potential_phi_i = potential_ij*phi_j
+
+        carry, _ = lax.scan(updateKimu, (kimu, potential_ij, f), (gridIdx, Gj, Gtildej, M_PQLarr, gOnR, localIdx, F_Pmu, Ftilde_Pmu))
+
+        return (carry[0], phi_i, Gi, Gtildei), (potential_phi_i,)
+    
+    Gj , Gtildej = jnp.transpose(G, (2,0,1)), jnp.transpose(Gtilde, (2,0,1)) # shape: (MO, atom, P)
+    start1 = time.time()
+    for i in range(nmo):
+        phi_i = occMo[:,i] @ aoOnR_tilde
+        carry = (Kimu[i], phi_i, G[:,:,i], Gtilde[:,:,i])
+
+        ys_loop = (numpy.zeros((nmo, Ng)), ) # works for additive things...
+        for j in range(nmo):
+            carry, y_loop = loopOverj(carry, (occMo.T[j], Gj[j], Gtildej[j]))
+            for k in range(len(y_loop)):
+                ys_loop[k][j, :] = y_loop[k]
+        potential_phi_i = numpy.sum(ys_loop[0], axis=0)
+        Kimu = Kimu.at[i].set(jnp.einsum('r,mr->m', potential_phi_i, aoOnR_tilde) * f +\
+                carry[0])
+    end1 = time.time()
+    print(f'PW Part: {end1-start1}')
+    # import pdb;pdb.set_trace()
+
+    start2 = time.time()
+    K = jnp.zeros((nao,nao))
+    @jit
+    def localAtomContribution(k, xs):
+        fpmu, ftildepmu, localidx, vpqrs, vpql, mpql, vlm = xs
+        DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      fpmu,      fpmu, dm[localidx][:,localidx])
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm[localidx][:,localidx])
+
+        # sharp-sharp
+        Katom = jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS',vpqrs, DPQ), fpmu)
+
+        ##diffuse-diffuse
+        B = jnp.einsum('PQg, RSg->PQRS', vpql, mpql)
+        PQRS = vpqrs - B - B.T + jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql) # 4 terms
+        Katom -= jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde), ftildepmu)
+
+        # mixed terms
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm[localidx][:,localidx])
+        PQRS = B - jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Ktemp   = jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde),  fpmu)
+        Katom -= Ktemp + Ktemp.T # 4 terms
+
+        PQRS = jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Katom -= jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQ),  fpmu) # 1 term
+
+        return k.at[jnp.ix_(localidx, localidx)].set(
+            k[localidx][:, localidx]  + Katom
+            ) , None
+
+    K, _ = lax.scan(localAtomContribution, K, (F_Pmu, Ftilde_Pmu, localIdx, VPQRSarray, V_PQLarr, M_PQLarr, V_LMarr)) 
+    end2 = time.time()
+
+    K = K + getFullK_fromoccRI(Kimu, occMo, S)
+    print("Atom part: ",(end2-start2))
+
+    return numpy.asarray(K*2)
+
+def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+    print("entering exchange")
+    # TODO: rewrite this whole thing
+    # some thing fishy going on that makes matmul very slow
+    aoOnR_tilde = jnp.array(aoOnR_tilde.T)
+    # TODO: generalize to multiple k-points
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    
+    ### the factors of two come from RHF
+    # TODO: generalize to beyond RHF
+    occ_cut = 1e-12 # TODO: is this reasonable?
+    dm, mo_coeff, mo_occ = jnp.array(dm[0, 0, :, :]/2), dm.mo_coeff[0, 0, :, :], dm.mo_occ[0, 0, :]
+    occMo = jnp.array(mo_coeff[:,numpy.abs(mo_occ)>occ_cut] * mo_occ[numpy.abs(mo_occ)>occ_cut]/2)
+    ###
+
+    nao, nmo = occMo.shape[0], occMo.shape[1]
+    print(f'nmo: {nmo}')
+    Ng = numpy.prod(mesh)
+    f = (cell.vol/Ng)
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    FF = jnp.array(FF)
+
+    Kimu = 0.*occMo.T  ##occRI exchange i, mu
+
+
+    G = vmap(lambda f, l: f @ occMo[l], (0,0))(F_Pmu, localIdx)             # shape: (atom, P, MO)
+    Gtilde = vmap(lambda f, l: f @ occMo[l], (0,0))(Ftilde_Pmu, localIdx)
+    natom = localIdx.shape[0]
+
+    start1 = time.time()
+    @jit
+    def loopOverj(carry, xs):
+        occMoj, Gj, Gtildej = xs
+
+        kimu, phi_i, Gi, Gtildei = carry
+
+        phi_j = occMoj @ aoOnR_tilde
+        # import pdb; pdb.set_trace()
+        # Rho_ij = phi_i * phi_j
+
+        Rho_ij = phi_j
+
+        potential_phi_i = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+
+        return (kimu, phi_i, Gi, Gtildei), (potential_phi_i,)
+
+    Gj , Gtildej = jnp.transpose(G, (2,0,1)), jnp.transpose(Gtilde, (2,0,1)) # shape: (MO, atom, P)
+    for i in range(nmo):
+        phi_i = occMo[:,i] @ aoOnR_tilde
+        # start10 = time.time()
+        carry = (Kimu[i], phi_i, G[:,:,i], Gtilde[:,:,i])
+        # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        # test = (Kimu[i], aoOnR_tilde, phi_i, gridIdx, M_PQLarr, gOnR, FF, F_Pmu, Ftilde_Pmu, localIdx, f, G[:,:,i], Gtilde[:,:,i])
+        # end10 = time.time()
+
+        # start11 = time.time()
+        carry, ys = lax.scan(loopOverj, carry, (occMo.T, Gj, Gtildej))
+        # potential_phi_i = jnp.sum(ys[0], axis=0)
+        # Kimu = Kimu.at[i].set(jnp.einsum('r,rm->m', potential_phi_i, aoOnR_tilde) * f +\
+        #         carry[0])
+        # end11 = time.time()
+
+        # start12 = time.time()
+        # Kimu = Kimu.at[i].set(carry[0]+Kimu[i])
+        # end12 = time.time()
+        # print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
+        # print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
+        # import pdb; pdb.set_trace()
+    end1 = time.time()
+    print(f'matmul(jax): {end1-start1}')
+
+    occMoj = occMo.T[0,:]
+    start1 = time.time()
+    for _ in range(nmo**2):
+        phi_j = occMoj @ aoOnR_tilde
+        Rho_ij = phi_j
+        # startfft = time.time()
+        potential_phi_i = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+        # endfft = time.time()
+        # print(f'single fft time: {endfft-startfft}')
+    end1 = time.time()
+    print(f'matmul(numpy): {end1-start1}')
+
+    start2 = time.time()
+    K = jnp.zeros((nao,nao))
+    @jit
+    def localAtomContribution(k, xs):
+        fpmu, ftildepmu, localidx, vpqrs, vpql, mpql, vlm = xs
+        DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      fpmu,      fpmu, dm[localidx][:,localidx])
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm[localidx][:,localidx])
+
+        # sharp-sharp
+        Katom = jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS',vpqrs, DPQ), fpmu)
+
+        ##diffuse-diffuse
+        B = jnp.einsum('PQg, RSg->PQRS', vpql, mpql)
+        PQRS = vpqrs - B - B.T + jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql) # 4 terms
+        Katom -= jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde), ftildepmu)
+
+        # mixed terms
+        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm[localidx][:,localidx])
+        PQRS = B - jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Ktemp   = jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde),  fpmu)
+        Katom -= Ktemp + Ktemp.T # 4 terms
+
+        PQRS = jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Katom -= jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQ),  fpmu) # 1 term
+
+        return k.at[jnp.ix_(localidx, localidx)].set(
+            k[localidx][:, localidx]  + Katom
+            ) , None
+
+    K, _ = lax.scan(localAtomContribution, K, (F_Pmu, Ftilde_Pmu, localIdx, VPQRSarray, V_PQLarr, M_PQLarr, V_LMarr)) 
+    end2 = time.time()
+
+    K = K + getFullK_fromoccRI(Kimu, occMo, S)
+    print("Atom part: ",(end2-start2))
+
+    return numpy.asarray(K*2)
+
+########
 
 
 def makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, Rgrid, Rb=None, epsilon=1.e-5):
