@@ -1090,7 +1090,7 @@ def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alp
     bas = {'He': [ [0, [a*2, 1.]] for a in alphaSorted]}
     dmol = pgto.M(atom=atom, basis=bas, a=pmol.a)
 
-    VLL_diff = getIntegralDiff(dmol, len(alphaSorted), Rgrid, mesh, FF, Ng, f)
+    VLL_diff = getIntegralDiff(dmol, len(alphaSorted), Rgrid, mesh, FF, Ng, f, Periodic=Periodic)
 
     # determine which exponents are too sharp to be represented by PWs
     sharpIdx = numpy.where(VLL_diff > tol)[0]
