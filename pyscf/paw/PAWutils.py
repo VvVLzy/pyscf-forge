@@ -83,28 +83,29 @@ def basisnorm(alpha, l):
     n = 0.5*(L+1)
     return 1./(1./2./(2.*alpha)**n * jsp.special.gamma(n))**0.5
 
-def compensatingCharge(mol, alpha0, Rgrid, epsilon, Periodic = False):
-    alpha, atoms, L, M = getAlphaAtomsL(mol._bas, mol._env)
+def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Periodic = False):
+    alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
 
     print('Making augmentation sphere for uniform grid:')
-    grid2Atom, atomGridDist = makeWignerSeitz(Rgrid, mol)
-    gridIdx = makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, Rgrid, epsilon=epsilon)[0]
+    grid2Atom, atomGridDist = makeWignerSeitz(Rgrid, pmol)
+    gridIdx = makeAugmentationSphere2(grid2Atom, atomGridDist, pmol, L, alpha0, Rgrid, epsilon=epsilon)[0]
 
     ##introducing the compensating charge basis set
     gmax = int(L.max()*2)
     gbas = {}
-    for atomI in range(mol._atm.shape[0]):
-        elem = mol._atom[atomI][0]
+    for atomI in range(pmol._atm.shape[0]):
+        elem = pmol._atom[atomI][0]
         gbas[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
 
 
-    gmol = pgto.M(atom=mol.atom, basis=gbas, a=mol.a, cart=Periodic) ##if periodic then cartesian functions
-    alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=Periodic)
+    # gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, cart=Periodic) ##if periodic then cartesian functions
+    gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a) ##if periodic then cartesian functions
+    alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
 
 
     CG = ClebschGordan.RealCG
     M_PQLarray, V_PQLarray, V_LLarray, gIdx, gOnR = [], [], [], [], []
-    for atomI in range(mol._atm.shape[0]):
+    for atomI in range(pmol._atm.shape[0]):
         idx  = (atoms==atomI)
         idxg = (atomsG==atomI)
         lmax = numpy.max(L[idx])
@@ -119,11 +120,11 @@ def compensatingCharge(mol, alpha0, Rgrid, epsilon, Periodic = False):
         M_PQL = vmap(vmap(vmap(getmpql, (None,None,None,None,0,0,None,None,0)), (0,0,None,None,None,None,0,None,None)), (None,None,0,0,None,None,None,0,None)) (L[idx], M[idx], L[idx], M[idx], LG[idxg], MG[idxg], alpha[idx], alpha[idx], alphaG[idxg])
         M_PQLarray.append(M_PQL)
 
-        shellsA, shellsB = numpy.where(mol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
+        shellsA, shellsB = numpy.where(pmol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
 
         if (not Periodic):
-            VPQL = intor_cross('int3c2e', mol, gmol,  
-                                shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, mol.nbas + shellsB[0], mol.nbas + shellsB[-1]+1))
+            VPQL = intor_cross('int3c2e', pmol, gmol,  
+                                shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
             V_PQLarray.append(VPQL)
 
             VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1,shellsB[0], shellsB[-1]+1))
@@ -131,9 +132,12 @@ def compensatingCharge(mol, alpha0, Rgrid, epsilon, Periodic = False):
 
 
         else:
-            gmolAtom    = pgto.M(atom = [gmol._atom[atomI]], basis = mol.basis, a = gmol.a) 
-            gmolAtomAux = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a) 
-            #j3c2e = pyscf.pbc.df.incore.aux_e2(gmolAtom, gmolAtomAux).reshape(gmolAtom.nao, gmolAtom.nao, -1)
+            if mol.nao != pmol.nao:
+                gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = gmol.a, cart = pmol.cart) 
+                # gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = gmol.a, cart = pmol.cart)
+            else:
+                gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = pmol.basis, a = gmol.a, cart = pmol.cart) 
+            gmolAtomAux = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a, cart = gmol.cart) 
 
             dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(gmolAtom, gmolAtomAux).build()
             j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
@@ -149,8 +153,8 @@ def compensatingCharge(mol, alpha0, Rgrid, epsilon, Periodic = False):
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
         # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
 
-        #     mydf = pyscf.pbc.df.MDF(mol)
-        #     nao = mol.nao
+        #     mydf = pyscf.pbc.df.MDF(pmol)
+        #     nao = pmol.nao
         #     eri = mydf.get_eri(compact=False).reshape((nao,nao,nao,nao))
 
 
@@ -875,7 +879,8 @@ def makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, Rgrid, Rb=N
     print(f'L max is :{L.max()}')
 
     sharpMol = pgto.M(atom=mol.atom, basis=Sharpbas, a = mol.a) 
-    sharpAOonR = sharpMol.pbc_eval_gto('GTOval_sph', Rgrid) 
+    sharpAOonR = sharpMol.pbc_eval_gto('GTOval_sph', Rgrid,
+                                       Ls=numpy.zeros((1,3))) # don't include periodic image here
     Sharpalpha, Sharpatoms, SharpL, _ = getAlphaAtomsL(sharpMol._bas, sharpMol._env)
 
     gridIdx, masked_gridIdx, masks, Rs = [], [], [], []
@@ -1030,8 +1035,11 @@ def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Periodic
         idx = numpy.where(pmol._bas[:,0] == atomI)[0]
 
         if Periodic :
-            molAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a) 
-            mydf = pyscf.pbc.df.MDF(molAtom)
+            if mol.nao != pmol.nao: # mol uses a contracted basis
+                molAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.a)
+            else:
+                molAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a)
+            mydf = pyscf.pbc.df.RSDF(molAtom)
             VPQRSArr.append(mydf.get_eri(compact=False).reshape((molAtom.nao, molAtom.nao, molAtom.nao, molAtom.nao)))
         else:
             VPQRSArr.append(pmol.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1)))
@@ -1065,14 +1073,14 @@ def getIntegralDiff(dmol, L, Rgrid, mesh, FF, Ng, f, Periodic=False, diag=True, 
         integral = dmol.intor('int2c2e')
         VLL_analytical = numpy.diag(integral) if diag else integral
     else:
-        mydf = pyscf.pbc.df.MDF(dmol)
+        dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(dmol, dmol).build()
         # not sure if this is the right way to do periodic integral
-        integral = mydf.get_2c2e(numpy.zeros((1, 3)))[0]
-        VLL_analytical = numpy.diag(integral) if diag else integral
+        j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
+        VLL_analytical = numpy.diag(j2c) if diag else j2c
 
     return numpy.abs(VLL_numeric - VLL_analytical)
 
-def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alpha0_cutoff=(1,10), Periodic=False):
+def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alpha0_cutoff=(1,20), Periodic=False):
     '''
     Return the biggest exponent in the basis set that can be accurately represented
     given Rgrid up to tolerance, also return the next biggest exponent
@@ -1094,14 +1102,18 @@ def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alp
 
     # determine which exponents are too sharp to be represented by PWs
     sharpIdx = numpy.where(VLL_diff > tol)[0]
-    minSharpIdx = sharpIdx[0]
-    assert(len(sharpIdx) == len(alphaSorted)-minSharpIdx) # this should be true ideally
-    # assert(sharpIdx[0]+1 == sharpIdx[1])
-    maxSoftIdx = minSharpIdx-1 if minSharpIdx !=0 else None
+    if len(sharpIdx) > 0:
+        minSharpIdx = sharpIdx[0]
+        assert(len(sharpIdx) == len(alphaSorted)-minSharpIdx) # this should be true ideally
+        # assert(sharpIdx[0]+1 == sharpIdx[1])
+        maxSoftIdx = minSharpIdx-1 if minSharpIdx !=0 else None
+    else:
+        minSharpIdx = None
+        maxSoftIdx = len(VLL_diff) - 1
 
     # determine the value of the min sharp exponent and the max soft exponent
-    maxSoftAlpha = 1 if maxSoftIdx is None else alphaSorted[maxSoftIdx]*2
-    minSharpAlpha = alphaSorted[minSharpIdx]*2
+    maxSoftAlpha = alpha0_cutoff[0]*2 if maxSoftIdx is None else alphaSorted[maxSoftIdx]*2
+    minSharpAlpha = alpha0_cutoff[1]*2 if minSharpIdx is None else alphaSorted[minSharpIdx]*2
 
     return maxSoftAlpha, minSharpAlpha
 
@@ -1121,9 +1133,9 @@ def fineGrainAlpha0(maxSoftAlpha, minSharpAlpha, pmol, Rgrid, mesh, FF, Ng, f, t
     bas = {'He': [ [0, [a, 1.]] for a in alphas]}
     dmol = pgto.M(atom=atom, basis=bas, a=pmol.a)
     VLL_diff_fine = getIntegralDiff(dmol, nsteps, Rgrid, mesh, FF, Ng, f, Periodic)
-
     # pick the biggest one for compensating charge exponent
-    maxSoftIdx = numpy.where(VLL_diff_fine < tol)[0][-1]
+    softIdx = numpy.where(VLL_diff_fine < tol)[0]
+    maxSoftIdx = softIdx[-1] if len(softIdx) > 0 else 0
     alpha0 = alphas[maxSoftIdx]
     alpha0_wf = alpha0 / 2
 
