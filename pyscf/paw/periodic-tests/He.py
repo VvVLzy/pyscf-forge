@@ -48,7 +48,7 @@ def calculate():
 def compare_energy():
     # basis = {'He': [[0, [8., 1]], [0, [3.77, 1]], [0, [1.24, 1]], [1, [4., 1]], [2, [3.77, 1]]]}
     basis = {'He': [[0, (3.36242139, 1)], [0, (1.15892300, 1)], [0, (0.31364979, 1)]]}
-    a = 1.5
+    a = 0
     L = 3
     cell = pgto.Cell(
         verbose = 3,
@@ -116,7 +116,7 @@ def compare_energy():
     print('')
 
     # PAW energy (original coulomb)
-    PAWdata, mesh, Rgrid, aoOnR, gOnRAll, mol = HF_PAW.getPAWdata(cell, PAWorbitalCutOff=1e-15)
+    PAWdata, mesh, Rgrid, aoOnR, gOnRAll, mol = HF_PAW.getPAWdata(cell, PAWorbitalCutOff=1e-15, Periodic=True)
     # HF_PAW.HF(cell)
     J_old = PAWutils.getj_PAW_JAX(mol, jnp.array(moOcc), aoOnR, mesh, PAWdata, Periodic=True )
     # K_old = PAWutils.getk_PAW_JAX(mol, jnp.array(moOcc), aoOnR, mesh, PAWdata, S, Periodic=False )
