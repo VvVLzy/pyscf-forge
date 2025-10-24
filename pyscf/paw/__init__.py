@@ -4,6 +4,8 @@ from pyscf.pbc.tools.k2gamma import kpts_to_kmesh
 from pyscf import lib
 from pyscf import __config__
 from pyscf.df import df_jk
+from pyscf.pbc.df.gdf_builder import _CCNucBuilder
+from pyscf.pbc.df.rsdf_builder import _RSNucBuilder
 
 import pyscf
 import numpy
@@ -16,8 +18,9 @@ import time
 def getPAWdata(mol, PAWorbitalCutOff=1.e-5, PWAccuracy=1e-5, printLevel = 1, Periodic = False, alpha0=None):
 
     mol.build()
-    if (not Periodic):
-        mol                          = PAWutils.prepareMolForPAW(mol)
+    # if (not Periodic):
+    #     mol                          = PAWutils.prepareMolForPAW(mol)
+    mol                          = PAWutils.prepareMolForPAW(mol) # do this regardless give better result?
     # uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
 
@@ -37,7 +40,7 @@ def getPAWdata(mol, PAWorbitalCutOff=1.e-5, PWAccuracy=1e-5, printLevel = 1, Per
 
     # PAWData
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(pmol, mol, ctr_coeff, mf.grids, alpha0_wf, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
-    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(pmol, alpha0,  Rgrid, PAWorbitalCutOff, Periodic = Periodic) 
+    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Periodic = Periodic) 
 
     # Evaluate AOs on uniform grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
@@ -116,7 +119,6 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
 
     mydf.scf_iter += 1
 
-    import pdb; pdb.set_trace()
     return vj, vk
 
 def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
@@ -253,6 +255,21 @@ class PAW(FFTDF):
             print ("Ngrid points: {0:<10d}".format(numpy.prod(self.cell.mesh)))
             print ("delta-a     : {0:<10.2f}".format((self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.)))
 
+    def get_nuc(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        # if self._prefer_ccdf or cell.omega > 0:
+        #     # For long-range integrals _CCGDFBuilder is the only option
+        #     dfbuilder = _CCNucBuilder(cell, kpts).build()
+        # else:
+        #     dfbuilder = _RSNucBuilder(cell, kpts).build()
+        dfbuilder = _RSNucBuilder(cell, kpts).build()
+        nuc = dfbuilder.get_nuc()
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
     
 
     @classmethod
