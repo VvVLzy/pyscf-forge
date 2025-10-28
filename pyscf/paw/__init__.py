@@ -15,14 +15,21 @@ from . import PAWutils
 import time
 
 
-def getPAWdata(mol, PAWorbitalCutOff=1.e-5, PWAccuracy=1e-5, printLevel = 1, Periodic = False, alpha0=None):
+def getPAWdata(mol,
+               PAWorbitalCutOff=1.e-5,
+               PWAccuracy=1e-5,
+               printLevel = 1,
+               Periodic = False,
+               alpha0=None,
+               augRadius=None):
 
     mol.build()
-    # if (not Periodic):
-    #     mol                          = PAWutils.prepareMolForPAW(mol)
-    mol                          = PAWutils.prepareMolForPAW(mol) # do this regardless give better result?
+    if (not Periodic):
+        mol                          = PAWutils.prepareMolForPAW(mol)
+    # mol                          = PAWutils.prepareMolForPAW(mol) # do this regardless give better result?
     # uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
+    print(pmol._atom)
 
     # initialize grids
     mf = pyscf.scf.RKS(pmol)
@@ -39,8 +46,10 @@ def getPAWdata(mol, PAWorbitalCutOff=1.e-5, PWAccuracy=1e-5, printLevel = 1, Per
     alpha0_wf = alpha0 # it seems that this works better in practice
 
     # PAWData
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(pmol, mol, ctr_coeff, mf.grids, alpha0_wf, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
-    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Periodic = Periodic) 
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(
+        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(
+        pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
     # Evaluate AOs on uniform grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
@@ -172,6 +181,7 @@ class PAW(FFTDF):
             PWAccuracy=1e-5,
             Periodic=False,
             alpha0=None,
+            augRadius=None,
     ):
         
         self.scf_iter = 0
@@ -197,6 +207,7 @@ class PAW(FFTDF):
         self.PWAccuracy = PWAccuracy
         self.Periodic = Periodic
         self.alpha0 = alpha0
+        self.augRadius = augRadius
         self.Times_ = {
             "Diagonalize":0.,
             "Exchange"   :0.,
@@ -226,7 +237,8 @@ class PAW(FFTDF):
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
             Periodic=self.Periodic,
-            alpha0=self.alpha0
+            alpha0=self.alpha0,
+            augRadius=self.augRadius
         )
 
         
