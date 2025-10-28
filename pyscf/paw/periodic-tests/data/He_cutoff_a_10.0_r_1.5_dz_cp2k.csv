@@ -1,0 +1,13 @@
+# Grid cutoff vs total energy,,
+# Date: Mon Oct 27 14:35:21 CDT 2025,,
+# PWD: /u/zluo4/cp2k_example/compare_cp2k_pyscf/cp2k_gapw/He_debug/cutoff_dz,,
+# REL_CUTOFF = N/A,,
+# Cutoff (Ry),Total Energy (Ha),NG on grid 1
+50,-2.14720279230,0
+100,-1.94823847790,0
+150,-1.95547360900,0
+200,-1.95594063940,0
+250,-1.95580098620,0
+300,-1.95580214730,0
+350,-1.95580231460,0
+400,-1.95580231650,0
