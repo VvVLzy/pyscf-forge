@@ -18,7 +18,7 @@ rscales = np.linspace(0.7, 1.5, 15)
 # other params
 verbose     = 4
 basis       = "cc-pvtz"
-ke_cutoff   = 50.
+ke_cutoff   = 100.
 aa          = 20.
 a           = np.eye(3) * aa
 
@@ -64,7 +64,7 @@ def exact_paw_diff():
         mf_mol_paw.xc = xc
         mf_mol_paw.init_guess = init_guess
         mydf = PAW.from_mf(mf_mol_paw, cell,
-                           PWAccuracy=1e-4).build()
+                           PWAccuracy=1e-6).build()
         mf_mol_paw.with_df = mydf
         mf_mol_paw.kernel()
 
@@ -88,6 +88,48 @@ def exact_paw_diff():
         writer.writeheader()
         writer.writerows(results)
 
+def exact_gdf_diff():
+    results = []
+    for rscale in rscales:
+        r       = r0*rscale    # rescale C=C bond length
+        atom    = f'N {r1} {r1} {r1}; N {r1+r/3.**0.5} {r1+r/3.**0.5} {r1+r/3.**0.5}'
+
+        cell.atom = atom
+        cell.build()
+        mol.atom = atom
+        mol.build()
+
+        # exact calculation
+        mf_mol_exact = scf.RKS(mol)
+        mf_mol_exact.xc = xc
+        mf_mol_exact.init_guess = init_guess
+        mf_mol_exact.kernel()
+
+        # gdf calculation
+        mf_mol_gdf = scf.RKS(mol).density_fit()
+        mf_mol_gdf.xc = xc
+        mf_mol_gdf.init_guess = init_guess
+        mf_mol_gdf.kernel()
+
+        # append all results in one dict
+        results.append({
+            "r": r,
+            "etot_pyscf": mf_mol_exact.e_tot,
+            "etot_gdf": mf_mol_gdf.e_tot,
+            "ediff_per_atm": abs(mf_mol_exact.e_tot - mf_mol_gdf.e_tot) / cell.natm,
+            "conv_pyscf": mf_mol_exact.converged,
+            "conv_gdf": mf_mol_gdf.converged
+        })
+
+    # write to csv
+    path = f"data/N2bondLength_{ke_cutoff:.2f}_{int(aa)}_gdf .csv"
+    print(f"Calculation done. Saving data to {path}...")
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "r", "etot_pyscf", "etot_gdf", "ediff_per_atm", "conv_pyscf", "conv_gdf"
+        ])
+        writer.writeheader()
+        writer.writerows(results)
 
 def basis_set_convergence():
     basis = ['cc-pvdz', 'cc-pvtz', 'cc-pvqz']
@@ -141,6 +183,8 @@ def main():
     start = time.time()
     exact_paw_diff()
     print(f'Time elapsed: {time.time()-start:.2f}')
+
+    # exact_gdf_diff()
 
 if __name__ == '__main__':
     main()
