@@ -13,8 +13,8 @@ def setUpModule():
     global cell, init_guess, xc, auxbasis
 
     L = 3.  # box size
-    # x = L/2 # atom in the center
-    x = 0
+    x = L/2 # atom in the center
+    # x = 0
 
     atom =  f"""
     He      {x} {x} {x}
@@ -22,7 +22,7 @@ def setUpModule():
     basis = "ccpvtz"
     verbose = 3
     a = numpy.eye(3) * L
-    ke_cutoff = 200
+    ke_cutoff = 100
 
     cell = pgto.M(
         atom        = atom,
@@ -65,11 +65,12 @@ class testPAW(unittest.TestCase):
         mf_per_rks_paw = pscf.RKS(cell)
         mf_per_rks_paw.init_guess = init_guess
         mf_per_rks_paw.xc = xc
-        mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8).build()
+        # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8).build()
+        mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=10, augRadius=1.5).build()
         mf_per_rks_paw.with_df = mydf
         
         mf_per_rks_paw.kernel()
-        e_occri = mf_per_rks_paw.e_tot/cell.natm
+        e_paw = mf_per_rks_paw.e_tot/cell.natm
 
         # # Check convergence and energy agreement
         # self.assertTrue(mf_per_rks_paw.converged)
