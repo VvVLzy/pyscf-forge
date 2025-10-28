@@ -1,3 +1,4 @@
+import itertools
 import numpy
 import scipy, time
 
@@ -29,15 +30,45 @@ def prepareMolForPAW(mol):
     return pgto.M(atom = atomPos, basis = mol.basis, a = mol.a, ke_cutoff = mol.ke_cutoff)
 
 
-def makeWignerSeitz(Rgrid, mol):
-    Rgrid = jnp.array(Rgrid)
-    atomPos = jnp.asarray([mol._atom[i][1] for i in range(len(mol._atom))])
-    distAtom = lambda Grids, pos : jnp.sum( (Grids- pos)**2, axis=1)**0.5
+def makeWignerSeitz(Rgrid, mol, Periodic=False):
+    def makeWignerSeitz4Grid(grid):
+        grid = jnp.array(grid)
+        atomPos = jnp.asarray([mol._atom[i][1] for i in range(len(mol._atom))])
+        distAtom = lambda Grids, pos : jnp.sum( (Grids- pos)**2, axis=-1)**0.5
 
-    atomGridDistance = vmap(distAtom, (None, 0))(Rgrid, atomPos)
+        atomGridDistance = vmap(distAtom, (None, 0))(grid, atomPos)
+
+        return atomGridDistance
+
+    if Periodic:
+        nx = (-1, 0, 1)
+        ny = (-1, 0, 1)
+        nz = (-1, 0, 1)
+        # consider all neighboring unit cells
+        prod = list(itertools.product(nx, ny, nz))
+        L = mol.lattice_vectors() # in Bohr
+
+        Rgrids = []
+        for coeff in prod:
+            shift = numpy.dot(coeff, L)
+            Rgrid_shifted = Rgrid + shift
+            Rgrids.append(Rgrid_shifted)
+        Rgrids = numpy.stack(Rgrids) # (27, Ng, 3)
+
+        atomGridDistances = makeWignerSeitz4Grid(Rgrids) # (Na, 27, Ng)
+
+        atomGridDistance = atomGridDistances.min(axis=1) # (Na, Ng)
+        idx = atomGridDistances.argmin(axis=1) # (Na, Ng)
+        Ng = idx.shape[1]
+        # WignerSeitzRgrid = Rgrids[idx, numpy.arange(Ng), :] # (Na, Ng, 3) # turns out we don't need this
+        # WignerSeitzRgrid = Rgrid
+    else:
+        atomGridDistance = makeWignerSeitz4Grid(Rgrid)
+        # WignerSeitzRgrid = Rgrid
+
     closestAtomToGrid = jnp.argmin(atomGridDistance, axis=0)
 
-    return closestAtomToGrid, atomGridDistance
+    return closestAtomToGrid, atomGridDistance, Rgrid
 
 def getAtomsL(bas, env, cart=False):
     l, atmId, nexp = bas[:,1], bas[:,0], bas[:,3]
@@ -83,12 +114,12 @@ def basisnorm(alpha, l):
     n = 0.5*(L+1)
     return 1./(1./2./(2.*alpha)**n * jsp.special.gamma(n))**0.5
 
-def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Periodic = False):
+def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
     alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
 
     print('Making augmentation sphere for uniform grid:')
-    grid2Atom, atomGridDist = makeWignerSeitz(Rgrid, pmol)
-    gridIdx = makeAugmentationSphere2(grid2Atom, atomGridDist, pmol, L, alpha0, Rgrid, epsilon=epsilon)[0]
+    WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
+    gridIdx = makeAugmentationSphere(WignerSeitzData, pmol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
 
     ##introducing the compensating charge basis set
     gmax = int(L.max()*2)
@@ -866,12 +897,13 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 ########
 
 
-def makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, Rgrid, Rb=None, epsilon=1.e-5):
+def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e-5):
     ##this is useful for finding points that are close to atom
     ##while taking into account the periodic images
     '''
     use highest L to find the radius of sphere, include all points within the radius, return both overlapped and not overlapped
     '''
+    grid2Atom, atomGridDist, Rgrid = WignerSeitzData
     Sharpbas = {}
     for atomI in range(mol._atm.shape[0]):
         elem = mol._atom[atomI][0]
@@ -897,7 +929,7 @@ def makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, Rgrid, Rb=N
         masks.append(mask)
         Rs.append(maxR)
 
-    print(f'The max augmentation radius is: {max(Rs)}')
+    print(f'The max augmentation radius is: {max(Rs)} Bohr')
     
     return gridIdx, masked_gridIdx, masks, Rs
 
@@ -979,8 +1011,8 @@ def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Periodic
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
     
     print('Making augmentation sphere for Becke grid:')
-    grid2Atom, atomGridDist = makeWignerSeitz(BeckeCoords, mol)
-    gridIdx = makeAugmentationSphere2(grid2Atom, atomGridDist, mol, L, alpha0, BeckeCoords, epsilon=epsilon)[1]
+    WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
+    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, epsilon=epsilon)[1]
 
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
