@@ -13,6 +13,7 @@ from pyscf import gto, lib
 from pyscf.pbc import gto as pgto
 
 from . import ClebschGordan
+import time
 
 
 def prepareMolForPAW(mol):
@@ -369,7 +370,8 @@ def get_PAW_inUsefulFormForJax(PAWdata):
 
     return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
 
-def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+def getj_PAW_JAX(cell, dm, V2e, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    start=time.time()
     # TODO: generalize to multiple k-points
     
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
@@ -384,6 +386,7 @@ def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    Ng=len(aoOnR_tilde)
 
     def dens(carry, occmoi):
         carry += (occmoi @ aoOnR_tilde.T)**2
@@ -408,15 +411,14 @@ def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     ##add the compensating change to the diffuse density
     density, _ = lax.scan(atomContribution, density, (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx))
 
+    #potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
+    potential = jnp.einsum("kl,l->k",V2e,density)
 
-    potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
-
-    J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde)*f
+    J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde)
     assert(J.shape[0] == cell.nao)
     assert(J.shape[1] == cell.nao)
 
     natom = len(localIdx)
-
 
     @jit
     def atomContributionToJ(J, xs):
@@ -448,6 +450,7 @@ def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
 
+    print("Finished J: ",time.time()-start)
     return numpy.asarray(J*2)
 
 ## below I try to fix the jax problem of getk

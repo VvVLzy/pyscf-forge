@@ -9,6 +9,7 @@ from pyscf.pbc.df.rsdf_builder import _RSNucBuilder
 
 import pyscf
 import numpy
+import jax.numpy as jnp
 
 from . import PAWutils
 
@@ -16,6 +17,7 @@ import time
 
 
 def getPAWdata(mol,
+               ints,
                PAWorbitalCutOff=1.e-5,
                PWAccuracy=1e-5,
                printLevel = 1,
@@ -36,12 +38,13 @@ def getPAWdata(mol,
     mf.grids.build()
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
+    Rgrid=ints["pos"]
 
     # get alpha0
     if alpha0 is None:
         alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
-    else:
-        _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+    #else:
+    #    _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
 
     alpha0_wf = alpha0 # it seems that this works better in practice
 
@@ -155,7 +158,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
 
     vj = vk = None
     if with_j:
-        vj = PAWutils.getj_PAW_JAX(cell, dm, 
+        vj = PAWutils.getj_PAW_JAX(cell, dm, mydf.V2e,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
                                     mydf.PAWdata,
@@ -175,6 +178,7 @@ class PAW(FFTDF):
     def __init__(
             self,
             cell,
+            ints,
             kpts=None,
             printLevel=1,
             PAWorbitalCutOff=1e-5,
@@ -218,7 +222,8 @@ class PAW(FFTDF):
             "Fock"       :0.
         }
 
-        self.initPAW(cell)
+        self.initPAW(cell,ints)
+        self.V2e=ints["V2e"]
 
         
 
@@ -229,10 +234,11 @@ class PAW(FFTDF):
             self.get_jk = get_jk_molecule.__get__(self, self.__class__)
         ###
 
-    def initPAW(self, cell):
+    def initPAW(self, cell,ints):
         t0 = time.time()
         PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdata(
             cell,
+            ints,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
@@ -258,7 +264,7 @@ class PAW(FFTDF):
         self.Times_["1e-orbs"] += time.time()-t0
 
         self.S = S
-        self.aoOnR_tilde = aoOnR_tilde
+        self.aoOnR_tilde = jnp.einsum('xi,x->xi',aoOnR_tilde,ints['wts'])
         self.mesh = mesh
         self.PAWdata = PAWdata
         
@@ -285,7 +291,7 @@ class PAW(FFTDF):
     
 
     @classmethod
-    def from_mf(cls, mf, cell=None, **kwargs):
+    def from_mf(cls, mf, cell=None,ints=None, **kwargs):
         """Create OCCRI instance from mean-field object
 
         Parameters
@@ -355,7 +361,7 @@ class PAW(FFTDF):
             assert(getattr(mf, 'mol'))
             assert(cell is not None)
             # molecular
-            occri = cls(cell, Periodic=False, **kwargs)
+            occri = cls(cell, ints,Periodic=False, **kwargs)
         occri.method = method
 
         # cell will be modified for molecular case
