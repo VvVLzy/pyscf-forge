@@ -13,6 +13,7 @@ from pyscf import gto, lib
 from pyscf.pbc import gto as pgto
 
 from . import ClebschGordan
+import time
 
 
 def prepareMolForPAW(mol):
@@ -370,6 +371,7 @@ def get_PAW_inUsefulFormForJax(PAWdata):
     return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
 
 def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    start=time.time()
     # TODO: generalize to multiple k-points
     
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
@@ -447,6 +449,7 @@ def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
+    print("Finished J: ",time.time()-start)
 
     return numpy.asarray(J*2)
 
