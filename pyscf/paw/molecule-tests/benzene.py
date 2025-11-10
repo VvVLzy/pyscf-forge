@@ -61,7 +61,7 @@ mf_mol_paw = dft.RKS(mol).density_fit()
 mf_mol_paw.xc = 'pbe'
 mf_mol_paw.init_guess = init_guess
 mydf = PAW.from_mf(mf_mol_paw, cell,gaussletints,
-                    PWAccuracy=1e-4,alpha0=3,augRadius=0.5).build()
+                    PWAccuracy=1e-4,alpha0=5,augRadius=1.5).build()
 mf_mol_paw.with_df = mydf
 mf_mol_paw.kernel()
 print(mf_mol_paw.e_tot)
