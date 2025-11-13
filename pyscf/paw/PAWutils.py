@@ -370,7 +370,9 @@ def get_PAW_inUsefulFormForJax(PAWdata):
 
     return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
 
-def getj_PAW_JAX(cell, dm, V2e, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+def getj_PAW_JAX(cell, dm, ints, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    V2e=ints["V2e"]
+    wts=jnp.asarray(ints["wts"])
     start=time.time()
     # TODO: generalize to multiple k-points
     
@@ -405,7 +407,7 @@ def getj_PAW_JAX(cell, dm, V2e, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         DPQ      = jnp.einsum('Pm, Qn, mn',      f_pmu,      f_pmu, subMat)
         DPQtilde = jnp.einsum('Pm, Qn, mn', ftilde_pmu, ftilde_pmu, subMat)
         zg = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
-        update = jnp.einsum('g,rg->r',zg, gonr) + density[grididx]
+        update = jnp.einsum('g,rg,r->r',zg, gonr,wts[grididx]*wts[grididx]) + density[grididx]
         return density.at[grididx].set( update ), None
 
     ##add the compensating change to the diffuse density
@@ -414,7 +416,9 @@ def getj_PAW_JAX(cell, dm, V2e, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     #potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
     potential = jnp.einsum("kl,l->k",V2e,density)
 
-    J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde)
+    J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde).block_until_ready()
+    print(2*J)
+    print(2*J[5:9])
     assert(J.shape[0] == cell.nao)
     assert(J.shape[1] == cell.nao)
 
@@ -427,7 +431,7 @@ def getj_PAW_JAX(cell, dm, V2e, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      f_pmu,      f_pmu, subMat)
         DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftilde_pmu, ftilde_pmu, subMat)
         zg  = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
-        zg2 = jnp.einsum('r,rg->g', potential[grididx], gonr)*f
+        zg2 = jnp.einsum('r,rg,r->g', potential[grididx], gonr,wts[grididx]*wts[grididx])
         GL  = jnp.einsum('g,PQg', zg2, m_pql)  ##global-local term
 
         ##local-local
@@ -449,6 +453,8 @@ def getj_PAW_JAX(cell, dm, V2e, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
+    print(2*J)
+    print(2*J[5:9])
 
     print("Finished J: ",time.time()-start)
     return numpy.asarray(J*2)

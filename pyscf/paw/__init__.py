@@ -157,8 +157,13 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
 
     vj = vk = None
+    vj,vk=mydf.ints['mf'].get_jk(dm)
+    print(with_j)
+    print(with_k)
+    print(vj)
+    print(vj[5:9])
     if with_j:
-        vj = PAWutils.getj_PAW_JAX(cell, dm, mydf.V2e,
+        vj = PAWutils.getj_PAW_JAX(cell, dm, mydf.ints,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
                                     mydf.PAWdata,
@@ -223,7 +228,7 @@ class PAW(FFTDF):
         }
 
         self.initPAW(cell,ints)
-        self.V2e=ints["V2e"]
+        self.ints=ints
 
         
 
@@ -246,7 +251,6 @@ class PAW(FFTDF):
             alpha0=self.alpha0,
             augRadius=self.augRadius
         )
-
         
         self.Times_["PAWinit"] += time.time()-t0
 
