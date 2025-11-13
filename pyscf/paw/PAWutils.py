@@ -28,7 +28,12 @@ def prepareMolForPAW(mol):
                           (atom[1][1]+displacement[1])*pyscf.data.nist.BOHR, 
                           (atom[1][2]+displacement[2])*pyscf.data.nist.BOHR]) for atom in mol._atom]
 
-    return pgto.M(atom = atomPos, basis = mol.basis, a = mol.a, ke_cutoff = mol.ke_cutoff)
+    if mol.unit[0].capitalize()=='A':
+        k=mol.a
+    else:
+        k=pyscf.data.nist.BOHR*mol.a
+
+    return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff,unit='A')
 
 
 def makeWignerSeitz(Rgrid, mol, Periodic=False):
@@ -131,7 +136,7 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
 
     # gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, cart=Periodic) ##if periodic then cartesian functions
-    gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a) ##if periodic then cartesian functions
+    gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit) ##if periodic then cartesian functions
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
 
 
@@ -913,7 +918,7 @@ def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e
         Sharpbas[elem] = [ [L.max(), [alpha0, 1.]] ]
     print(f'L max is :{L.max()}')
 
-    sharpMol = pgto.M(atom=mol.atom, basis=Sharpbas, a = mol.a) 
+    sharpMol = pgto.M(atom=mol.atom, basis=Sharpbas, a = mol.a, unit=mol.unit) 
     sharpAOonR = sharpMol.pbc_eval_gto('GTOval_sph', Rgrid,
                                        Ls=numpy.zeros((1,3))) # don't include periodic image here
     Sharpalpha, Sharpatoms, SharpL, _ = getAlphaAtomsL(sharpMol._bas, sharpMol._env)
@@ -1131,7 +1136,7 @@ def getBoundaryAlphaFromBasis(alpha, pmol, Rgrid, mesh, FF, Ng, f, tol=1e-3, alp
 
     # s-type function for each exponent
     bas = {'He': [ [0, [a*2, 1.]] for a in alphaSorted]}
-    dmol = pgto.M(atom=atom, basis=bas, a=pmol.a)
+    dmol = pgto.M(atom=atom, basis=bas, a=pmol.a, unit=pmol.unit)
 
     VLL_diff = getIntegralDiff(dmol, len(alphaSorted), Rgrid, mesh, FF, Ng, f, Periodic=Periodic)
 
@@ -1166,7 +1171,7 @@ def fineGrainAlpha0(maxSoftAlpha, minSharpAlpha, pmol, Rgrid, mesh, FF, Ng, f, t
 
     # s-type function for each exponent
     bas = {'He': [ [0, [a, 1.]] for a in alphas]}
-    dmol = pgto.M(atom=atom, basis=bas, a=pmol.a)
+    dmol = pgto.M(atom=atom, basis=bas, a=pmol.a, unit=pmol.unit)
     VLL_diff_fine = getIntegralDiff(dmol, nsteps, Rgrid, mesh, FF, Ng, f, Periodic)
     # pick the biggest one for compensating charge exponent
     softIdx = numpy.where(VLL_diff_fine < tol)[0]
