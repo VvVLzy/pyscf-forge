@@ -997,7 +997,7 @@ def labelShellWithIdx(ctr_coeff, mol):
 
     return labels
 
-def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Periodic = False, rtol=1e-10):
+def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
     '''
     Fit AO and diffuse AO directly, much faster
     set F_Pmu directly to contraction coefficient when P=mu
@@ -1012,7 +1012,7 @@ def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Periodic
     
     print('Making augmentation sphere for Becke grid:')
     WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
-    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, epsilon=epsilon)[1]
+    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
 
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
