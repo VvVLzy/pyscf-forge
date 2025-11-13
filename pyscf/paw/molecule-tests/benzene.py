@@ -66,6 +66,3 @@ mf_mol_paw.with_df = mydf
 mf_mol_paw.kernel()
 print(mf_mol_paw.e_tot)
 print(mydf.Times_)
-
-
-
