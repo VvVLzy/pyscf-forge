@@ -29,7 +29,6 @@ def getPAWdata(mol,
     # mol                          = PAWutils.prepareMolForPAW(mol) # do this regardless give better result?
     # uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
-    print(pmol._atom)
 
     # initialize grids
     mf = pyscf.scf.RKS(pmol)
@@ -248,7 +247,7 @@ class PAW(FFTDF):
         # nocc = nelec//2
         # madelung = pyscf.pbc.tools.pbc.madelung(self.cell, self.cell.make_kpts([1,1,1])) if self.Periodic else 0.
 
-        mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis))
+        mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis, unit=cell.unit))
 
         t0 = time.time()
         # hcore = mf.get_hcore().reshape((nao,nao))
