@@ -26,14 +26,16 @@ def getPAWdata(mol,
     mol.build()
     if (not Periodic):
         mol                          = PAWutils.prepareMolForPAW(mol)
-    # mol                          = PAWutils.prepareMolForPAW(mol) # do this regardless give better result?
+
     # uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
     print(pmol._atom)
 
     # initialize grids
     mf = pyscf.scf.RKS(pmol)
+    # mf.grids.level = 9
     mf.grids.build()
+    print(f'DFT grid size: {mf.grids.coords.shape[0]}')
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
 
@@ -47,7 +49,7 @@ def getPAWdata(mol,
 
     # PAWData
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(
-        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
     M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
