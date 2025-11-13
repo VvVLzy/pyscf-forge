@@ -61,7 +61,8 @@ class testPAW(unittest.TestCase):
         # OCCRI calculation
         mf_mol_rks_paw = scf.RKS(mol).density_fit()
         mf_mol_rks_paw.init_guess = init_guess
-        mydf = PAW.from_mf(mf_mol_rks_paw, cell, PWAccuracy=1e-4).build()
+        # mydf = PAW.from_mf(mf_mol_rks_paw, cell, PWAccuracy=1e-4).build()
+        mydf = PAW.from_mf(mf_mol_rks_paw, cell, PWAccuracy=1e-4, alpha0=2).build()
         mf_mol_rks_paw.with_df = mydf
         
         mf_mol_rks_paw.kernel()

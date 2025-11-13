@@ -15,7 +15,7 @@ x = 0
 atom =  f"""
 He      {x} {x} {x}
 """
-zeta = 'tz'
+zeta = 'dz'
 basis = "ccpv"+zeta
 verbose = 3
 a = numpy.eye(3) * L
@@ -27,6 +27,15 @@ cell = pgto.M(
     verbose     = verbose,
     a           = a,
     ke_cutoff   = ke_cutoff,
+    precision   = 1e-5
+)
+
+cell_fftdf = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = 3,
+    a           = a,
+    ke_cutoff   = 1000,
     precision   = 1e-5
 )
 
@@ -120,22 +129,22 @@ def reference_gdf():
 
 def reference_fftdf():
     # Reference GDF calculation
-    cell_fftdf = deepcopy(cell).build(
-        ke_cutoff=1000,
-        verbose=3)
-    print(cell_fftdf.ke_cutoff)
-    mf_per_rks = pscf.RKS(cell_fftdf)
-    mf_per_rks.init_guess = init_guess
-    mf_per_rks.xc = xc
-    mf_per_rks.kernel()
-    e_ref = mf_per_rks.e_tot/cell.natm
+    for cut in range(500, 2001, 250):
+        cell_fftdf.build(ke_cutoff=cut)
+        print(cell_fftdf.ke_cutoff)
+
+        mf_per_rks = pscf.RKS(cell_fftdf)
+        mf_per_rks.init_guess = init_guess
+        mf_per_rks.xc = xc
+        mf_per_rks.kernel()
+        print('***********************')
 
 def main():
     # reference_gdf()
     reference_fftdf()
     print(cell.ke_cutoff)
     # autoMode()
-    manualMode(alpha0=10., Rb=1.5)
+    # manualMode(alpha0=10., Rb=1.5)
 
 if __name__ == '__main__':
     main()
