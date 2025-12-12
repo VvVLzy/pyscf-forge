@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from jax import vmap, jit, lax
 import jax.scipy as jsp
 jax.config.update("jax_enable_x64",True)
+jax.config.update('jax_platform_name', 'cpu')
 
 import pyscf
 from pyscf import gto, lib
