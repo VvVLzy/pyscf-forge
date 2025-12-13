@@ -19,7 +19,8 @@ def setUpModule():
     atom =  f"""
     He      {x} {x} {x}
     """
-    basis = "ccpvtz"
+    # basis = "ccpvtz"
+    basis = "sto6g"
     verbose = 3
     a = numpy.eye(3) * L
     ke_cutoff = 100
@@ -65,8 +66,8 @@ class testPAW(unittest.TestCase):
         mf_per_rks_paw = pscf.RKS(cell)
         mf_per_rks_paw.init_guess = init_guess
         mf_per_rks_paw.xc = xc
-        # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8).build()
-        mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=10, augRadius=1.5).build()
+        mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8).build()
+        # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=10, augRadius=1.5).build()
         mf_per_rks_paw.with_df = mydf
         
         mf_per_rks_paw.kernel()

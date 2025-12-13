@@ -3,10 +3,12 @@ import numpy
 import scipy, time
 
 import jax
+jax.config.update("jax_enable_x64",True)
+jax.config.update('jax_platform_name', 'cpu')
+
 import jax.numpy as jnp
 from jax import vmap, jit, lax
 import jax.scipy as jsp
-jax.config.update("jax_enable_x64",True)
 
 import pyscf
 from pyscf import gto, lib
@@ -138,6 +140,11 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
     gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit) ##if periodic then cartesian functions
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
 
+    @jit
+    def getmpql(j1, m1, j2, m2, j3, m3, alpha1, alpha2, alpha3) : 
+        return CG[(j1*j1 + (m1+j1)), (j2*j2 + (m2+j2)), (j3*j3 + (m3+j3))] * \
+            RadialNorm(alpha1 + alpha2, j1+j2+j3+2) * basisnorm(alpha1, j1) * basisnorm(alpha2, j2) /\
+            (RadialNorm(alpha3, 2*j3+2) * basisnorm(alpha3, j3))
 
     CG = ClebschGordan.RealCG
     M_PQLarray, V_PQLarray, V_LLarray, gIdx, gOnR = [], [], [], [], []
@@ -146,14 +153,13 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
         idxg = (atomsG==atomI)
         lmax = numpy.max(L[idx])
         gIdx.append(idxg)
-
-        @jit
-        def getmpql(j1, m1, j2, m2, j3, m3, alpha1, alpha2, alpha3) : 
-            return CG[(j1*j1 + (m1+j1)), (j2*j2 + (m2+j2)), (j3*j3 + (m3+j3))] * \
-                RadialNorm(alpha1 + alpha2, j1+j2+j3+2) * basisnorm(alpha1, j1) * basisnorm(alpha2, j2) /\
-                (RadialNorm(alpha3, 2*j3+2) * basisnorm(alpha3, j3))
-
-        M_PQL = vmap(vmap(vmap(getmpql, (None,None,None,None,0,0,None,None,0)), (0,0,None,None,None,None,0,None,None)), (None,None,0,0,None,None,None,0,None)) (L[idx], M[idx], L[idx], M[idx], LG[idxg], MG[idxg], alpha[idx], alpha[idx], alphaG[idxg])
+        M_PQL = vmap(
+                    vmap(
+                        vmap(
+                            getmpql, (None,None,None,None,0,0,None,None,0)
+                        ), (0,0,None,None,None,None,0,None,None)
+                    ), (None,None,0,0,None,None,None,0,None)
+                ) (L[idx], M[idx], L[idx], M[idx], LG[idxg], MG[idxg], alpha[idx], alpha[idx], alphaG[idxg])
         M_PQLarray.append(M_PQL)
 
         shellsA, shellsB = numpy.where(pmol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
@@ -169,22 +175,22 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
         else:
             if mol.nao != pmol.nao:
-                gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = gmol.a, cart = pmol.cart) 
+                pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.a, cart = pmol.cart) 
                 # gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = gmol.a, cart = pmol.cart)
             else:
-                gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = pmol.basis, a = gmol.a, cart = pmol.cart) 
-            gmolAtomAux = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a, cart = gmol.cart) 
+                pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a, cart = pmol.cart) 
+            gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a, cart = gmol.cart) 
 
-            dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(gmolAtom, gmolAtomAux).build()
+            dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmolAtom, gmolAtom).build()
             j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
             V_LLarray.append(j2c)
 
-            mydf = pyscf.pbc.df.RSDF(gmolAtom)
+            mydf = pyscf.pbc.df.RSDF(pmolAtom)
             mydf.auxbasis = gmol.basis
 
             eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
             eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
-            V_PQLarray.append(eri_3d.reshape((gmolAtom.nao, gmolAtom.nao, gmolAtomAux.nao)))
+            V_PQLarray.append(eri_3d.reshape((pmolAtom.nao, pmolAtom.nao, gmolAtom.nao)))
 
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
         # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
@@ -197,6 +203,155 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
     return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
 
+def compensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
+    alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
+
+    print('Making augmentation sphere for uniform grid:')
+    WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
+    gridIdx = makeAugmentationSphere(WignerSeitzData, pmol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
+
+    ##introducing the compensating charge basis set
+    gmax = int(L.max()*2)
+    gbas = {}
+    for atomI in range(pmol._atm.shape[0]):
+        elem = pmol._atom[atomI][0]
+        gbas[elem] = [ [0, [alpha0, 1.]], [2, [alpha0, 1.]]]
+
+
+    # gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, cart=Periodic) ##if periodic then cartesian functions
+    gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit, cart=True) ##if periodic then cartesian functions
+    alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
+    assert((alphaG == alphaG[0]).all())
+    
+
+    CG = ClebschGordan.RealCG
+    ### new code
+    # define some constants
+    @jit
+    def gammaBar(n, l1, l2, alpha1, alpha2):
+        L = n + 2 + l1 + l2
+        LL = (L+1)/2
+        a = alpha1 + alpha2
+        return jsp.special.gamma(LL) / (2*a**(LL))
+
+    @jit
+    def I(alpha, x: int, y: int, z: int):
+        # take powers of xyz and compute integral
+
+        xyz = jnp.array([x, y, z])
+        n = (xyz+1)/2
+        Ixyz = jsp.special.gamma(n) / (alpha**n)
+
+        return jnp.prod(Ixyz)
+
+
+    # solve equations
+    @jit
+    def getMpqlJax(l1, m1, l2, m2, alpha1, alpha2, alpha3):
+        '''
+        Solve eqn Ax = b, where x = Mpql, for l=0, x^2, y^2, z^2
+        '''
+        # the matrix A
+        N0, N2 = basisnorm(alpha3, 0), basisnorm(alpha3, 2)
+        I0  = I(alpha3, 0, 0, 0)
+        I2  = I(alpha3, 2, 0, 0)
+        I4  = I(alpha3, 4, 0, 0)
+        I22 = I(alpha3, 2, 2, 0)
+
+        A0 = N0 * I2 / jnp.sqrt(4*jnp.pi)
+        A1 = N2 * I4
+        A2 = N2 * I22
+        A3 = N0 * I0 / jnp.sqrt(4*jnp.pi)
+        A4 = N2 * I2
+
+        A = jnp.array([
+            [A0, A1, A2, A2],
+            [A0, A2, A1, A2],
+            [A0, A2, A2, A1],
+            [A3, A4, A4, A4]
+        ])
+
+        # the vector b
+        NP = basisnorm(alpha1, l1)
+        NQ = basisnorm(alpha2, l2)
+
+        gamma0 = gammaBar(0, l1, l2, alpha1, alpha2)
+        gamma2 = gammaBar(2, l1, l2, alpha1, alpha2)
+
+        N00 = jnp.sqrt(4*jnp.pi)
+        N20 = 4*jnp.sqrt(jnp.pi/5)
+        N22 = 4*jnp.sqrt(jnp.pi/15)
+
+        L = lambda l, m: l**2 + l + m
+        NC00 = N00*CG[L(l1,m1), L(l2,m2), L(0,0)]
+        NC20 = N20*CG[L(l1,m1), L(l2,m2), L(2,0)]
+        NC22 = N22*CG[L(l1,m1), L(l2,m2), L(2,2)]
+
+        b = jnp.array([
+            (1/6)*NP*NQ*gamma2*(2 + 3*NC22 - NC20),
+            (1/6)*NP*NQ*gamma2*(2 - 3*NC22 - NC20),
+            (1/3)*NP*NQ*gamma2*(1 + NC20),
+            NP*NQ*gamma0*NC00
+        ])
+
+        return jnp.linalg.solve(A, b)
+
+    M_PQLarray, V_PQLarray, V_LLarray, gIdx, gOnR = [], [], [], [], []
+    for atomI in range(pmol._atm.shape[0]):
+        idx  = (atoms==atomI)
+        idxg = (atomsG==atomI)
+        lmax = numpy.max(L[idx])
+        gIdx.append(idxg)
+
+        M_PQL = vmap(
+                    vmap(
+                        getMpqlJax, (None, None, 0, 0, None, 0, None)
+                    ), (0, 0, None, None, 0, None, None)
+                ) (L[idx], M[idx], L[idx], M[idx], alpha[idx], alpha[idx], alphaG[0])
+        M_PQLarray.append(M_PQL)
+        # TODO: replace this so that M_PQL begins with this
+
+        shellsA, shellsB = numpy.where(pmol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
+
+        if (not Periodic):
+            VPQL = intor_cross('int3c2e', pmol, gmol,  
+                                shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
+            V_PQLarray.append(VPQL)
+
+            VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1,shellsB[0], shellsB[-1]+1))
+            V_LLarray.append(VLL)
+
+
+        else:
+            if mol.nao != pmol.nao:
+                pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.a, cart = pmol.cart) 
+                # gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = gmol.a, cart = pmol.cart)
+            else:
+                pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a, cart = pmol.cart) 
+            gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a, cart = gmol.cart) 
+
+            dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmolAtom, gmolAtom).build()
+            j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
+            V_LLarray.append(j2c)
+
+            import pdb; pdb.set_trace()
+            mydf = pyscf.pbc.df.RSDF(pmolAtom)
+            mydf.auxbasis = gmol.basis
+
+            eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
+            eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
+            V_PQLarray.append(eri_3d.reshape((pmolAtom.nao, pmolAtom.nao, gmolAtom.nao)))
+
+        gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
+        # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
+
+        #     mydf = pyscf.pbc.df.MDF(pmol)
+        #     nao = pmol.nao
+        #     eri = mydf.get_eri(compact=False).reshape((nao,nao,nao,nao))
+
+
+
+    return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
 
 def intor_cross(intor, mol1, mol2, shls_slice, comp=None):
     nbas1 = len(mol1._bas)
