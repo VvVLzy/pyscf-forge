@@ -184,8 +184,9 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
             mydf.auxbasis = gmol.basis
 
             eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
-            eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
-            V_PQLarray.append(eri_3d.reshape((gmolAtom.nao, gmolAtom.nao, gmolAtomAux.nao)))
+            # eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
+            # V_PQLarray.append(eri_3d.reshape((gmolAtom.nao, gmolAtom.nao, gmolAtomAux.nao)))
+            V_PQLarray.append(numpy.transpose(eri_3d.reshape((gmolAtomAux.nao, gmolAtom.nao, gmolAtom.nao)), (1,2,0)))
 
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
         # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))

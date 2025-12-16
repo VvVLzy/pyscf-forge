@@ -150,7 +150,7 @@ def exact_paw_diff_manual(alpha0=None, Rb=None):
 
     # write to csv
     prefix = '/Users/vvv_lzy/GitHub/pyscf-forge/pyscf/paw/periodic-tests/'
-    path = prefix + f"data/He2bondLength_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}.csv"
+    path = prefix + f"data/He2bondLength_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}_new.csv"
     print(f"Calculation done. Saving data to {path}...")
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
