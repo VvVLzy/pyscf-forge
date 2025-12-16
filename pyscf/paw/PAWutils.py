@@ -375,9 +375,8 @@ def get_PAW_inUsefulFormForJax(PAWdata):
 
     return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
 
-def getj_PAW_JAX(cell, dm, ints, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    V2e=ints["V2e"]
-    wts=jnp.asarray(ints["wts"])
+def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    wts=jnp.asarray(gaussgrid.gridwts)
     start=time.time()
     # TODO: generalize to multiple k-points
     
@@ -419,11 +418,11 @@ def getj_PAW_JAX(cell, dm, ints, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     density, _ = lax.scan(atomContribution, density, (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx))
 
     #potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
-    potential = jnp.einsum("kl,l->k",V2e,density)
+    #potential = jnp.einsum("kl,l->k",V2e,density)
+    potential = jnp.asarray(gaussgrid.getPotential(numpy.array(density)))
 
     J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde).block_until_ready()
-    print(2*J)
-    print(2*J[5:9])
+    #jax.debug.print('{x}',x=J)
     assert(J.shape[0] == cell.nao)
     assert(J.shape[1] == cell.nao)
 
@@ -434,22 +433,34 @@ def getj_PAW_JAX(cell, dm, ints, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         f_pmu, ftilde_pmu, m_pql, gonr, idxAtom, grididx, vpqrs, vpql, vlm = xs
         subMat = dm[idxAtom][:,idxAtom]
         DPQ      = jnp.einsum('Pm, Qn, mn->PQ',      f_pmu,      f_pmu, subMat)
+        #jax.debug.print('dpq {x}',x=DPQ)
         DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftilde_pmu, ftilde_pmu, subMat)
+        #jax.debug.print('dpqr {x}',x=DPQtilde)
         zg  = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
+        #jax.debug.print('zg {x}',x=zg)
         zg2 = jnp.einsum('r,rg,r->g', potential[grididx], gonr,wts[grididx]*wts[grididx])
+        #jax.debug.print('zg2 {x}',x=zg2)
         GL  = jnp.einsum('g,PQg', zg2, m_pql)  ##global-local term
+        #jax.debug.print('gl {x}',x=GL)
 
         ##local-local
         A = -jnp.einsum('PQRS, PQ->RS', vpqrs, DPQtilde) + jnp.einsum('PQ, PQg, RSg->RS', DPQtilde, vpql, m_pql)
+        #jax.debug.print('a1 {x}',x=A)
         A +=-jnp.einsum('g,PQg->PQ', zg, vpql) + jnp.einsum('g,gf, PQf->PQ', zg, vlm, m_pql)
+        #jax.debug.print('a2 {x}',x=A)
         ##gloal-local
         A -= GL
+        #jax.debug.print('a3 {x}',x=A)
 
         B  = jnp.einsum('PQRS, PQ->RS', vpqrs, DPQ) #sharp-sharp
+        #jax.debug.print('b1 {x}',x=B)
         B += -jnp.einsum('PQ, PQg, RSg->RS', DPQtilde, vpql, m_pql)
+        #jax.debug.print('b2 {x}',x=B)
         B += -jnp.einsum('g,gf, PQf->PQ', zg, vlm, m_pql)
+        #jax.debug.print('b3 {x}',x=B)
         ##gloal-local
         B += GL
+        #jax.debug.print('b4 {x}',x=B)
 
         return J.at[jnp.ix_(idxAtom,idxAtom)].set( \
                 jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
@@ -458,8 +469,7 @@ def getj_PAW_JAX(cell, dm, ints, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
-    print(2*J)
-    print(2*J[5:9])
+    #jax.debug.print('{x}',x=J)
 
     print("Finished J: ",time.time()-start)
     return numpy.asarray(J*2)

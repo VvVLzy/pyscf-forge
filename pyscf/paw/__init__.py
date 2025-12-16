@@ -17,7 +17,7 @@ import time
 
 
 def getPAWdata(mol,
-               ints,
+               gaussgrid,
                PAWorbitalCutOff=1.e-5,
                PWAccuracy=1e-5,
                printLevel = 1,
@@ -26,10 +26,10 @@ def getPAWdata(mol,
                augRadius=None):
 
     mol.build()
-    if (not Periodic):
-        mol                          = PAWutils.prepareMolForPAW(mol)
-    # mol                          = PAWutils.prepareMolForPAW(mol) # do this regardless give better result?
-    # uncontract basis
+    #if (not Periodic):
+    #    mol                          = PAWutils.prepareMolForPAW(mol)
+    ## mol                          = PAWutils.prepareMolForPAW(mol) # do this regardless give better result?
+    ## uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
 
     # initialize grids
@@ -37,7 +37,7 @@ def getPAWdata(mol,
     mf.grids.build()
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
-    Rgrid=ints["pos"]
+    Rgrid=gaussgrid.getGrid()
 
     # get alpha0
     if alpha0 is None:
@@ -156,13 +156,8 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
 
     vj = vk = None
-    vj,vk=mydf.ints['mf'].get_jk(dm)
-    print(with_j)
-    print(with_k)
-    print(vj)
-    print(vj[5:9])
     if with_j:
-        vj = PAWutils.getj_PAW_JAX(cell, dm, mydf.ints,
+        vj = PAWutils.getj_PAW_JAX(cell, dm, mydf.gaussgrid,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
                                     mydf.PAWdata,
@@ -182,7 +177,7 @@ class PAW(FFTDF):
     def __init__(
             self,
             cell,
-            ints,
+            gaussgrid,
             kpts=None,
             printLevel=1,
             PAWorbitalCutOff=1e-5,
@@ -226,8 +221,8 @@ class PAW(FFTDF):
             "Fock"       :0.
         }
 
-        self.initPAW(cell,ints)
-        self.ints=ints
+        self.initPAW(cell,gaussgrid)
+        self.gaussgrid=gaussgrid
 
         
 
@@ -238,11 +233,11 @@ class PAW(FFTDF):
             self.get_jk = get_jk_molecule.__get__(self, self.__class__)
         ###
 
-    def initPAW(self, cell,ints):
+    def initPAW(self, cell, gaussgrid):
         t0 = time.time()
         PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdata(
             cell,
-            ints,
+            gaussgrid,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
@@ -267,7 +262,7 @@ class PAW(FFTDF):
         self.Times_["1e-orbs"] += time.time()-t0
 
         self.S = S
-        self.aoOnR_tilde = jnp.einsum('xi,x->xi',aoOnR_tilde,ints['wts'])
+        self.aoOnR_tilde = jnp.einsum('xi,x->xi',aoOnR_tilde,gaussgrid.gridwts)
         self.mesh = mesh
         self.PAWdata = PAWdata
         
