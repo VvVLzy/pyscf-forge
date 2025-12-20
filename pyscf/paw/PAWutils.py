@@ -228,10 +228,9 @@ def compensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic =
     ### new code
     # define some constants
     @jit
-    def gammaBar(n, l1, l2, alpha1, alpha2):
-        L = n + 2 + l1 + l2
+    def gammaBar(n, l, a):
+        L = n + 2 + l
         LL = (L+1)/2
-        a = alpha1 + alpha2
         return jsp.special.gamma(LL) / (2*a**(LL))
 
     @jit
@@ -275,8 +274,8 @@ def compensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic =
         NP = basisnorm(alpha1, l1)
         NQ = basisnorm(alpha2, l2)
 
-        gamma0 = gammaBar(0, l1, l2, alpha1, alpha2)
-        gamma2 = gammaBar(2, l1, l2, alpha1, alpha2)
+        gamma0 = gammaBar(0, l1+l2, alpha1+alpha2)
+        gamma2 = gammaBar(2, l1+l2, alpha1+alpha2)
 
         N00 = jnp.sqrt(4*jnp.pi)
         N20 = 4*jnp.sqrt(jnp.pi/5)
@@ -337,7 +336,7 @@ def compensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic =
             import pdb; pdb.set_trace()
             mydf = pyscf.pbc.df.RSDF(pmolAtom)
             mydf.auxbasis = gmol.basis
-
+            # TODO: fix integrals (figure out weird normalization)
             eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
             eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
             V_PQLarray.append(eri_3d.reshape((pmolAtom.nao, pmolAtom.nao, gmolAtom.nao)))
