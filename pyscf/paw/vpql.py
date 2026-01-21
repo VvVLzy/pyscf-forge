@@ -1,14 +1,14 @@
 import numpy
 import pyscf
 import scipy
-
+from DF import PAWDF
 
 from pyscf.pbc import gto as pgto
 
 # cell params
 L = 10
 x = L/2
-ke_cutoff = 200
+ke_cutoff = 500
 
 # primitive pmol (contain AOs)
 alpha1 = 9 # sharp alpha
@@ -75,26 +75,33 @@ FF = getFormFactor(mesh, pmol_sph).reshape(mesh)
 
 def getVPQL(pmol, gmol):
     # (g|g')
+    mydf = PAWDF(pmol)
+    mydf.auxbasis = gmol.basis
+    mydf.build()
     dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmol, gmol).build()
     j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
-    mydf = pyscf.pbc.df.RSDF(pmol)
-    # mydf = pyscf.pbc.df.FFTDF(pmol)
-    mydf.auxbasis = gmol.basis
-    mydf.omega = 1
-    mydf.build()
-    # TODO: feed rsgdf builder the auxcell from mydf and get j2c again and see if matches normalization
-    # import pdb; pdb.set_trace()
-    # print(mydf.auxcell.rcut)
+    j2c_cd, j2c_negative, j2ctag = dfbuilder.decompose_j2c(j2c)
+    assert(j2c_negative is None)
+    assert(j2ctag == 'CD')
 
     # (PQ|g)
+    # TODO: gamma point only
     eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
-    eri_3d1 = numpy.vstack([Lpq[1].copy() for Lpq in mydf.sr_loop(compact=False)])
-    import pdb; pdb.set_trace()
+    eri_3d = numpy.einsum('LM, Mp -> pL', j2c_cd, eri_3d)
+    vpql = eri_3d.reshape((pmol.nao, pmol.nao, gmol.nao))
+    # eri_3d = numpy.einsum('Pp,PQ->pQ', eri_3d, numpy.linalg.cholesky(j2c, upper=False))
+    # eri_3d = numpy.einsum('PQ,Qp->pP', numpy.linalg.cholesky(j2c, upper=False), eri_3d)
+    # vpql = eri_3d.reshape((pmol.nao, pmol.nao, gmol.nao))
+    # eri_3d1 = numpy.vstack([Lpq[1].copy() for Lpq in mydf.sr_loop(compact=False)])
+    # import pdb; pdb.set_trace()
     # eri_3d = numpy.vstack([Lpq.copy() for Lpq in mydf.loop()])
     # eri_3d = numpy.einsum('Pp,PQ->pQ', eri_3d, numpy.linalg.cholesky(j2c, upper=False))
-    eri_3d = numpy.transpose(eri_3d.reshape(gmol.nao, pmol.nao, pmol.nao), (1,2,0))
+    # eri_3d = numpy.transpose(eri_3d.reshape(gmol.nao, pmol.nao, pmol.nao), (1,2,0))
+    # eri_from_3d = numpy.einsum('PQL,RSL->PQRS', eri_3d, eri_3d)
+    # eri = mydf.get_eri(compact=False).reshape([pmol.nao]*4)
+    # print(numpy.max(numpy.abs(eri_from_3d-eri)))
 
-    return eri_3d, j2c
+    return vpql, j2c
 
 def gammaBar(n, l1, l2, alpha1, alpha2):
     L = n + 2 + l1 + l2
@@ -126,13 +133,20 @@ v_0_cart = numpy.fft.ifftn((numpy.fft.fftn((cmol_s00_cart).reshape(mesh)) * FF))
 print((numpy.dot(v_0_cart, cmol_s00_cart)*dv).real)
 
 # calculate (0 0 | 0) by hand
-N = gammaBar(0, 0, 0, alpha2, 0)* numpy.sqrt(4*numpy.pi) / numpy.sqrt(gammaBar(0, 0, 0, alpha2, alpha2)) 
+# N = gammaBar(0, 0, 0, alpha2, 0)* numpy.sqrt(4*numpy.pi) / numpy.sqrt(gammaBar(0, 0, 0, alpha2, alpha2)) 
 # N1 = 7.1459507339040185/5.092958178940651
 print('Examine first entry in (PQ|L), that is (0 0 | 0)')
 print(f'DF without correction: {VPQL_cart[0, 0, 0]}')
-print(f'DF with correction: {VPQL_sph[0, 0, 0]*N}')
 v_s00_cart = numpy.fft.ifftn((numpy.fft.fftn((pmol_s00_cart**2).reshape(mesh)) * FF)).flatten()
 print(f'Hand calculate (FFTDF): {(numpy.dot(v_s00_cart, cmol_s00_cart)*dv).real}')
+
+# calculate (0 0 | 1) by hand
+# N = gammaBar(0, 0, 0, alpha2, 0)* numpy.sqrt(4*numpy.pi) / numpy.sqrt(gammaBar(0, 0, 0, alpha2, alpha2)) 
+# N1 = 7.1459507339040185/5.092958178940651
+print('Examine first entry in (PQ|L), that is (0 0 | 1)')
+print(f'DF without correction: {VPQL_cart[0, 0, 1]}')
+v_s00_cart = numpy.fft.ifftn((numpy.fft.fftn((pmol_s00_cart**2).reshape(mesh)) * FF)).flatten()
+print(f'Hand calculate (FFTDF): {(numpy.dot(v_s00_cart, cmol_xx_cart)*dv).real}')
 
 # # calculate (0 0 | x^2) by hand
 # print(VPQL_cart[:, :, 1])
