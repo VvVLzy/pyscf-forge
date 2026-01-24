@@ -203,30 +203,109 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
     return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
 
-def compensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
-    alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
-
-    print('Making augmentation sphere for uniform grid:')
-    WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
-    gridIdx = makeAugmentationSphere(WignerSeitzData, pmol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
-
-    ##introducing the compensating charge basis set
-    gmax = int(L.max()*2)
-    gbas = {}
-    for atomI in range(pmol._atm.shape[0]):
-        elem = pmol._atom[atomI][0]
-        gbas[elem] = [ [0, [alpha0, 1.]], [2, [alpha0, 1.]]]
-
-
-    # gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, cart=Periodic) ##if periodic then cartesian functions
-    gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit, cart=True) ##if periodic then cartesian functions
-    alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
-    assert((alphaG == alphaG[0]).all())
-    
+def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmol, Rgrid, gridIdx):
+    @jit
+    def getmpql(j1, m1, j2, m2, j3, m3, alpha1, alpha2, alpha3) : 
+        return CG[(j1*j1 + (m1+j1)), (j2*j2 + (m2+j2)), (j3*j3 + (m3+j3))] * \
+            RadialNorm(alpha1 + alpha2, j1+j2+j3+2) * basisnorm(alpha1, j1) * basisnorm(alpha2, j2) /\
+            (RadialNorm(alpha3, 2*j3+2) * basisnorm(alpha3, j3))
 
     CG = ClebschGordan.RealCG
-    ### new code
-    # define some constants
+    M_PQLarray, V_PQLarray, V_LLarray, gIdx, gOnR = [], [], [], [], []
+    for atomI in range(pmol._atm.shape[0]):
+        idx  = (atoms==atomI)
+        idxg = (atomsG==atomI)
+        gIdx.append(numpy.where(idxg)[0])
+        M_PQL = vmap(
+                    vmap(
+                        vmap(
+                            getmpql, (None,None,None,None,0,0,None,None,0)
+                        ), (0,0,None,None,None,None,0,None,None)
+                    ), (None,None,0,0,None,None,None,0,None)
+                ) (L[idx], M[idx], L[idx], M[idx], LG[idxg], MG[idxg], alpha[idx], alpha[idx], alphaG[idxg])
+        M_PQLarray.append(M_PQL)
+
+        shellsA, shellsB = numpy.where(pmol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
+
+        # assert(Periodic)
+        VPQL = intor_cross('int3c2e', pmol, gmol,  
+                            shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
+        V_PQLarray.append(VPQL)
+
+        VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1,shellsB[0], shellsB[-1]+1))
+        V_LLarray.append(VLL)
+
+        gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
+
+    return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
+
+def getVLLVPQLarray(mol, pmol, gmol_cart, gmax):
+    V_LLarray, V_PQLarray = [], []
+    for atomI in range(pmol._atm.shape[0]):
+        cart = True
+        if mol.nao != pmol.nao:
+            pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.a, cart = cart) 
+        else:
+            pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a, cart = cart) 
+        gmolAtom = pgto.M(atom = [gmol_cart._atom[atomI]], basis = gmol_cart.basis, a = gmol_cart.a, cart = cart)
+
+        mydf = PAWDF(pmolAtom)
+        mydf.auxbasis = gmolAtom.basis
+        mydf.build()
+        dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmolAtom, gmolAtom).build()
+
+        # (g|g')
+        VLL = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
+        j2c_cd, j2c_negative, j2ctag = dfbuilder.decompose_j2c(VLL)
+        assert(j2c_negative is None)
+        assert(j2ctag == 'CD')
+
+        # (PQ|g)
+        # TODO: gamma point only
+        eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
+        eri_3d = numpy.einsum('LM, Mp -> pL', j2c_cd, eri_3d)
+        VPQL = eri_3d.reshape((pmolAtom.nao, pmolAtom.nao, gmolAtom.nao))
+
+        if gmax < 2:
+            idx = [0, 1, 4, 6] # indices correspond to S00, x^2,y^2, z^2
+            V_LLarray.append(VLL[numpy.ix_(idx, idx)]) # only need 4 compensating basis in this case
+            V_PQLarray.append(VPQL[:, :, idx])
+        else:
+            # transform all but the four cart basis to sph basis
+            car2sph = gmolAtom.cart2sph_coeff()
+            assert(car2sph.shape[0] == VLL.shape[0])
+            maskCart = numpy.zeros(car2sph.shape[0], dtype=bool)
+            maskCart[[0, 4, 7, 9]] = True
+            maskSph = numpy.zeros(car2sph.shape[1], dtype=bool)
+            maskSph[[0, 6, 8]] = True
+            car2sph = car2sph[~maskCart][:, ~maskSph]
+
+            VLL_cc = VLL[maskCart][:, maskCart]
+            VLL_cs = numpy.einsum('LM, Mm -> Lm', VLL[maskCart][:, ~maskCart], car2sph)
+            VLL_sc = numpy.transpose(VLL_cs)
+            VLL_ss = numpy.einsum('LM, Ll, Mm -> lm', VLL[~maskCart][:, ~maskCart], car2sph, car2sph)
+
+            V_LLarray.append(
+                numpy.block([
+                    [VLL_cc, VLL_cs],
+                    [VLL_sc, VLL_ss]
+                ])
+            )
+
+            assert(pmol.cart == False) # comp charge doesn't really work cleanly with cartesian basis
+            V_PQLarray.append(
+                numpy.einsum('PQL, Pp, Qq->pqL', numpy.block([
+                    VPQL[:, :, maskCart],
+                    numpy.einsum('PQL, Ll -> PQl', VPQL[:, :, ~maskCart], car2sph)
+                ]), pmolAtom.cart2sph_coeff(), pmolAtom.cart2sph_coeff())
+            )
+
+    return V_LLarray, V_PQLarray
+
+def getMPQLarray(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax):
+    # define some helper functions
+    CG = ClebschGordan.RealCG
+
     @jit
     def gammaBar(n, l, a):
         L = n + 2 + l
@@ -246,7 +325,7 @@ def compensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic =
 
     # solve equations
     @jit
-    def getMpqlJax(l1, m1, l2, m2, alpha1, alpha2, alpha3):
+    def getMpqlCart(l1, m1, l2, m2, alpha1, alpha2, alpha3):
         '''
         Solve eqn Ax = b, where x = Mpql, for l=0, x^2, y^2, z^2
         '''
@@ -294,61 +373,112 @@ def compensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic =
         ])
 
         return jnp.linalg.solve(A, b)
-
-    M_PQLarray, V_PQLarray, V_LLarray, gIdx, gOnR = [], [], [], [], []
+    
+    @jit
+    def getMpqlSph(j1, m1, j2, m2, j3, m3, alpha1, alpha2, alpha3) : 
+        return CG[(j1*j1 + (m1+j1)), (j2*j2 + (m2+j2)), (j3*j3 + (m3+j3))] * \
+            RadialNorm(alpha1 + alpha2, j1+j2+j3+2) * basisnorm(alpha1, j1) * basisnorm(alpha2, j2) /\
+            (RadialNorm(alpha3, 2*j3+2) * basisnorm(alpha3, j3))
+    
+    M_PQLarray = []
+    gIdx = []
     for atomI in range(pmol._atm.shape[0]):
-        idx  = (atoms==atomI)
-        idxg = (atomsG==atomI)
-        lmax = numpy.max(L[idx])
-        gIdx.append(idxg)
+        idx = (atoms == atomI)
+        idxg = (atomsG == atomI)
+        gIdx.append(numpy.where(idxg)[0])
 
-        M_PQL = vmap(
+        MPQLCart = vmap(
                     vmap(
-                        getMpqlJax, (None, None, 0, 0, None, 0, None)
+                        getMpqlCart, (None, None, 0, 0, None, 0, None)
                     ), (0, 0, None, None, 0, None, None)
                 ) (L[idx], M[idx], L[idx], M[idx], alpha[idx], alpha[idx], alphaG[0])
-        M_PQLarray.append(M_PQL)
-        # TODO: replace this so that M_PQL begins with this
-
-        shellsA, shellsB = numpy.where(pmol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
-
-        if (not Periodic):
-            VPQL = intor_cross('int3c2e', pmol, gmol,  
-                                shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
-            V_PQLarray.append(VPQL)
-
-            VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1,shellsB[0], shellsB[-1]+1))
-            V_LLarray.append(VLL)
-
-
+        
+        MPQLSph = vmap(
+                    vmap(
+                        vmap(
+                            getMpqlSph, (None,None,None,None,0,0,None,None,0)
+                        ), (0,0,None,None,None,None,0,None,None)
+                    ), (None,None,0,0,None,None,None,0,None)
+                ) (L[idx], M[idx], L[idx], M[idx], LG[idxg], MG[idxg], alpha[idx], alpha[idx], alphaG[idxg])
+        
+        if gmax < 2:
+            M_PQLarray.append(MPQLCart)
         else:
-            if mol.nao != pmol.nao:
-                pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.a, cart = pmol.cart) 
-                # gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = gmol.a, cart = pmol.cart)
-            else:
-                pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a, cart = pmol.cart) 
-            gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a, cart = gmol.cart) 
+            maskSph = numpy.zeros(MPQLSph.shape[-1], dtype=bool)
+            maskSph[[0, 6, 8]] = True
+            M_PQLarray.append(
+                numpy.block([
+                    MPQLCart,
+                    MPQLSph[:, :, ~maskSph]
+                ])
+            )
+        
+    return M_PQLarray, gIdx
 
-            dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmolAtom, gmolAtom).build()
-            j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
-            V_LLarray.append(j2c)
+def getGOnR(pmol, gmolCart, gmolSph, Rgrid, gridIdx, gmax):
+    gOnR = []
+    for atomI in range(pmol._atm.shape[0]):
+        shellsB = numpy.where(gmolCart._bas[:,0] == atomI)[0]
+        if gmax < 2:
+            gOnR.append(
+                gmolCart.pbc_eval_gto(
+                    'GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)
+                    )[:, [0, 1, 4, 6]]
+            )
+        else:
+            # evaluate S00 cart AO
+            s00OnR = gmolCart.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[0]+1))
 
-            import pdb; pdb.set_trace()
-            mydf = pyscf.pbc.df.RSDF(pmolAtom)
-            mydf.auxbasis = gmol.basis
-            # TODO: fix integrals (figure out weird normalization)
-            eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
-            eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
-            V_PQLarray.append(eri_3d.reshape((pmolAtom.nao, pmolAtom.nao, gmolAtom.nao)))
+            # evaluate l=2 cart AO
+            l2OnR = gmolCart.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[2], shellsB[2]+1))[:, [0, 3, 5]]
 
-        gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
-        # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
+            # evaluate sph AO
+            sphOnR = gmolSph.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1))
+            maskSph = numpy.zeros(sphOnR.shape[-1], dtype=bool)
+            maskSph[[0, 6, 8]] = True
+            sphOnR = sphOnR[:, ~maskSph]
+            
+            gOnR.append(numpy.block([
+                s00OnR, l2OnR, sphOnR
+            ]))
 
-        #     mydf = pyscf.pbc.df.MDF(pmol)
-        #     nao = pmol.nao
-        #     eri = mydf.get_eri(compact=False).reshape((nao,nao,nao,nao))
+    return gOnR
 
 
+def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
+    alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
+
+    print('Making augmentation sphere for uniform grid:')
+    WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
+    gridIdx = makeAugmentationSphere(WignerSeitzData, pmol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
+
+    ##introducing the compensating charge basis set
+    # need both spherical and cartesian
+    gmax = int(L.max()*2)
+    gbasCart, gbasSph = {}, {}
+    for atomI in range(pmol._atm.shape[0]):
+        elem = pmol._atom[atomI][0]
+        gbasSph[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+        if gmax < 2:
+            assert(gmax == 0)
+            gbasCart[elem] = [ [0, [alpha0, 1.]], [2, [alpha0, 1.]]]
+        else:
+            gbasCart[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+
+    gmolCart = pgto.M(atom=pmol.atom, basis=gbasCart, a=pmol.a, unit=pmol.unit, cart=True)
+    gmolSph = pgto.M(atom=pmol.atom, basis=gbasSph, a=pmol.a, unit=pmol.unit, cart=False)
+    alphaG, atomsG, LG, MG = getAlphaAtomsL(gmolSph._bas, gmolSph._env, cart=gmolSph.cart)
+    assert((alphaG == alphaG[0]).all())
+
+    if Periodic:
+        M_PQLarray, gIdx = getMPQLarray(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax)
+        V_LLarray, V_PQLarray = getVLLVPQLarray(mol, pmol, gmolCart, gmax)
+        gOnR = getGOnR(pmol, gmolCart, gmolSph, Rgrid, gridIdx, gmax)
+        gmol = gmolCart
+    else:
+        M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR = compensatingChargeSph(
+            pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
+        )
 
     return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
 
@@ -489,6 +619,7 @@ def get_PAW_inUsefulFormForJax(PAWdata):
     maxP_tild = max([Ftilde_PmuArr[i].shape[0] for i in range(len(Ftilde_PmuArr))])
     assert(maxP == maxP_tild)
     maxg      = max([M_PQLarr[i].shape[2] for i in range(len(M_PQLarr))])
+    maxgIdx   = max([gidx.shape[0] for gidx in gIdx]) # TODO: get rid of this eventually
     maxGrid   = max([gridIdx[i].shape[0] for i in range(len(gridIdx))])
 
 
@@ -500,7 +631,7 @@ def get_PAW_inUsefulFormForJax(PAWdata):
     V_PQLarrJax = jnp.zeros((natom, maxP, maxP, maxg))
     V_LMarrJax  = jnp.zeros((natom, maxg, maxg))
     VPQRSarrayJax = jnp.zeros((natom, maxP, maxP, maxP, maxP))
-    gIdxJax     = jnp.zeros((natom, maxg), dtype=int)
+    gIdxJax     = jnp.zeros((natom, maxgIdx), dtype=int)
     gridIdxJax  = jnp.zeros((natom, maxGrid), dtype=int)
     gOnRJax     = jnp.zeros((natom, maxGrid, maxg))
 
@@ -509,6 +640,7 @@ def get_PAW_inUsefulFormForJax(PAWdata):
         rowIdx     = jnp.arange(len(localIdx[i]))
         rowP       = jnp.arange(F_PmuArr[i].shape[0])
         rowg       = jnp.arange(V_LMarr[i].shape[0])
+        rowgIdx    = jnp.arange(gIdx[i].shape[0])
         rowGrid    = jnp.arange(gOnR[i].shape[0])
 
         localIdxJax = localIdxJax.at[jnp.ix_(row1, rowIdx)].set(localIdx[i])
@@ -517,7 +649,7 @@ def get_PAW_inUsefulFormForJax(PAWdata):
         M_PQLarrJax = M_PQLarrJax.at[jnp.ix_(row1, rowP, rowP, rowg)].set(M_PQLarr[i])
         V_PQLarrJax = V_PQLarrJax.at[jnp.ix_(row1, rowP, rowP, rowg)].set(V_PQLarr[i])
         V_LMarrJax  = V_LMarrJax .at[jnp.ix_(row1, rowg, rowg)].set(V_LMarr[i])
-        gIdxJax     = gIdxJax    .at[jnp.ix_(row1, rowg)].set(jnp.arange(gIdx[i].shape[0])[gIdx[i]])
+        gIdxJax     = gIdxJax    .at[jnp.ix_(row1, rowgIdx)].set(gIdx[i])
         VPQRSarrayJax = VPQRSarrayJax.at[jnp.ix_(row1, rowP, rowP, rowP, rowP)].set(VPQRSArr[i])
         gridIdxJax  = gridIdxJax .at[jnp.ix_(row1, rowGrid)].set(gridIdx[i])
         gOnRJax     = gOnRJax    .at[jnp.ix_(row1, rowGrid, rowg)].set(gOnR[i])
@@ -1395,3 +1527,47 @@ def make_natural_orbitals(cell, kpts, dms):
             mo_coeff[i][k] = numpy.flip(v, axis=1)
 
     return lib.tag_array(dms, mo_coeff=mo_coeff, mo_occ=mo_occ)
+
+
+from pyscf.pbc.lib.kpts_helper import unique
+from pyscf.pbc.df import GDF, incore
+from pyscf.lib import logger
+
+import os
+
+class PAWDF(GDF):
+    def build(self, j_only=None, with_j3c=True, kpts_band=None):
+        if j_only is not None:
+            self._j_only = j_only
+        if self.kpts_band is not None:
+            self.kpts_band = numpy.reshape(self.kpts_band, (-1,3))
+        if kpts_band is not None:
+            kpts_band = numpy.reshape(kpts_band, (-1,3))
+            if self.kpts_band is None:
+                self.kpts_band = kpts_band
+            else:
+                self.kpts_band = unique(numpy.vstack((self.kpts_band,kpts_band)))[0]
+
+        self.check_sanity()
+        self.dump_flags()
+
+        self.auxcell = incore.make_auxcell(self.cell, self.auxbasis)
+
+        if with_j3c and self._cderi_to_save is not None:
+            if isinstance(self._cderi_to_save, str):
+                cderi = self._cderi_to_save
+            else:
+                cderi = self._cderi_to_save.name
+            if isinstance(self._cderi, str):
+                if self._cderi == cderi and os.path.isfile(cderi):
+                    logger.warn(self, 'File %s (specified by ._cderi) is '
+                                'overwritten by GDF initialization.', cderi)
+                    os.remove(cderi)
+                else:
+                    logger.warn(self, 'Value of ._cderi is ignored. '
+                                'DF integrals will be saved in file %s .', cderi)
+            self._cderi = cderi
+            t1 = (logger.process_clock(), logger.perf_counter())
+            self._make_j3c(self.cell, self.auxcell, None, cderi)
+            t1 = logger.timer_debug1(self, 'j3c', *t1)
+        return self
