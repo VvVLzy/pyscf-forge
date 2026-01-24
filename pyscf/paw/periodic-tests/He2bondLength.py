@@ -47,7 +47,6 @@ cell_fftdf = pgto.M(
 # and thus will give an error
 init_guess = '1e'
 xc = ''
-auxbasis = pyscf.df.aug_etb(cell, beta=1.3)
 
 def exact_fftdf(rscale):
     r       = r0*rscale    # rescale C=C bond length
@@ -149,8 +148,8 @@ def exact_paw_diff_manual(alpha0=None, Rb=None):
         })
 
     # write to csv
-    prefix = '/Users/vvv_lzy/GitHub/pyscf-forge/pyscf/paw/periodic-tests/'
-    path = prefix + f"data/He2bondLength_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}.csv"
+    prefix = './'
+    path = prefix + f"data/He2bondLength_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}_new.csv"
     print(f"Calculation done. Saving data to {path}...")
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[

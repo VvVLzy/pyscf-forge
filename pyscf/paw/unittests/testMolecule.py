@@ -18,7 +18,7 @@ def setUpModule():
     H        0.000000   -0.755453   -0.471161
     H        0.000000    0.755453   -0.471161
     """
-    basis = "cc-pvtz"
+    basis = "cc-pvdz"
     verbose = 4
 
     # periodic box
@@ -61,16 +61,17 @@ class testPAW(unittest.TestCase):
         # OCCRI calculation
         mf_mol_rks_paw = scf.RKS(mol).density_fit()
         mf_mol_rks_paw.init_guess = init_guess
-        # mydf = PAW.from_mf(mf_mol_rks_paw, cell, PWAccuracy=1e-4).build()
-        mydf = PAW.from_mf(mf_mol_rks_paw, cell, PWAccuracy=1e-4, alpha0=2).build()
+        mydf = PAW.from_mf(mf_mol_rks_paw, cell, PWAccuracy=1e-4).build()
+        # mydf = PAW.from_mf(mf_mol_rks_paw, cell, PWAccuracy=1e-4, alpha0=2).build()
         mf_mol_rks_paw.with_df = mydf
         
         mf_mol_rks_paw.kernel()
-        e_occri = mf_mol_rks_paw.e_tot/cell.natm
+        e_paw = mf_mol_rks_paw.e_tot/cell.natm
 
         # Check convergence and energy agreement
         self.assertTrue(mf_mol_rks_paw.converged)
-        self.assertAlmostEqual(e_ref, e_occri, places=3)
+        print(f'E(PAW)-E(FFTDF) = {numpy.abs(e_paw-e_ref)}')
+        self.assertAlmostEqual(e_ref, e_paw, places=5)
 
 
 if __name__ == "__main__":
