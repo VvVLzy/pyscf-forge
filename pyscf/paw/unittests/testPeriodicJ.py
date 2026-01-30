@@ -19,7 +19,7 @@ zeta = 'dz'
 basis = "ccpv"+zeta
 verbose = 3
 a = numpy.eye(3) * L
-ke_cutoff = 2000
+ke_cutoff = 800
 precision = 1e-8
 
 cell = pgto.M(
@@ -118,7 +118,7 @@ def check_J():
     J_paw = mf_per_rks_paw.get_j(dm=dm)
     J_paw_new = mf_per_rks_paw_new.get_j(dm=dm)
 
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     hcore_fftdf = mf_per_rks.get_hcore()
     hcore_paw = mf_per_rks_paw.get_hcore()
     hcore_paw_new = mf_per_rks_paw_new.get_hcore()
