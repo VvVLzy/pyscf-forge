@@ -36,6 +36,33 @@ def prepareMolForPAW(mol):
 
     return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff,unit='A')
 
+def addSharpGTO2Atom(mol):
+    mol = mol.copy()
+    # 2. Define the new s-type Gaussian primitive to add
+    # Here, we'll add a single s-type primitive with an exponent and a coefficient.
+    new_s_gaussian = [0, [1e12, 1.0]]  # Angular momentum = 0, exponent = 1e12, coefficient = 1.0
+
+    # 3. Create a new basis set dictionary
+    custom_basis = {}
+
+    # Iterate through each atom in the molecule and modify its basis
+    for atm_symbol, basis_def in mol._basis.items():
+        # Make a copy of the current basis definition for the atom
+        modified_basis_def = [new_s_gaussian]
+        
+        # Add the new s-type Gaussian to the list of basis functions
+        modified_basis_def.extend(list(basis_def))
+        
+        # Update the custom basis dictionary
+        custom_basis[atm_symbol] = modified_basis_def
+
+    # 4. Modify the molecule's basis set with the new custom basis
+    mol.basis = custom_basis
+
+    # 5. Rebuild the molecule object to apply the new basis set
+    mol.build()
+
+    return mol
 
 def makeWignerSeitz(Rgrid, mol, Periodic=False):
     def makeWignerSeitz4Grid(grid):
@@ -243,12 +270,12 @@ def getVLLVPQLarray(mol, pmol, gmol_cart, gmax):
     V_LLarray, V_PQLarray = [], []
     for atomI in range(pmol._atm.shape[0]):
         cart = True
-        if mol.nao != pmol.nao:
+        if mol.nao != pmol.nao and isinstance(pmol.basis, str): # mol uses a contracted basis
             pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.a, cart = cart) 
         else:
-            pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a, cart = cart) 
+            assert(mol.nao == pmol.nao or isinstance(pmol.basis, dict))
+            pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a, cart = cart)
         gmolAtom = pgto.M(atom = [gmol_cart._atom[atomI]], basis = gmol_cart.basis, a = gmol_cart.a, cart = cart)
-
         mydf = PAWDF(pmolAtom)
         mydf.auxbasis = gmolAtom.basis
         mydf.build()
@@ -482,6 +509,46 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
 
     return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
 
+def mergeCompensatingChargeNew(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
+    pmolNuc = addSharpGTO2Atom(pmol)
+    assert(type(pmolNuc.basis) == dict)
+    assert(pmolNuc.basis == modifyMolBasis(pmolNuc.basis))
+    alpha, atoms, L, M = getAlphaAtomsL(pmolNuc._bas, pmolNuc._env)
+
+    print('Making augmentation sphere for uniform grid:')
+    WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
+    gridIdx = makeAugmentationSphere(WignerSeitzData, pmol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
+
+    ##introducing the compensating charge basis set
+    # need both spherical and cartesian
+    gmax = int(L.max()*2)
+    gbasCart, gbasSph = {}, {}
+    for atomI in range(pmol._atm.shape[0]):
+        elem = pmol._atom[atomI][0]
+        gbasSph[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+        if gmax < 2:
+            assert(gmax == 0)
+            gbasCart[elem] = [ [0, [alpha0, 1.]], [2, [alpha0, 1.]]]
+        else:
+            gbasCart[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+
+    gmolCart = pgto.M(atom=pmol.atom, basis=gbasCart, a=pmol.a, unit=pmol.unit, cart=True)
+    gmolSph = pgto.M(atom=pmol.atom, basis=gbasSph, a=pmol.a, unit=pmol.unit, cart=False)
+    alphaG, atomsG, LG, MG = getAlphaAtomsL(gmolSph._bas, gmolSph._env, cart=gmolSph.cart)
+    assert((alphaG == alphaG[0]).all())
+    
+    if Periodic:
+        M_PQLarray, gIdx = getMPQLarray(pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax)
+        V_LLarray, V_PQLarray = getVLLVPQLarray(mol, pmolNuc, gmolCart, gmax)
+        gOnR = getGOnR(pmolNuc, gmolCart, gmolSph, Rgrid, gridIdx, gmax)
+        gmol = gmolCart
+    else:
+        M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR = compensatingChargeSph(
+            pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
+        )
+
+    return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
+
 def intor_cross(intor, mol1, mol2, shls_slice, comp=None):
     nbas1 = len(mol1._bas)
     nbas2 = len(mol2._bas)
@@ -660,6 +727,31 @@ def get_PAW_inUsefulFormForJax(PAWdata):
 
     return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
 
+def get_PAWNuc_inUsefulFormForJax(PAWNucdata):
+    VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
+
+    ##whenever tensor are smaller than these then pad tensor with zeros
+    maxP      = max([VPQRSArrNuc[i].shape[0] for i in range(len(VPQRSArrNuc))])
+    maxg      = max([M_PQLarrNuc[i].shape[0] for i in range(len(M_PQLarrNuc))])
+
+
+    natom = len(ZNucArr)
+    VPQRSArrNucJax = jnp.zeros((natom, maxP, maxP))
+    M_PQLarrNucJax = jnp.zeros((natom, maxg))
+    ZNucArrJax     = jnp.zeros((natom,))
+    
+
+    for i in range(natom):
+        row1       = jnp.asarray([i])
+        rowP       = jnp.arange(VPQRSArrNuc[i].shape[0])
+        rowg       = jnp.arange(M_PQLarrNuc[i].shape[0])
+
+        VPQRSArrNucJax = VPQRSArrNucJax.at[jnp.ix_(row1, rowP, rowP)].set(VPQRSArrNuc[i])
+        M_PQLarrNucJax = M_PQLarrNucJax.at[jnp.ix_(row1, rowg)].set(M_PQLarrNuc[i])
+        ZNucArrJax = ZNucArrJax.at[jnp.ix_(row1, )].set(ZNucArr[i])
+
+    return VPQRSArrNucJax, M_PQLarrNucJax, ZNucArrJax
+
 def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
     
@@ -810,7 +902,6 @@ def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         # end12 = time.time()
         # print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
         # print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
-        # import pdb; pdb.set_trace()
     end1 = time.time()
     print(f'PW part: {end1-start1}')
 
@@ -922,7 +1013,6 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         end12 = time.time()
         print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
         print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
-        # import pdb; pdb.set_trace()
     end1 = time.time()
     print(f'PW part: {end1-start1}')
 
@@ -1026,7 +1116,6 @@ def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
                 carry[0])
     end1 = time.time()
     print(f'PW Part: {end1-start1}')
-    # import pdb;pdb.set_trace()
 
     start2 = time.time()
     K = jnp.zeros((nao,nao))
@@ -1102,7 +1191,6 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         kimu, phi_i, Gi, Gtildei = carry
 
         phi_j = occMoj @ aoOnR_tilde
-        # import pdb; pdb.set_trace()
         # Rho_ij = phi_i * phi_j
 
         Rho_ij = phi_j
@@ -1132,7 +1220,6 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         # end12 = time.time()
         # print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
         # print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
-        # import pdb; pdb.set_trace()
     end1 = time.time()
     print(f'matmul(jax): {end1-start1}')
 
@@ -1356,18 +1443,108 @@ def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None,
 
         # local 4-index integral
         idx = numpy.where(pmol._bas[:,0] == atomI)[0]
-
+        auxbasis = getAuxbasis(pmol)
         if Periodic :
             if mol.nao != pmol.nao: # mol uses a contracted basis
                 molAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.a)
             else:
                 molAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol.basis, a = pmol.a)
             mydf = pyscf.pbc.df.RSDF(molAtom)
+            mydf.auxbasis = auxbasis
+            mydf.build()
             VPQRSArr.append(mydf.get_eri(compact=False).reshape((molAtom.nao, molAtom.nao, molAtom.nao, molAtom.nao)))
         else:
             VPQRSArr.append(pmol.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1)))
-    # import pdb; pdb.set_trace()
     return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
+
+def obtainLocalFns1New(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
+    '''
+    Fit AO and diffuse AO directly, much faster
+    set F_Pmu directly to contraction coefficient when P=mu
+    '''
+
+    labels = labelShellWithIdx(ctr_coeff, mol)
+
+
+    BeckeCoords = grids.coords
+    alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
+    atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
+    
+    print('Making augmentation sphere for Becke grid:')
+    WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
+    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
+
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
+
+    for atomI in range(mol._atm.shape[0]):
+        idx = gridIdx[atomI]
+        coordsA = BeckeCoords[idx]
+        wtsA = grids.weights[idx]
+
+        ##evaluate the value of the functions on atom A grid
+        _, aoOnA_tilde = partitionAOs(mol, pmol, coordsA, ctr_coeff, alpha0)
+
+        # fit all local primitives with atom centered primitives
+        ACenteredId = jnp.where(atoms == atomI)[0]
+        ACenteredAOId = jnp.where(atomsAO == atomI)[0]
+
+        locId = jnp.where(jnp.sum(abs(aoOnA_tilde) > epsilon, axis=0) > 0)[0]
+        locId = jnp.union1d(locId, ACenteredAOId)
+
+        idxToFit = jnp.where(~jnp.isin(locId, ACenteredAOId))[0]
+        idxToSet = jnp.where(jnp.isin(locId, ACenteredAOId))[0]
+
+        SrP  = pmol.eval_gto('GTOval_sph', coordsA)[:, ACenteredId]
+        Sra_tilde = aoOnA_tilde[:, locId][:, idxToFit]
+
+        ##least square minimization which tries to fit the local function in terms of atom centered function
+        ## on the local grid
+        F_Pmu = jnp.zeros((len(ACenteredId), len(locId)))
+        Ftilde_Pmu = jnp.zeros_like(F_Pmu)
+        SPQ_inv = jnp.linalg.pinv(jnp.einsum('rP,r,rQ->PQ', SrP, wtsA, SrP), rtol=rtol)
+        F_fitted = SPQ_inv @ jnp.einsum('rP,r,rQ->PQ', SrP, wtsA, Sra_tilde)
+        F_Pmu = F_Pmu.at[:, idxToFit].set(F_fitted)
+        Ftilde_Pmu = Ftilde_Pmu.at[:, idxToFit].set(F_fitted)
+
+        # set local, a-centered function directly as contraction coefficient (no fitting)
+        diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
+        C_Pa = getContMatFromID(ACenteredAOId, ACenteredId, ctr_coeff, labels, mol)
+        Ctilde_Pa = jnp.zeros_like(C_Pa)
+        Ctilde_Pa = Ctilde_Pa.at[diffuseAcenteredPrimMask, :].set(C_Pa[diffuseAcenteredPrimMask, :])
+        assert(C_Pa.shape[0] == F_Pmu.shape[0])
+        assert(Ctilde_Pa.shape[0] == Ftilde_Pmu.shape[0])
+        assert(numpy.isin(ACenteredAOId, locId).all())
+        F_Pmu = F_Pmu.at[:, idxToSet].set(C_Pa)
+        Ftilde_Pmu = Ftilde_Pmu.at[:, idxToSet].set(Ctilde_Pa)
+
+        # update array
+        localIdx.append(locId)
+        SArr.append(jnp.einsum('rP,r,rQ->PQ', SrP, wtsA, SrP))
+        F_PmuArr.append(F_Pmu)
+        Ftilde_PmuArr.append(Ftilde_Pmu)
+
+        # local 4-index integral
+        pmolNuc = addSharpGTO2Atom(pmol)
+        assert(type(pmolNuc.basis) == dict)
+        assert(pmolNuc.basis == modifyMolBasis(pmolNuc.basis))
+        idx = numpy.where(pmolNuc._bas[:,0] == atomI)[0]
+        auxbasis = getAuxbasis(pmolNuc)
+        if Periodic :
+            # if mol.nao != pmol.nao and isinstance(pmol.basis, str): # mol uses a contracted basis
+            if False: # mol uses a contracted basis
+                molAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+ pmol.basis, a = pmol.a)
+            else:
+                assert(mol.nao == pmol.nao or isinstance(pmolNuc.basis, dict))
+                molAtom = pgto.M(atom = [pmolNuc._atom[atomI]], basis = pmolNuc.basis, a = pmolNuc.a)
+                # molAtom, _ = molAtom.decontract_basis()
+            mydf = pyscf.pbc.df.RSDF(molAtom)
+            mydf.auxbasis = auxbasis
+            mydf.build()
+            VPQRSArr.append(mydf.get_eri(compact=False).reshape((molAtom.nao, molAtom.nao, molAtom.nao, molAtom.nao)))
+        else:
+            VPQRSArr.append(pmolNuc.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1)))
+    return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
+
 
 def getIntegralDiff(dmol, L, Rgrid, mesh, FF, Ng, f, Periodic=False, diag=True, gridIdx=None):
     '''
@@ -1528,6 +1705,225 @@ def make_natural_orbitals(cell, kpts, dms):
 
     return lib.tag_array(dms, mo_coeff=mo_coeff, mo_occ=mo_occ)
 
+def modifyMolBasis(bas):
+    '''
+    uncontract mol.basis in the case of a dictionary
+    '''
+    result = {}
+    for atom, basis in bas.items():
+        result[atom] = list()
+        for shell in basis:
+            if len(shell) > 2:
+                # this is a contracted shell
+                l = shell[0]
+                for pgto in shell[1:]:
+                    result[atom].append([l, [pgto[0], 1.]])
+            else:
+                result[atom].append(shell)
+    
+    return result
+
+def separateNuclearElectron(pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr):
+    VPQRSArrElec, VPQRSArrNuc = [], []
+    M_PQLarrElec, M_PQLarrNuc = [], []
+    V_PQLarrElec = []
+    ZNucArr = []
+    for atomI in range(pmol._atm.shape[0]):
+
+        VPQRSArrElec.append(VPQRSArr[atomI][1:, 1:, 1:, 1:])
+        VPQRSArrNuc.append(VPQRSArr[atomI][0, 0, 1:, 1:])
+
+        M_PQLarrElec.append(M_PQLarr[atomI][1:, 1:, :])
+        M_PQLarrNuc.append(M_PQLarr[atomI][0, 0, :])
+
+        V_PQLarrElec.append(V_PQLarr[atomI][1:, 1:, :])
+
+        ZNucArr.append(-pmol._atm[atomI][0])
+
+    V_LMarrElec = V_LMarr # no new compensating charge is added
+
+    result = (VPQRSArrElec, M_PQLarrElec, V_PQLarrElec, V_LMarrElec,
+              VPQRSArrNuc, M_PQLarrNuc, ZNucArr
+    )
+
+    return result
+
+def getAuxbasis(pmol):
+    auxbas = {}
+    for atom, bas in pmol._basis.items():
+        basOnA = pmol._basis[atom]
+        shellAtom = []
+        for i in range(len(basOnA)):
+            shell1 = basOnA[i]
+            l1, exp1 = shell1[0], shell1[1][0]
+            assert(shell1[1][1] == 1) # should be true for primitive mol
+            for j in range(i, len(basOnA)):
+                shell2 = basOnA[j]
+                l2, exp2 = shell2[0], shell2[1][0]
+                assert(shell2[1][1] == 1)
+                lmax = l1+l2+1
+                lmin = numpy.abs(l1-l2)
+                shell = [[l, [exp1+exp2, 1.]] for l in range(lmin, lmax)]
+                shellAtom.extend(shell)
+        auxbas[atom] = shellAtom
+
+    return auxbas
+
+def getNucPAW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
+    # TODO: generalize to multiple k-points
+    
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWElecdata
+    VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
+
+    Ng = numpy.prod(mesh)
+    f = (cell.vol/Ng)
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+
+
+    ##diffuse density
+    density = jnp.zeros((Ng,))
+
+    @jit
+    def atomContribution(density, xs):
+        znuc, m_00l, gonr, grididx = xs
+        update = jnp.einsum('g,rg->r', m_00l, gonr)*znuc + density[grididx]
+        return density.at[grididx].set( update ), None
+
+    ##add the compensating change to the diffuse density
+    density, _ = lax.scan(atomContribution, density, (ZNucArr, M_PQLarrNuc, gOnR, gridIdx))
+    potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
+
+    nuc = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde)*f
+    assert(nuc.shape[0] == cell.nao)
+    assert(nuc.shape[1] == cell.nao)
+
+    @jit
+    def atomContributionToJ(nuc, xs):
+        f_pmu, ftilde_pmu, m_pql, gonr, idxAtom, grididx, vpql, vlm, znuc, v00rs, m_00l = xs
+
+        zg2 = jnp.einsum('r,rg->g', potential[grididx], gonr)*f
+        GL  = jnp.einsum('g,PQg', zg2, m_pql)  ##global-local term
+
+        ##local-local
+        A = -jnp.einsum('g,PQg->PQ', m_00l, vpql)*znuc + jnp.einsum('g, gf, PQf->PQ', m_00l, vlm, m_pql)*znuc
+        ##gloal-local
+        A -= GL
+
+        # B  = jnp.einsum('PQRS, PQ->RS', vpqrs, DPQ) #sharp-sharp
+        B  = v00rs*znuc #sharp-sharp
+        B += -jnp.einsum('g,gf, PQf->PQ', m_00l, vlm, m_pql)*znuc
+        ##gloal-local
+        B += GL
+
+        return nuc.at[jnp.ix_(idxAtom,idxAtom)].set( \
+                jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
+                jnp.einsum('RS, Rm, Sn->nm', A, ftilde_pmu, ftilde_pmu) +
+                nuc[idxAtom][:,idxAtom]), None
+
+    xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, V_PQLarr, V_LMarr,
+          ZNucArr, VPQRSArrNuc, M_PQLarrNuc)
+    nuc, _ = lax.scan(atomContributionToJ, nuc, xs)
+
+    return numpy.asarray([nuc])
+
+def getNucPAWSmoothLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWElecdata
+    VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
+
+    nao = aoOnR_tilde.shape[1]
+    nuc = jnp.zeros((nao, nao))
+
+    @jit
+    def atomContributionToJ(nuc, xs):
+        f_pmu, ftilde_pmu, m_pql, gonr, idxAtom, grididx, vpql, vlm, znuc, v00rs, m_00l = xs
+
+        ##local-local
+        A = -jnp.einsum('g,PQg->PQ', m_00l, vpql)*znuc + jnp.einsum('g, gf, PQf->PQ', m_00l, vlm, m_pql)*znuc
+        B = -jnp.einsum('g,gf, PQf->PQ', m_00l, vlm, m_pql)*znuc
+
+
+        return nuc.at[jnp.ix_(idxAtom,idxAtom)].set( \
+                jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
+                jnp.einsum('RS, Rm, Sn->nm', A, ftilde_pmu, ftilde_pmu) +
+                nuc[idxAtom][:,idxAtom]), None
+
+    xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, V_PQLarr, V_LMarr,
+          ZNucArr, VPQRSArrNuc, M_PQLarrNuc)
+    nuc, _ = lax.scan(atomContributionToJ, nuc, xs)
+
+    return numpy.asarray([nuc])
+
+def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
+    # TODO: generalize to multiple k-points
+    
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWElecdata
+    VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
+
+    Ng = numpy.prod(mesh)
+    f = (cell.vol/Ng)
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+
+
+    ##diffuse density
+    density = jnp.zeros((Ng,))
+
+    @jit
+    def atomContribution(density, xs):
+        znuc, m_00l, gonr, grididx = xs
+        update = jnp.einsum('g,rg->r', m_00l, gonr)*znuc + density[grididx]
+        return density.at[grididx].set( update ), None
+
+    ##add the compensating change to the diffuse density
+    density, _ = lax.scan(atomContribution, density, (ZNucArr, M_PQLarrNuc, gOnR, gridIdx))
+    potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
+
+    nuc = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde)*f
+    assert(nuc.shape[0] == cell.nao)
+    assert(nuc.shape[1] == cell.nao)
+
+    @jit
+    def atomContributionToJ(nuc, xs):
+        f_pmu, ftilde_pmu, m_pql, gonr, idxAtom, grididx, vpql, vlm, znuc, v00rs, m_00l = xs
+
+        zg2 = jnp.einsum('r,rg->g', potential[grididx], gonr)*f
+        GL  = jnp.einsum('g,PQg', zg2, m_pql)  ##global-local term
+
+        A = -GL
+        B = +GL
+
+        return nuc.at[jnp.ix_(idxAtom,idxAtom)].set( \
+                jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
+                jnp.einsum('RS, Rm, Sn->nm', A, ftilde_pmu, ftilde_pmu) +
+                nuc[idxAtom][:,idxAtom]), None
+
+    xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, V_PQLarr, V_LMarr,
+          ZNucArr, VPQRSArrNuc, M_PQLarrNuc)
+    nuc, _ = lax.scan(atomContributionToJ, nuc, xs)
+
+    return numpy.asarray([nuc])
+
+def getNucPAWSharpLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWElecdata
+    VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
+
+    nao = aoOnR_tilde.shape[1]
+    nuc = jnp.zeros((nao, nao))
+
+    @jit
+    def atomContributionToJ(nuc, xs):
+        f_pmu, ftilde_pmu, m_pql, gonr, idxAtom, grididx, vpql, vlm, znuc, v00rs, m_00l = xs
+
+        B  = v00rs*znuc #sharp-sharp
+
+        return nuc.at[jnp.ix_(idxAtom,idxAtom)].set( \
+                jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
+                nuc[idxAtom][:,idxAtom]), None
+
+    xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, V_PQLarr, V_LMarr,
+          ZNucArr, VPQRSArrNuc, M_PQLarrNuc)
+    nuc, _ = lax.scan(atomContributionToJ, nuc, xs)
+
+    return numpy.asarray([nuc])
 
 from pyscf.pbc.lib.kpts_helper import unique
 from pyscf.pbc.df import GDF, incore
