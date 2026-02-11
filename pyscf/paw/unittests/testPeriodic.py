@@ -110,7 +110,8 @@ class testPAW(unittest.TestCase):
         mf_per_rks_paw.init_guess = init_guess
         mf_per_rks_paw.xc = xc
         # mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8).build()
-        mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=20, augRadius=5).build()
+        # mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-10, PAWorbitalCutOff=1e-10).build()
+        mydf = NewPAW.from_mf(mf_per_rks_paw, alpha0=10, augRadius=1.5).build()
         mf_per_rks_paw.with_df = mydf
         mf_per_rks_paw.kernel()
         e_paw = mf_per_rks_paw.e_tot/cell.natm
@@ -129,12 +130,12 @@ class testPAW(unittest.TestCase):
         mf_per_rks_paw.init_guess = init_guess
         mf_per_rks_paw.xc = xc
         # mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8).build()
-        mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=12.04, augRadius=2).build()
+        mydf = NewPAW.from_mf(mf_per_rks_paw, alpha0=10., augRadius=5).build()
         
         mf_per_rks_paw1 = pscf.RKS(cell)
         mf_per_rks_paw1.init_guess = init_guess
         mf_per_rks_paw1.xc = xc
-        mydf1 = PAW.from_mf(mf_per_rks_paw1, PWAccuracy=1e-8).build()
+        mydf1 = PAW.from_mf(mf_per_rks_paw1, alpha0=10., augRadius=5).build()
 
         nuc_paw = mydf.get_nuc()
         nuc1_paw = mydf.get_nuc1()
@@ -145,7 +146,10 @@ class testPAW(unittest.TestCase):
         print(f'Difference in smooth part: {numpy.max(numpy.abs(nuc1_paw+nuc3_paw))}')
         print(f'Difference in sharp part: {numpy.max(numpy.abs(nuc2_paw-nuc_rsdf))}')
 
-        import pdb; pdb.set_trace()
+        # VPQRSNuc = -mydf.PAWNucdata[0][0]*cell._atm[0,0] # should be the same as nuc mat for one atom (primitive aos)
+        # print(f'Difference in VPQRSNuc - Nuc_rsdf: {numpy.max(numpy.abs(VPQRSNuc - nuc_rsdf))}')
+        # import pdb; pdb.set_trace()
+
 
 if __name__ == "__main__":
     print("Running PAW test suite...")

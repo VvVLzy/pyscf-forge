@@ -2,11 +2,12 @@ import numpy
 import pyscf
 import csv
 import time
-
+import gc
 
 from pyscf.pbc import gto as pgto
 from pyscf.pbc import scf as pscf
-from pyscf.paw import PAW
+# from pyscf.paw import PAW
+from pyscf.paw import NewPAW as PAW
 
 
 L = 3.  # box size
@@ -88,7 +89,8 @@ def exact_paw_diff_auto():
         mf_per_rks_paw = pscf.RKS(cell)
         mf_per_rks_paw.init_guess = init_guess
         mf_per_rks_paw.xc = xc
-        mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8).build()
+        # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, PAWorbitalCutOff=1.e-8).build()
+        mydf = PAW.from_mf(mf_per_rks_paw, alpha0=10, PAWorbitalCutOff=1.e-8).build()
         mf_per_rks_paw.with_df = mydf
         mf_per_rks_paw.kernel()
 
@@ -100,6 +102,12 @@ def exact_paw_diff_auto():
             "conv_pyscf": mf_per_rks.converged,
             "conv_paw": mf_per_rks_paw.converged
         })
+
+        # CLEANUP
+        del mf_per_rks
+        del mf_per_rks_paw
+        del mydf
+        gc.collect() # Manually trigger garbage collection
 
     # write to csv
     prefix = '/Users/vvv_lzy/GitHub/pyscf-forge/pyscf/paw/periodic-tests/'
@@ -147,6 +155,12 @@ def exact_paw_diff_manual(alpha0=None, Rb=None):
             "conv_paw": mf_per_rks_paw.converged
         })
 
+        # CLEANUP
+        del mf_per_rks
+        del mf_per_rks_paw
+        del mydf
+        gc.collect() # Manually trigger garbage collection
+
     # write to csv
     prefix = './'
     path = prefix + f"data/He2bondLength_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}_new.csv"
@@ -161,10 +175,10 @@ def exact_paw_diff_manual(alpha0=None, Rb=None):
 def main():
     # basis_set_convergence()
     # start = time.time()
-    # exact_paw_diff_auto()
+    exact_paw_diff_auto()
     # print(f'Time elapsed: {time.time()-start:.2f}')
     # exact_fftdf(0.7)
-    exact_paw_diff_manual(alpha0=10, Rb=1.5)
+    # exact_paw_diff_manual(alpha0=10, Rb=1.5)
 
 if __name__ == '__main__':
     main()
