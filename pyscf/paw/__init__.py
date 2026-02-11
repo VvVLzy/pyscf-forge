@@ -58,15 +58,14 @@ def getPAWdataNew(mol,
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
     gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
 
+    # Prepare PAW data
     result = PAWutils.separateNuclearElectron(
         pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr)
+    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gIdx, gridIdx, gOnR)
 
     # JAX version of PAWdata
-    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gIdx, gridIdx, gOnR)
     PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
-
     PAWNucdataJax = PAWutils.get_PAWNuc_inUsefulFormForJax(result[-3:])
-
 
     if (printLevel > 0):
         # print ("Rb          : {0:<10.2f}".format(Rb))
@@ -110,7 +109,9 @@ def getPAWdata(mol,
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(
         pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
     M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.mergeCompensatingCharge(
-        pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
+        pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic) ##TODO: this is unusable now!
+    # M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(
+    #     pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
     # Evaluate AOs on uniform grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
@@ -535,7 +536,7 @@ class NewPAW(FFTDF):
             nuc = nuc[0]
         return nuc
     
-    def get_nuc1(self, kpts=None):
+    def get_nuc1(self, atomI=None, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
         '''
         # TODO: kpt not implemented
@@ -543,12 +544,12 @@ class NewPAW(FFTDF):
         kpts, is_single_kpt = _check_kpts(self, kpts)
         
         nuc = PAWutils.getNucPAWSmoothPW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                 self.PAWNucdata, self.Periodic)
+                                 self.PAWNucdata, self.Periodic, atomI=atomI)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
     
-    def get_nuc2(self, kpts=None):
+    def get_nuc2(self, atomI=None, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
         '''
         # TODO: kpt not implemented
@@ -556,12 +557,12 @@ class NewPAW(FFTDF):
         kpts, is_single_kpt = _check_kpts(self, kpts)
         
         nuc = PAWutils.getNucPAWSharpLocal(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                 self.PAWNucdata, self.Periodic)
+                                 self.PAWNucdata, self.Periodic, atomI=atomI)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
     
-    def get_nuc3(self, kpts=None):
+    def get_nuc3(self, atomI=None, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
         '''
         # TODO: kpt not implemented
@@ -569,7 +570,7 @@ class NewPAW(FFTDF):
         kpts, is_single_kpt = _check_kpts(self, kpts)
         
         nuc = PAWutils.getNucPAWSmoothLocal(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                 self.PAWNucdata, self.Periodic)
+                                 self.PAWNucdata, self.Periodic, atomI=atomI)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
