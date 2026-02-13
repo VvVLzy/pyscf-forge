@@ -44,6 +44,7 @@ def getPAWdataNew(mol,
         alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
     else:
         _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+        alpha0_wf = alpha0/2
 
     alpha0_wf = alpha0 # it seems that this works better in practice
 
@@ -68,7 +69,7 @@ def getPAWdataNew(mol,
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol
+    return PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol
 
 def getPAWdata(mol,
                PAWorbitalCutOff=1.e-5,
@@ -99,6 +100,7 @@ def getPAWdata(mol,
         alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
     else:
         _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+        alpha0_wf = alpha0/2
 
     alpha0_wf = alpha0 # it seems that this works better in practice
 
@@ -123,7 +125,7 @@ def getPAWdata(mol,
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol
+    return PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
     if mydf.scf_iter == 0:
@@ -162,10 +164,10 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
         # TODO: test paw jk here
         vj = vk = None
         if with_j:
-            vj = PAWutils.getj_PAW_JAX(cell, dm, 
+            vj = PAWutils.getj_PAW_Numpy(cell, dm, 
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
-                                        mydf.PAWdata,
+                                        mydf.PAWdataNumpy,
                                         Periodic=mydf.Periodic)
         if with_k:
             vk = PAWutils.getk_PAW_JAX(cell, dm,
@@ -212,14 +214,12 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
 
     vj = vk = None
     if with_j:
-        vj = PAWutils.getj_PAW_JAX(cell, dm, 
+        vj = PAWutils.getj_PAW_Numpy(cell, dm, 
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
-                                    mydf.PAWdata,
+                                    mydf.PAWdataNumpy,
                                     Periodic=mydf.Periodic)
     if with_k:
-        # TODO: get k here has some problems
-        # different nmo than GAPW
         vk = PAWutils.getk_PAW_loop(cell, dm,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
@@ -288,7 +288,7 @@ class PAW(FFTDF):
 
     def initPAW(self, cell):
         t0 = time.time()
-        PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdata(
+        PAWdataNumpy, PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdata(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
@@ -318,6 +318,7 @@ class PAW(FFTDF):
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
+        self.PAWdataNumpy = PAWdataNumpy
         
         if (self.printLevel > 0):
             print ("Nelection   : {0:<10d}".format(nelec))
@@ -339,6 +340,78 @@ class PAW(FFTDF):
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
+    
+    def getJ1(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J1 = PAWutils.getjSmoothPW(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdata, self.Periodic)
+        
+        return J1
+    
+    def getJ2(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J2 = PAWutils.getjSharpLocal(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdata, self.Periodic)
+        
+        return J2
+    
+    def getJ3(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J3 = PAWutils.getjSmoothLocal(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdata, self.Periodic)
+        
+        return J3
     
 
     @classmethod
@@ -481,7 +554,7 @@ class NewPAW(FFTDF):
 
     def initPAW(self, cell):
         t0 = time.time()
-        PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdataNew(
+        PAWdataNumpy, PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdataNew(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
@@ -511,6 +584,7 @@ class NewPAW(FFTDF):
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
+        self.PAWdataNumpy = PAWdataNumpy
         
         if (self.printLevel > 0):
             print ("Nelection   : {0:<10d}".format(nelec))
@@ -533,6 +607,150 @@ class NewPAW(FFTDF):
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
+    
+    def getJ1(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J1 = PAWutils.getjSmoothPW(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdata, self.Periodic)
+        
+        return J1
+    
+    def getJ1Numpy(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J1 = PAWutils.getjSmoothPWNumpy(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdataNumpy, self.Periodic)
+        
+        return J1
+    
+    def getJ2(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J2 = PAWutils.getjSharpLocal(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdata, self.Periodic)
+        
+        return J2
+    
+    def getJ2Numpy(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J2 = PAWutils.getjSharpLocalNumpy(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdataNumpy, self.Periodic)
+        
+        return J2
+    
+    def getJ3(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J3 = PAWutils.getjSmoothLocal(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdata, self.Periodic)
+        
+        return J3
+    
+    def getJ3Numpy(self, dm, hermi=1, kpts=None, kpts_band=None,
+              with_j=True, with_k=True, omega=None, exxdiv=None):
+        # TODO: this might be problematic
+        if omega is not None:  # J/K for RSH functionals
+            with self.range_coulomb(omega) as rsh_df:
+                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
+                                        omega=None, exxdiv=exxdiv)
+
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+
+        # recreate occMo from DM if not available
+        cell = self.cell
+        if isinstance(dm, list):
+            dm = numpy.asarray(dm)
+        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nao = cell.nao
+        # if with_k:
+        if with_j or with_k:
+            dm = tag_dm(self, dm, cell, kpts, nk, nao)
+        J3 = PAWutils.getjSmoothLocalNumpy(self.cell, dm, self.aoOnR_tilde, self.mesh,
+                                   self.PAWdataNumpy, self.Periodic)
+        
+        return J3
     
 
     @classmethod
