@@ -23,7 +23,7 @@ zeta = 'dz'
 basis = "ccpv"+zeta
 verbose = 3
 a = numpy.eye(3) * L
-ke_cutoff = 800
+ke_cutoff = 200
 precision = 1e-8
 
 cell = pgto.M(
@@ -163,7 +163,7 @@ def exact_paw_diff_manual(alpha0=None, Rb=None):
 
     # write to csv
     prefix = './'
-    path = prefix + f"data/He2bondLength_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}_new.csv"
+    path = prefix + f"data/He2bondLength_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}.csv"
     print(f"Calculation done. Saving data to {path}...")
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
@@ -175,10 +175,10 @@ def exact_paw_diff_manual(alpha0=None, Rb=None):
 def main():
     # basis_set_convergence()
     # start = time.time()
-    exact_paw_diff_auto()
+    # exact_paw_diff_auto()
     # print(f'Time elapsed: {time.time()-start:.2f}')
     # exact_fftdf(0.7)
-    # exact_paw_diff_manual(alpha0=10, Rb=1.5)
+    exact_paw_diff_manual(alpha0=10, Rb=1.5)
 
 if __name__ == '__main__':
     main()
