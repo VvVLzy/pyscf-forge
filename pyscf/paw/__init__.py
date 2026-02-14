@@ -585,6 +585,7 @@ class NewPAW(FFTDF):
         self.mesh = mesh
         self.PAWdata = PAWdata
         self.PAWdataNumpy = PAWdataNumpy
+        self.Rgrid = Rgrid
         
         if (self.printLevel > 0):
             print ("Nelection   : {0:<10d}".format(nelec))
