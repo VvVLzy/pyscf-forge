@@ -49,9 +49,9 @@ def getPAWdataNew(mol,
     alpha0_wf = alpha0 # it seems that this works better in practice
 
     # PAWData
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
         pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
-    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.mergeCompensatingCharge(
+    M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.mergeCompensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
     # Evaluate AOs on uniform grid
@@ -60,8 +60,8 @@ def getPAWdataNew(mol,
     
 
     # JAX version of PAWdata
-    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR)
-    PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
+    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR)
+    # PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
 
     
 
@@ -69,7 +69,7 @@ def getPAWdataNew(mol,
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol
+    return PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
 
 def getPAWdata(mol,
                PAWorbitalCutOff=1.e-5,
@@ -105,9 +105,9 @@ def getPAWdata(mol,
     alpha0_wf = alpha0 # it seems that this works better in practice
 
     # PAWData
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
         pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
-    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(
+    M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.compensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
     # Evaluate AOs on uniform grid
@@ -116,7 +116,7 @@ def getPAWdata(mol,
     
 
     # JAX version of PAWdata
-    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR)
+    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR)
     PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
 
     
@@ -125,7 +125,7 @@ def getPAWdata(mol,
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol
+    return PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
     if mydf.scf_iter == 0:
@@ -164,10 +164,10 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
         # TODO: test paw jk here
         vj = vk = None
         if with_j:
-            vj = PAWutils.getj_PAW_Numpy(cell, dm, 
+            vj = PAWutils.getj_PAW(cell, dm, 
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
-                                        mydf.PAWdataNumpy,
+                                        mydf.PAWdata,
                                         Periodic=mydf.Periodic)
         if with_k:
             vk = PAWutils.getk_PAW_JAX(cell, dm,
@@ -288,7 +288,7 @@ class PAW(FFTDF):
 
     def initPAW(self, cell):
         t0 = time.time()
-        PAWdataNumpy, PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdata(
+        PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdata(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
@@ -318,7 +318,12 @@ class PAW(FFTDF):
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
-        self.PAWdataNumpy = PAWdataNumpy
+        self.PAWdataNumpy = PAWdata
+        self.Rgrid = Rgrid
+        self.pcell = pmol
+        self.gcell = gmol
+        self.ctr_coeff = ctr_coeff
+        self.BeckeGrid = BeckeGrid
         
         if (self.printLevel > 0):
             print ("Nelection   : {0:<10d}".format(nelec))
@@ -554,7 +559,7 @@ class NewPAW(FFTDF):
 
     def initPAW(self, cell):
         t0 = time.time()
-        PAWdataNumpy, PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, cell = getPAWdataNew(
+        PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdataNew(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
@@ -584,8 +589,11 @@ class NewPAW(FFTDF):
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
-        self.PAWdataNumpy = PAWdataNumpy
         self.Rgrid = Rgrid
+        self.pcell = pmol
+        self.gcell = gmol
+        self.ctr_coeff = ctr_coeff
+        self.BeckeGrid = BeckeGrid
         
         if (self.printLevel > 0):
             print ("Nelection   : {0:<10d}".format(nelec))
@@ -633,30 +641,6 @@ class NewPAW(FFTDF):
         
         return J1
     
-    def getJ1Numpy(self, dm, hermi=1, kpts=None, kpts_band=None,
-              with_j=True, with_k=True, omega=None, exxdiv=None):
-        # TODO: this might be problematic
-        if omega is not None:  # J/K for RSH functionals
-            with self.range_coulomb(omega) as rsh_df:
-                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
-                                        omega=None, exxdiv=exxdiv)
-
-        kpts, is_single_kpt = _check_kpts(self, kpts)
-
-        # recreate occMo from DM if not available
-        cell = self.cell
-        if isinstance(dm, list):
-            dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
-        nao = cell.nao
-        # if with_k:
-        if with_j or with_k:
-            dm = tag_dm(self, dm, cell, kpts, nk, nao)
-        J1 = PAWutils.getjSmoothPWNumpy(self.cell, dm, self.aoOnR_tilde, self.mesh,
-                                   self.PAWdataNumpy, self.Periodic)
-        
-        return J1
-    
     def getJ2(self, dm, hermi=1, kpts=None, kpts_band=None,
               with_j=True, with_k=True, omega=None, exxdiv=None):
         # TODO: this might be problematic
@@ -678,30 +662,6 @@ class NewPAW(FFTDF):
             dm = tag_dm(self, dm, cell, kpts, nk, nao)
         J2 = PAWutils.getjSharpLocal(self.cell, dm, self.aoOnR_tilde, self.mesh,
                                    self.PAWdata, self.Periodic)
-        
-        return J2
-    
-    def getJ2Numpy(self, dm, hermi=1, kpts=None, kpts_band=None,
-              with_j=True, with_k=True, omega=None, exxdiv=None):
-        # TODO: this might be problematic
-        if omega is not None:  # J/K for RSH functionals
-            with self.range_coulomb(omega) as rsh_df:
-                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
-                                        omega=None, exxdiv=exxdiv)
-
-        kpts, is_single_kpt = _check_kpts(self, kpts)
-
-        # recreate occMo from DM if not available
-        cell = self.cell
-        if isinstance(dm, list):
-            dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
-        nao = cell.nao
-        # if with_k:
-        if with_j or with_k:
-            dm = tag_dm(self, dm, cell, kpts, nk, nao)
-        J2 = PAWutils.getjSharpLocalNumpy(self.cell, dm, self.aoOnR_tilde, self.mesh,
-                                   self.PAWdataNumpy, self.Periodic)
         
         return J2
     
@@ -729,31 +689,6 @@ class NewPAW(FFTDF):
         
         return J3
     
-    def getJ3Numpy(self, dm, hermi=1, kpts=None, kpts_band=None,
-              with_j=True, with_k=True, omega=None, exxdiv=None):
-        # TODO: this might be problematic
-        if omega is not None:  # J/K for RSH functionals
-            with self.range_coulomb(omega) as rsh_df:
-                return rsh_df.get_jk(dm, hermi, kpts, kpts_band, with_j, with_k,
-                                        omega=None, exxdiv=exxdiv)
-
-        kpts, is_single_kpt = _check_kpts(self, kpts)
-
-        # recreate occMo from DM if not available
-        cell = self.cell
-        if isinstance(dm, list):
-            dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
-        nao = cell.nao
-        # if with_k:
-        if with_j or with_k:
-            dm = tag_dm(self, dm, cell, kpts, nk, nao)
-        J3 = PAWutils.getjSmoothLocalNumpy(self.cell, dm, self.aoOnR_tilde, self.mesh,
-                                   self.PAWdataNumpy, self.Periodic)
-        
-        return J3
-    
-
     @classmethod
     def from_mf(cls, mf, cell=None, **kwargs):
         """Create OCCRI instance from mean-field object
