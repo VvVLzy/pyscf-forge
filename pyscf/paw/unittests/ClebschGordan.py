@@ -1,3 +1,8 @@
+import jax.numpy as jnp
+import jax.scipy.special as jsp
+from jax import lax
+import ctypes
+import math
 import numpy as np
 import CGmatrix
 
@@ -45,4 +50,4 @@ for j in range(2*Lmax):
 
 
 CRsmall = Complex_Real[:Lmax**2,:Lmax**2]
-RealCG = np.einsum('cr,ds,et,cde->rst', CRsmall.conj(), CRsmall.conj(), Complex_Real, YYTrans).real
+RealCG = jnp.einsum('cr,ds,et,cde->rst', CRsmall.conj(), CRsmall.conj(), Complex_Real, YYTrans).real

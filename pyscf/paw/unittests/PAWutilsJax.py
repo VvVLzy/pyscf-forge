@@ -3,7 +3,7 @@ import numpy
 import scipy, time
 
 import jax
-jax.config.update("jax_enable_x64",True)
+# jax.config.update("jax_enable_x64",True)
 jax.config.update('jax_platform_name', 'cpu')
 
 import jax.numpy as jnp
@@ -14,7 +14,7 @@ import pyscf
 from pyscf import gto, lib
 from pyscf.pbc import gto as pgto
 
-import ClebschGordanJax as ClebshGordan
+import ClebschGordan
 
 def prepareMolForPAW(mol):
     ##move the atoms so they are in the center of the cell
@@ -87,7 +87,7 @@ def getAtomsL(bas, env, cart=False):
         L     = numpy.concatenate([(l[i]+1)*(l[i]+2)//2*[l[i]]*nexp[i] for i in range(len(l))])
         M     = numpy.concatenate([[1,2,3]*nexp[i] if l[i] == 1 else list(range(tillL(l[i]-1),tillL(l[i]-1)+(l[i]+1)*(l[i]+2)//2))*nexp[i] for i in range(len(l)) ])
         atoms = numpy.concatenate([(l[i]+1)*(l[i]+2)//2*[atmId[i]]*nexp[i] for i in range(len(l))])
-    return atoms, L, M
+    return atoms, L.astype(numpy.int64), M.astype(numpy.int64)
 
 def getAlphaAtomsL(bas, env, cart=False):
     # should only use for primitive basis!!
@@ -108,7 +108,7 @@ def getAlphaAtomsL(bas, env, cart=False):
         M     = numpy.concatenate([[1,2,3] if li == 1 else list(range(tillL(li-1),tillL(li-1)+(li+1)*(li+2)//2)) for li,a in zip(l, alpha) ])
         atoms = numpy.concatenate([(li+1)*(li+2)//2*[a] for li,a in zip(l, atmId)])
 
-    return alpha, atoms, L, M
+    return alpha, atoms, L.astype(numpy.int64), M.astype(numpy.int64)
 
 @jit
 def RadialNorm(alpha, l):
@@ -146,12 +146,11 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
             (RadialNorm(alpha3, 2*j3+2) * basisnorm(alpha3, j3))
 
     CG = ClebschGordan.RealCG
-    M_PQLarray, V_PQLarray, V_LLarray, gIdx, gOnR = [], [], [], [], []
+    M_PQLarray, V_PQLarray, V_LLarray, gOnR = [], [], [], []
     for atomI in range(pmol._atm.shape[0]):
         idx  = (atoms==atomI)
         idxg = (atomsG==atomI)
         lmax = numpy.max(L[idx])
-        gIdx.append(idxg)
         M_PQL = vmap(
                     vmap(
                         vmap(
@@ -173,32 +172,33 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
 
         else:
-            pmolAtom = buildPmolAtom(mol, pmol, atomI, cart=False)
-            gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a, cart = gmol.cart) 
-
-            dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmolAtom, gmolAtom).build()
-            j2c = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
-            V_LLarray.append(j2c)
-
+            pmolAtom = buildPmolAtom(mol, pmol, atomI, False)
+            gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.a, cart = False)
             mydf = pyscf.pbc.df.RSDF(pmolAtom)
-            mydf.auxbasis = gmol.basis
+            mydf.auxbasis = gmolAtom.basis
+            mydf.build()
+            dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmolAtom, gmolAtom).build()
 
+            # (g|g')
+            VLL = dfbuilder.get_2c2e(numpy.zeros((1, 3)))[0]
+            j2c_cd, j2c_negative, j2ctag = dfbuilder.decompose_j2c(VLL)
+            assert(j2c_negative is None)
+            assert(j2ctag == 'CD')
+
+            # (PQ|g)
+            # TODO: gamma point only
             eri_3d = numpy.vstack([Lpq[0].copy() for Lpq in mydf.sr_loop(compact=False)])
-            eri_3d = jnp.einsum('Pp,PQ->pQ', eri_3d, jnp.linalg.cholesky(j2c, upper=False))
-            V_PQLarray.append(eri_3d.reshape((pmolAtom.nao, pmolAtom.nao, gmolAtom.nao)))
+            eri_3d = numpy.einsum('LM, Mp -> pL', j2c_cd, eri_3d)
+            VPQL = eri_3d.reshape((pmolAtom.nao, pmolAtom.nao, gmolAtom.nao))
+
+            V_LLarray.append(VLL)
+            V_PQLarray.append(VPQL)
 
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
-        # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
 
-        #     mydf = pyscf.pbc.df.MDF(pmol)
-        #     nao = pmol.nao
-        #     eri = mydf.get_eri(compact=False).reshape((nao,nao,nao,nao))
+    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
 
-
-
-    return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
-
-def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmol, Rgrid, gridIdx):
+def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol, Rgrid, gridIdx):
     @jit
     def getmpql(j1, m1, j2, m2, j3, m3, alpha1, alpha2, alpha3) : 
         return CG[(j1*j1 + (m1+j1)), (j2*j2 + (m2+j2)), (j3*j3 + (m3+j3))] * \
@@ -206,11 +206,10 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Peri
             (RadialNorm(alpha3, 2*j3+2) * basisnorm(alpha3, j3))
 
     CG = ClebschGordan.RealCG
-    M_PQLarray, V_PQLarray, V_LLarray, gIdx, gOnR = [], [], [], [], []
+    M_PQLarray, V_PQLarray, V_LLarray, gOnR = [], [], [], []
     for atomI in range(pmol._atm.shape[0]):
         idx  = (atoms==atomI)
         idxg = (atomsG==atomI)
-        gIdx.append(numpy.where(idxg)[0])
         M_PQL = vmap(
                     vmap(
                         vmap(
@@ -232,7 +231,7 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Peri
 
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
 
-    return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
+    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
 
 def buildPmolAtom(mol, pmol, atomI, cart):
     if mol.nao != pmol.nao and isinstance(pmol.basis, str): # mol uses a contracted basis
@@ -250,7 +249,7 @@ def getVLLVPQLarray(mol, pmol, gmol_cart, gmax):
     for atomI in range(pmol._atm.shape[0]):
         pmolAtom = buildPmolAtom(mol, pmol, atomI, True)
         gmolAtom = pgto.M(atom = [gmol_cart._atom[atomI]], basis = gmol_cart.basis, a = gmol_cart.a, cart = True)
-        mydf = PAWDF(pmolAtom)
+        mydf = pyscf.pbc.df.RSDF(pmolAtom)
         mydf.auxbasis = gmolAtom.basis
         mydf.build()
         dfbuilder = pyscf.pbc.df.rsdf_builder._RSGDFBuilder(pmolAtom, gmolAtom).build()
@@ -303,118 +302,136 @@ def getVLLVPQLarray(mol, pmol, gmol_cart, gmax):
 
     return V_LLarray, V_PQLarray
 
-def getMPQLarray(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax):
-    # define some helper functions
+@jit
+def gammaBar(n, l, a):
+    L = n + 2 + l
+    LL = (L+1)/2
+    return jsp.special.gamma(LL) / (2*a**(LL))
+
+@jit
+def I(alpha, x: int, y: int, z: int):
+    # take powers of xyz and compute integral
+
+    xyz = jnp.array([x, y, z])
+    n = (xyz+1)/2
+    Ixyz = jsp.special.gamma(n) / (alpha**n)
+
+    return jnp.prod(Ixyz)
+
+@jit
+def get_mpql_cart(l1, m1, l2, m2, alpha1, alpha2, alpha3):
+    # ... [Keep your existing logic for A and b calculation here] ...
+    # Ensure all helper functions like basisnorm and I are also @jit
+    
+    '''
+    Solve eqn Ax = b, where x = Mpql, for l=0, x^2, y^2, z^2
+    '''
     CG = ClebschGordan.RealCG
+    # the matrix A
+    N0, N2 = basisnorm(alpha3, 0), basisnorm(alpha3, 2)
+    I0  = I(alpha3, 0, 0, 0)
+    I2  = I(alpha3, 2, 0, 0)
+    I4  = I(alpha3, 4, 0, 0)
+    I22 = I(alpha3, 2, 2, 0)
 
-    @jit
-    def gammaBar(n, l, a):
-        L = n + 2 + l
-        LL = (L+1)/2
-        return jsp.special.gamma(LL) / (2*a**(LL))
+    A0 = N0 * I2 / jnp.sqrt(4*jnp.pi)
+    A1 = N2 * I4
+    A2 = N2 * I22
+    A3 = N0 * I0 / jnp.sqrt(4*jnp.pi)
+    A4 = N2 * I2
 
-    @jit
-    def I(alpha, x: int, y: int, z: int):
-        # take powers of xyz and compute integral
+    A = jnp.array([
+        [A0, A1, A2, A2],
+        [A0, A2, A1, A2],
+        [A0, A2, A2, A1],
+        [A3, A4, A4, A4]
+    ])
 
-        xyz = jnp.array([x, y, z])
-        n = (xyz+1)/2
-        Ixyz = jsp.special.gamma(n) / (alpha**n)
+    # the vector b
+    NP = basisnorm(alpha1, l1)
+    NQ = basisnorm(alpha2, l2)
 
-        return jnp.prod(Ixyz)
+    gamma0 = gammaBar(0, l1+l2, alpha1+alpha2)
+    gamma2 = gammaBar(2, l1+l2, alpha1+alpha2)
 
+    N00 = jnp.sqrt(4*jnp.pi)
+    N20 = 4*jnp.sqrt(jnp.pi/5)
+    N22 = 4*jnp.sqrt(jnp.pi/15)
 
-    # solve equations
-    @jit
-    def getMpqlCart(l1, m1, l2, m2, alpha1, alpha2, alpha3):
-        '''
-        Solve eqn Ax = b, where x = Mpql, for l=0, x^2, y^2, z^2
-        '''
-        # the matrix A
-        N0, N2 = basisnorm(alpha3, 0), basisnorm(alpha3, 2)
-        I0  = I(alpha3, 0, 0, 0)
-        I2  = I(alpha3, 2, 0, 0)
-        I4  = I(alpha3, 4, 0, 0)
-        I22 = I(alpha3, 2, 2, 0)
+    L = lambda l, m: l**2 + l + m
+    NC00 = N00*CG[L(l1,m1), L(l2,m2), L(0,0)]
+    NC20 = N20*CG[L(l1,m1), L(l2,m2), L(2,0)]
+    NC22 = N22*CG[L(l1,m1), L(l2,m2), L(2,2)]
 
-        A0 = N0 * I2 / jnp.sqrt(4*jnp.pi)
-        A1 = N2 * I4
-        A2 = N2 * I22
-        A3 = N0 * I0 / jnp.sqrt(4*jnp.pi)
-        A4 = N2 * I2
+    b = jnp.array([
+        (1/6)*NP*NQ*gamma2*(2 + 3*NC22 - NC20),
+        (1/6)*NP*NQ*gamma2*(2 - 3*NC22 - NC20),
+        (1/3)*NP*NQ*gamma2*(1 + NC20),
+        NP*NQ*gamma0*NC00
+    ])
 
-        A = jnp.array([
-            [A0, A1, A2, A2],
-            [A0, A2, A1, A2],
-            [A0, A2, A2, A1],
-            [A3, A4, A4, A4]
-        ])
+    return jnp.linalg.solve(A, b)
 
-        # the vector b
-        NP = basisnorm(alpha1, l1)
-        NQ = basisnorm(alpha2, l2)
+@jit
+def get_mpql_sph(j1, m1, j2, m2, j3, m3, alpha1, alpha2, alpha3):
+    CG = ClebschGordan.RealCG
+    # Use jnp versions of math functions
+    term1 = CG[j1**2 + m1 + j1, j2**2 + m2 + j2, j3**2 + m3 + j3]
+    term2 = RadialNorm(alpha1 + alpha2, j1 + j2 + j3 + 2) * basisnorm(alpha1, j1) * basisnorm(alpha2, j2)
+    term3 = RadialNorm(alpha3, 2 * j3 + 2) * basisnorm(alpha3, j3)
+    return term1 * term2 / term3
 
-        gamma0 = gammaBar(0, l1+l2, alpha1+alpha2)
-        gamma2 = gammaBar(2, l1+l2, alpha1+alpha2)
-
-        N00 = jnp.sqrt(4*jnp.pi)
-        N20 = 4*jnp.sqrt(jnp.pi/5)
-        N22 = 4*jnp.sqrt(jnp.pi/15)
-
-        L = lambda l, m: l**2 + l + m
-        NC00 = N00*CG[L(l1,m1), L(l2,m2), L(0,0)]
-        NC20 = N20*CG[L(l1,m1), L(l2,m2), L(2,0)]
-        NC22 = N22*CG[L(l1,m1), L(l2,m2), L(2,2)]
-
-        b = jnp.array([
-            (1/6)*NP*NQ*gamma2*(2 + 3*NC22 - NC20),
-            (1/6)*NP*NQ*gamma2*(2 - 3*NC22 - NC20),
-            (1/3)*NP*NQ*gamma2*(1 + NC20),
-            NP*NQ*gamma0*NC00
-        ])
-
-        return jnp.linalg.solve(A, b)
+def getMPQLarray(pmol, atoms, L, M, alpha, atoms_g, l_g, m_g, alpha_g, gmax):
+    """
+    Refactored for JAX performance. 
+    Note: 'atoms' and 'atoms_g' should be jnp arrays.
+    """
     
-    @jit
-    def getMpqlSph(j1, m1, j2, m2, j3, m3, alpha1, alpha2, alpha3) : 
-        return CG[(j1*j1 + (m1+j1)), (j2*j2 + (m2+j2)), (j3*j3 + (m3+j3))] * \
-            RadialNorm(alpha1 + alpha2, j1+j2+j3+2) * basisnorm(alpha1, j1) * basisnorm(alpha2, j2) /\
-            (RadialNorm(alpha3, 2*j3+2) * basisnorm(alpha3, j3))
+    # 1. Define the vectorized versions outside the loop
+    # Vectorize over (l1, m1, alpha1) and (l2, m2, alpha2)
+    v_cart = vmap(vmap(get_mpql_cart, (None, None, 0, 0, None, 0, None)), 
+                  (0, 0, None, None, 0, None, None))
     
-    M_PQLarray = []
-    gIdx = []
-    for atomI in range(pmol._atm.shape[0]):
-        idx = (atoms == atomI)
-        idxg = (atomsG == atomI)
-        gIdx.append(numpy.where(idxg)[0])
+    # Vectorize over (l1, m1, alpha1), (l2, m2, alpha2), and (l3, m3, alpha3)
+    v_sph = vmap(vmap(vmap(get_mpql_sph, (None, None, None, None, 0, 0, None, None, 0)), 
+                      (0, 0, None, None, None, None, 0, None, None)), 
+                 (None, None, 0, 0, None, None, None, 0, None))
 
-        MPQLCart = vmap(
-                    vmap(
-                        getMpqlCart, (None, None, 0, 0, None, 0, None)
-                    ), (0, 0, None, None, 0, None, None)
-                ) (L[idx], M[idx], L[idx], M[idx], alpha[idx], alpha[idx], alphaG[0])
+    m_pql_list = []
+
+    num_atoms = pmol._atm.shape[0]
+
+    for atom_i in range(num_atoms):
+        # Create masks for current atom
+        idx = (atoms == atom_i)
+        idx_g = (atoms_g == atom_i)
         
-        MPQLSph = vmap(
-                    vmap(
-                        vmap(
-                            getMpqlSph, (None,None,None,None,0,0,None,None,0)
-                        ), (0,0,None,None,None,None,0,None,None)
-                    ), (None,None,0,0,None,None,None,0,None)
-                ) (L[idx], M[idx], L[idx], M[idx], LG[idxg], MG[idxg], alpha[idx], alpha[idx], alphaG[idxg])
-        
+        # Extract atom-specific slices
+        L_i, M_i, alpha_i = L[idx], M[idx], alpha[idx]
+        LG_i, MG_i, alphaG_i = l_g[idx_g], m_g[idx_g], alpha_g[idx_g]
+
+        # Calculate Cartesian contribution
+        # Passing alpha_g[0] as per your original logic
+        mpql_cart = v_cart(L_i, M_i, L_i, M_i, alpha_i, alpha_i, alpha_g[0])
+
         if gmax < 2:
-            M_PQLarray.append(MPQLCart)
+            m_pql_list.append(mpql_cart)
         else:
-            maskSph = numpy.zeros(MPQLSph.shape[-1], dtype=bool)
-            maskSph[[0, 6, 8]] = True
-            M_PQLarray.append(
-                numpy.block([
-                    MPQLCart,
-                    MPQLSph[:, :, ~maskSph]
-                ])
-            )
-        
-    return M_PQLarray, gIdx
+            # Calculate Spherical contribution
+            mpql_sph = v_sph(L_i, M_i, L_i, M_i, LG_i, MG_i, alpha_i, alpha_i, alphaG_i)
+            
+            # Masking logic: JAX likes boolean indexing or jnp.delete
+            # You wanted to remove indices 0, 6, 8
+            # Assuming mpql_sph has shape (N, N, G)
+            total_g = mpql_sph.shape[-1]
+            keep_indices = jnp.array([i for i in range(total_g) if i not in [0, 6, 8]])
+            mpql_sph_filtered = mpql_sph[..., keep_indices]
+            
+            # Combine
+            combined = jnp.concatenate([mpql_cart, mpql_sph_filtered], axis=-1)
+            m_pql_list.append(combined)
+            
+    return m_pql_list
 
 def getGOnR(pmol, gmolCart, gmolSph, Rgrid, gridIdx, gmax):
     gOnR = []
@@ -445,228 +462,6 @@ def getGOnR(pmol, gmolCart, gmolSph, Rgrid, gridIdx, gmax):
 
     return gOnR
 
-def getMPQLarrayNumpy(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax):
-    # Retrieve external helpers
-    CG = ClebschGordan.RealCG
-
-    # --- 1. Define Helper Functions (NumPy versions) ---
-    
-    def gammaBar(n, l, a):
-        """Vectorized Gamma calculation"""
-        L_val = n + 2 + l
-        LL = (L_val + 1) / 2
-        # Use scipy.special.gamma instead of jsp.special.gamma
-        return scipy.special.gamma(LL) / (2 * a**(LL))
-
-    def I_func(alpha_val, x, y, z):
-        """Computes Integral I (Vectorized or Scalar)"""
-        xyz = numpy.array([x, y, z])
-        n = (xyz + 1) / 2
-        # alpha_val can be scalar or array; ensure broadcasting works
-        Ixyz = scipy.special.gamma(n) / (alpha_val**n)
-        return numpy.prod(Ixyz)
-
-    def get_L_index(l, m):
-        """Helper for flattened CG indices"""
-        return l**2 + l + m
-    
-    def Basisnorm(alpha, l):
-        # L calculation works for both scalar and array inputs
-        L = l * 2 + 2
-        n = 0.5 * (L + 1)
-        
-        # Use scipy.special.gamma instead of jsp.special.gamma
-        gamma_n = scipy.special.gamma(n)
-        
-        # Calculate the normalization factor
-        # Corresponds to: 1 / sqrt( (1/2) * (1/(2*alpha)^n) * gamma(n) )
-        denominator = (1.0 / 2.0 / (2.0 * alpha)**n) * gamma_n
-        
-        return 1.0 / numpy.sqrt(denominator)
-
-    # --- 2. Main Loop ---
-    
-    M_PQLarray = []
-    gIdx = []
-
-    for atomI in range(pmol._atm.shape[0]):
-        # Boolean masks
-        idx = (atoms == atomI)
-        idxg = (atomsG == atomI)
-        
-        # Store indices for this atom
-        gIdx.append(numpy.where(idxg)[0])
-
-        # --- Prepare Data Subsets ---
-        # "Left" inputs (correspond to l1, m1, alpha1)
-        sub_L = L[idx]
-        sub_M = M[idx]
-        sub_alpha = alpha[idx]
-        
-        # Gauge inputs (correspond to l3, m3, alpha3 for Sph)
-        sub_LG = LG[idxg]
-        sub_MG = MG[idxg]
-        sub_alphaG = alphaG[idxg]
-        
-        N_subset = len(sub_L)
-        
-        # =================================================================
-        # PART A: MPQLCart Calculation (Equivalent to double vmap)
-        # =================================================================
-        
-        # 1. Setup Matrix A (Constant for this atomI block)
-        # In JAX code, alpha3 was alphaG[0]
-        alpha3_cart = alphaG[0] 
-        
-        N0 = Basisnorm(alpha3_cart, 0)
-        N2 = Basisnorm(alpha3_cart, 2)
-        I0  = I_func(alpha3_cart, 0, 0, 0)
-        I2  = I_func(alpha3_cart, 2, 0, 0)
-        I4  = I_func(alpha3_cart, 4, 0, 0)
-        I22 = I_func(alpha3_cart, 2, 2, 0)
-
-        sq_4pi = numpy.sqrt(4 * numpy.pi)
-        
-        A0 = N0 * I2 / sq_4pi
-        A1 = N2 * I4
-        A2 = N2 * I22
-        A3 = N0 * I0 / sq_4pi
-        A4 = N2 * I2
-
-        # Shape (4, 4)
-        A = numpy.array([
-            [A0, A1, A2, A2],
-            [A0, A2, A1, A2],
-            [A0, A2, A2, A1],
-            [A3, A4, A4, A4]
-        ])
-
-        # 2. Setup Vector b (Varies pairwise)
-        # We use broadcasting to create (N, N) matrices
-        
-        # Column vectors (N, 1) -> corresponds to index 'i'
-        l1 = sub_L[:, None]
-        m1 = sub_M[:, None]
-        a1 = sub_alpha[:, None]
-        
-        # Row vectors (1, N) -> corresponds to index 'j'
-        l2 = sub_L[None, :]
-        m2 = sub_M[None, :]
-        a2 = sub_alpha[None, :]
-
-        NP = Basisnorm(a1, l1)
-        NQ = Basisnorm(a2, l2)
-
-        # Gamma terms broadcast to (N, N)
-        gamma0 = gammaBar(0, l1 + l2, a1 + a2)
-        gamma2 = gammaBar(2, l1 + l2, a1 + a2)
-
-        N00 = numpy.sqrt(4 * numpy.pi)
-        N20 = 4 * numpy.sqrt(numpy.pi / 5)
-        N22 = 4 * numpy.sqrt(numpy.pi / 15)
-
-        # CG Indexing
-        idx_1 = get_L_index(l1, m1)
-        idx_2 = get_L_index(l2, m2)
-        idx_00 = get_L_index(0, 0) # Scalar
-        idx_20 = get_L_index(2, 0) # Scalar
-        idx_22 = get_L_index(2, 2) # Scalar
-
-        # Fetch CG coefficients (Broadcasting handles the lookup)
-        NC00 = N00 * CG[idx_1, idx_2, idx_00]
-        NC20 = N20 * CG[idx_1, idx_2, idx_20]
-        NC22 = N22 * CG[idx_1, idx_2, idx_22]
-
-        # Construct b components. Resulting shape for each is (N, N)
-        b0 = (1/6)*NP*NQ*gamma2*(2 + 3*NC22 - NC20)
-        b1 = (1/6)*NP*NQ*gamma2*(2 - 3*NC22 - NC20)
-        b2 = (1/3)*NP*NQ*gamma2*(1 + NC20)
-        b3 = NP*NQ*gamma0*NC00
-
-        # Stack to (N, N, 4)
-        b_vec = numpy.stack([b0, b1, b2, b3], axis=-1)
-        
-        # Solve Ax = b for every pixel in (N, N).
-        # Optimization: Flatten to (N*N, 4), transpose to (4, N*N) for solve, then reshape.
-        # This solves A * x_i = b_i efficiently.
-        MPQLCart_flat = numpy.linalg.solve(A, b_vec.reshape(-1, 4).T).T
-        MPQLCart = MPQLCart_flat.reshape(N_subset, N_subset, 4)
-
-        # =================================================================
-        # PART B: MPQLSph Calculation (Equivalent to triple vmap)
-        # =================================================================
-        
-        # We need a 3D tensor result: (N, N, K)
-        # Reshape inputs for 3D broadcasting:
-        # i (axis 0): (N, 1, 1)
-        # j (axis 1): (1, N, 1)
-        # g (axis 2): (1, 1, K)
-
-        j1_3d = sub_L[:, None, None]
-        m1_3d = sub_M[:, None, None]
-        a1_3d = sub_alpha[:, None, None]
-
-        j2_3d = sub_L[None, :, None]
-        m2_3d = sub_M[None, :, None]
-        a2_3d = sub_alpha[None, :, None]
-
-        j3_3d = sub_LG[None, None, :]
-        m3_3d = sub_MG[None, None, :]
-        a3_3d = sub_alphaG[None, None, :]
-
-        # Indices for CG
-        cg_idx1 = (j1_3d*j1_3d + (m1_3d+j1_3d)).astype(int)
-        cg_idx2 = (j2_3d*j2_3d + (m2_3d+j2_3d)).astype(int)
-        cg_idx3 = (j3_3d*j3_3d + (m3_3d+j3_3d)).astype(int)
-
-        # Compute Terms
-        term_cg = CG[cg_idx1, cg_idx2, cg_idx3]
-        
-        num = term_cg * RadialNorm(a1_3d + a2_3d, j1_3d + j2_3d + j3_3d + 2) * \
-              Basisnorm(a1_3d, j1_3d) * Basisnorm(a2_3d, j2_3d)
-              
-        den = RadialNorm(a3_3d, 2*j3_3d + 2) * Basisnorm(a3_3d, j3_3d)
-
-        MPQLSph = num / den
-
-        # =================================================================
-        # PART C: Combine Results
-        # =================================================================
-
-        if gmax < 2:
-            M_PQLarray.append(MPQLCart)
-        else:
-            # Mask logic from original code
-            maskSph = numpy.zeros(MPQLSph.shape[-1], dtype=bool)
-            # Ensure indices are within bounds (assuming K >= 9 based on code snippet)
-            # If K is small, this might need a check, but copying logic directly:
-            maskSph[[0, 6, 8]] = True
-            
-            # Combine Cart (N, N, 4) with Sph subset (N, N, K_subset)
-            combined = numpy.concatenate([
-                MPQLCart, 
-                MPQLSph[:, :, ~maskSph]
-            ], axis=-1)
-            
-            M_PQLarray.append(combined)
-        
-        # # do analytical M_00L
-        # alpha2 = alphaG[0]
-        # alpha1 = 2*alpha[idx][0]
-        # NN2 = (alpha2/numpy.pi)**(3/2)
-        # # C0 = -NN2 * (3*alpha2/2/alpha1 - 5/2)
-        # C0 = NN2 * 5/2
-        # # C2 = -NN2 * (alpha2 - alpha2**2/alpha1)
-        # C2 = -NN2 * alpha2
-        # M_000 = C0 / basisnorm(alpha2, 0) * numpy.sqrt(4*numpy.pi)
-        # M_002 = C2 / basisnorm(alpha2, 2)
-        # print(M_000, M_PQLarray[atomI][0, 0, 0] )
-        # print(M_002, M_PQLarray[atomI][0, 0, 1] )
-        # M_PQLarray[atomI][0, 0, 0] = M_000
-        # M_PQLarray[atomI][0, 1:4, 1:4] = M_002
-        
-    return M_PQLarray, gIdx
-
 
 def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
     alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
@@ -695,16 +490,16 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     gridIdx = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)[0]
 
     if Periodic:
-        M_PQLarray, gIdx = getMPQLarrayNumpy(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax)
+        M_PQLarray = getMPQLarray(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax)
         V_LLarray, V_PQLarray = getVLLVPQLarray(mol, pmol, gmolCart, gmax)
         gOnR = getGOnR(pmol, gmolCart, gmolSph, Rgrid, gridIdx, gmax)
         gmol = gmolCart
     else:
-        M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR = compensatingChargeSph(
+        M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol = compensatingChargeSph(
             pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
         )
 
-    return M_PQLarray, V_PQLarray, V_LLarray, gIdx, gridIdx, gmol, gOnR
+    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
 
 def intor_cross(intor, mol1, mol2, shls_slice, comp=None):
     nbas1 = len(mol1._bas)
@@ -835,7 +630,7 @@ def partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0):
     return reconstructAOFromPrim()
 
 def get_PAW_inUsefulFormForJax(PAWdata):
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
 
     ##whenever tensor are smaller than these then pad tensor with zeros
     maxlocIdx = max([len(loc) for loc in localIdx])
@@ -843,7 +638,6 @@ def get_PAW_inUsefulFormForJax(PAWdata):
     maxP_tild = max([Ftilde_PmuArr[i].shape[0] for i in range(len(Ftilde_PmuArr))])
     assert(maxP == maxP_tild)
     maxg      = max([M_PQLarr[i].shape[2] for i in range(len(M_PQLarr))])
-    maxgIdx   = max([gidx.shape[0] for gidx in gIdx]) # TODO: get rid of this eventually
     maxGrid   = max([gridIdx[i].shape[0] for i in range(len(gridIdx))])
 
 
@@ -855,7 +649,6 @@ def get_PAW_inUsefulFormForJax(PAWdata):
     V_PQLarrJax = jnp.zeros((natom, maxP, maxP, maxg))
     V_LMarrJax  = jnp.zeros((natom, maxg, maxg))
     VPQRSarrayJax = jnp.zeros((natom, maxP, maxP, maxP, maxP))
-    gIdxJax     = jnp.zeros((natom, maxgIdx), dtype=int)
     gridIdxJax  = jnp.zeros((natom, maxGrid), dtype=int)
     gOnRJax     = jnp.zeros((natom, maxGrid, maxg))
 
@@ -864,7 +657,6 @@ def get_PAW_inUsefulFormForJax(PAWdata):
         rowIdx     = jnp.arange(len(localIdx[i]))
         rowP       = jnp.arange(F_PmuArr[i].shape[0])
         rowg       = jnp.arange(V_LMarr[i].shape[0])
-        rowgIdx    = jnp.arange(gIdx[i].shape[0])
         rowGrid    = jnp.arange(gOnR[i].shape[0])
 
         localIdxJax = localIdxJax.at[jnp.ix_(row1, rowIdx)].set(localIdx[i])
@@ -873,7 +665,6 @@ def get_PAW_inUsefulFormForJax(PAWdata):
         M_PQLarrJax = M_PQLarrJax.at[jnp.ix_(row1, rowP, rowP, rowg)].set(M_PQLarr[i])
         V_PQLarrJax = V_PQLarrJax.at[jnp.ix_(row1, rowP, rowP, rowg)].set(V_PQLarr[i])
         V_LMarrJax  = V_LMarrJax .at[jnp.ix_(row1, rowg, rowg)].set(V_LMarr[i])
-        gIdxJax     = gIdxJax    .at[jnp.ix_(row1, rowgIdx)].set(gIdx[i])
         VPQRSarrayJax = VPQRSarrayJax.at[jnp.ix_(row1, rowP, rowP, rowP, rowP)].set(VPQRSArr[i])
         gridIdxJax  = gridIdxJax .at[jnp.ix_(row1, rowGrid)].set(gridIdx[i])
         gOnRJax     = gOnRJax    .at[jnp.ix_(row1, rowGrid, rowg)].set(gOnR[i])
@@ -882,7 +673,7 @@ def get_PAW_inUsefulFormForJax(PAWdata):
         #Ftilde_Pmu.append(0.*numpy.array(F_Pmu[i]))
         #Ftilde_Pmu[i][:,locDiffIdx] = F_Pmu[i][:,locDiffIdx]
 
-    return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
+    return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gridIdxJax, gOnRJax
 
 def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
@@ -965,10 +756,10 @@ def getj_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
     return numpy.asarray(J*2)
 
-def getj_PAW_Numpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    J1 = getjSmoothPWNumpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
-    J2 = getjSharpLocalNumpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
-    J3 = getjSmoothLocalNumpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
+def getj_PAW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    J1 = getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
+    J2 = getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
+    J3 = getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
 
     return J1+J2+J3
 
@@ -976,7 +767,7 @@ def getj_PAW_Numpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
     
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
 
     ### the factors of two come from RHF
     # TODO: generalize to beyond RHF
@@ -1006,13 +797,14 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         DPQ      = jnp.einsum('Pm, Qn, mn',      f_pmu,      f_pmu, subMat)
         DPQtilde = jnp.einsum('Pm, Qn, mn', ftilde_pmu, ftilde_pmu, subMat)
         zg = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
-        update = jnp.einsum('g,rg->r',zg, gonr) + density[grididx]
-        return density.at[grididx].set( update ), None
+        update = jnp.einsum('g,rg->r',zg, gonr)
+        return density.at[grididx].add( update ), None
 
     ##add the compensating change to the diffuse density
     density, _ = lax.scan(atomContribution, density, (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx))
 
     potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
+    # return potential
 
     J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)*f
     assert(J.shape[0] == cell.nao)
@@ -1027,10 +819,9 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         A = -GL
         B = GL
 
-        return J.at[jnp.ix_(idxAtom,idxAtom)].set( \
+        return J.at[jnp.ix_(idxAtom,idxAtom)].add( \
                 jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
-                jnp.einsum('RS, Rm, Sn->nm', A, ftilde_pmu, ftilde_pmu) +
-                J[idxAtom][:,idxAtom]), None
+                jnp.einsum('RS, Rm, Sn->nm', A, ftilde_pmu, ftilde_pmu)), None
 
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
@@ -1040,7 +831,7 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
     
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
 
     ### the factors of two come from RHF
     # TODO: generalize to beyond RHF
@@ -1064,9 +855,8 @@ def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
         B  = jnp.einsum('PQRS, PQ->RS', vpqrs, DPQ) #sharp-sharp
         
-        return J.at[jnp.ix_(idxAtom,idxAtom)].set( \
-                jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
-                J[idxAtom][:,idxAtom]), None
+        return J.at[jnp.ix_(idxAtom,idxAtom)].add( \
+                jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu)), None
 
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
@@ -1076,7 +866,7 @@ def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 def getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
     
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
 
     ### the factors of two come from RHF
     # TODO: generalize to beyond RHF
@@ -1104,126 +894,12 @@ def getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         B += -jnp.einsum('g,gf, PQf->PQ', zg, vlm, m_pql)
         ##gloal-local
 
-        return J.at[jnp.ix_(idxAtom,idxAtom)].set( \
+        return J.at[jnp.ix_(idxAtom,idxAtom)].add( \
                 jnp.einsum('RS, Rm, Sn->nm', B, f_pmu, f_pmu) +
-                jnp.einsum('RS, Rm, Sn->nm', A, ftilde_pmu, ftilde_pmu) +
-                J[idxAtom][:,idxAtom]), None
+                jnp.einsum('RS, Rm, Sn->nm', A, ftilde_pmu, ftilde_pmu)), None
 
     xs = (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx, VPQRSarray, V_PQLarr, V_LMarr)
     J , _ = lax.scan(atomContributionToJ, J, xs)
-
-    return numpy.asarray(J*2)
-
-def getjSmoothPWNumpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    # TODO: generalize to multiple k-points
-    # use list of numpy arrays instead of jax arrays
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
-
-    ### the factors of two come from RHF
-    # TODO: generalize to beyond RHF
-    occ_cut = 1e-12 # TODO: is this reasonable?
-    dm, mo_coeff, mo_occ = dm[0, 0, :, :]/2, dm.mo_coeff[0, 0, :, :], dm.mo_occ[0, 0, :]
-    occMo = mo_coeff[:,numpy.abs(mo_occ)>occ_cut] * mo_occ[numpy.abs(mo_occ)>occ_cut]/2
-    ###
-
-    Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
-    # import pdb;pdb.set_trace()
-    moOnR = numpy.einsum('ra,am->rm', aoOnR_tilde, occMo)
-    density = numpy.einsum('rm,rm->r', moOnR.conj(), moOnR)
-
-    for atomI in range(cell._atm.shape[0]):
-        submat = dm[localIdx[atomI]][:, localIdx[atomI]]
-        DPQ = numpy.einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
-        DPQtilde = numpy.einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
-        zg = numpy.einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
-        numpy.add.at(density, gridIdx[atomI], numpy.einsum('L,rL->r', zg, gOnR[atomI]))
-    # TODO: the added density can already be different from jax
-    potential = numpy.fft.ifftn( FF * numpy.fft.fftn(density.reshape(mesh))).real.flatten()
-
-    J = numpy.einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)*f
-    assert(J.shape[0] == cell.nao)
-    assert(J.shape[1] == cell.nao)
-
-    for atomI in range(cell._atm.shape[0]):
-        # el+comp-compOnA
-        zg2 = numpy.einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*f
-        GL  = numpy.einsum('L,RSL->RS', zg2, M_PQLarr[atomI])
-        numpy.add.at(
-            J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
-             numpy.einsum('RS,Rm,Sn->mn', GL, F_Pmu[atomI], F_Pmu[atomI])\
-            -numpy.einsum('RS,Rm,Sn->mn', GL, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])
-        )
-    
-    return J*2
-
-def getjSharpLocalNumpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    # TODO: generalize to multiple k-points
-    
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
-
-    ### the factors of two come from RHF
-    # TODO: generalize to beyond RHF
-    dm = dm[0, 0, :, :]/2
-    ###
-
-
-    J = numpy.zeros((cell.nao, cell.nao))
-    assert(J.shape[0] == cell.nao)
-    assert(J.shape[1] == cell.nao)
-
-    for atomI in range(cell._atm.shape[0]):
-        submat = dm[localIdx[atomI]][:,localIdx[atomI]]
-        DPQ = numpy.einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
-        numpy.add.at(
-            J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
-            numpy.einsum('PQ,PQRS,Rm,Sn->mn', DPQ, VPQRSarray[atomI], F_Pmu[atomI], F_Pmu[atomI])
-        )
-    # TODO: no errors in this scan, so error solely comes from adding density
-    return J*2
-
-def getjSmoothLocalNumpy(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    # TODO: generalize to multiple k-points
-    
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
-
-    ### the factors of two come from RHF
-    # TODO: generalize to beyond RHF
-    dm = dm[0, 0, :, :]/2
-    ###
-
-    J = numpy.zeros((cell.nao, cell.nao))
-    assert(J.shape[0] == cell.nao)
-    assert(J.shape[1] == cell.nao)
-
-    for atomI in range(cell._atm.shape[0]):
-        submat = dm[localIdx[atomI]][:,localIdx[atomI]]
-        DPQ = numpy.einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
-        DPQtilde = numpy.einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
-        zg = numpy.einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
-
-        # smooth RHS
-        # el-el
-        A = -numpy.einsum('PQ,PQRS->RS', DPQtilde, VPQRSarray[atomI])
-        # el-smoothcomp
-        A += numpy.einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
-        # comp-el
-        A -= numpy.einsum('L,RSL->RS', zg, V_PQLarr[atomI])
-        # comp-smoothcomp
-        A += numpy.einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
-
-        # sharp RHS
-        # el-sharpcomp
-        B = -numpy.einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
-        # comp-sharpcomp
-        B -= numpy.einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
-
-        numpy.add.at(
-            J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
-            numpy.einsum('RS,Rm,Sn->mn', A, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])+\
-            numpy.einsum('RS,Rm,Sn->mn', B, F_Pmu[atomI], F_Pmu[atomI])
-        )
 
     return numpy.asarray(J*2)
 
@@ -1689,8 +1365,8 @@ def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e
 
     gridIdx, masked_gridIdx, masks, Rs = [], [], [], []
     for atomI in range(mol._atm.shape[0]):
-        idx = jnp.where(numpy.max(numpy.abs(sharpAOonR[:, Sharpatoms==atomI]), axis=1) > epsilon)[0]
-        maxR = jnp.max(atomGridDist[atomI, idx]) if Rb==None else Rb
+        idx = numpy.where(numpy.max(numpy.abs(sharpAOonR[:, Sharpatoms==atomI]), axis=1) > epsilon)[0]
+        maxR = numpy.max(atomGridDist[atomI, idx]) if Rb==None else Rb
         # print(f'The augmentation radius is: {maxR}')
         allIdx = numpy.where(atomGridDist[atomI, :] < maxR)[0]
         mask = grid2Atom[allIdx] == atomI
@@ -1769,7 +1445,7 @@ def labelShellWithIdx(ctr_coeff, mol):
 
     return labels
 
-def obtainLocalFns1(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
+def obtainLocalFns(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
     '''
     Fit AO and diffuse AO directly, much faster
     set F_Pmu directly to contraction coefficient when P=mu

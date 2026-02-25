@@ -298,13 +298,13 @@ def check_J(alpha0=10, Rb=1.5):
 
 
 def main():
-    # debugNumpyJ(alpha0=10, Rb=1.5)
-    # debugNumpyJ(alpha0=10, Rb=3.0)
+    debugNumpyJ(alpha0=20, Rb=1.5)
+    debugNumpyJ(alpha0=20, Rb=3.0)
     # debugRb(1.5, 3.0, alpha0=20)
     # debug_J2(alpha0=20, Rb=1.5)
     # debug_J(alpha0=20, Rb=3.0)
     # check_J()
-    check_J_scan(alpha0=10, Rb=1.5)
+    # check_J_scan(alpha0=10, Rb=1.5)
     # check_nuc()
 
 if __name__ == '__main__':
