@@ -786,17 +786,17 @@ def getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         zg = numpy.einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
 
         # smooth RHS
-        # el-el
+        # smoothel-smoothel
         A = -numpy.einsum('PQ,PQRS->RS', DPQtilde, VPQRSarray[atomI])
-        # el-smoothcomp
+        # smoothel-smoothcomp
         A += numpy.einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
-        # comp-el
+        # comp-smoothel
         A -= numpy.einsum('L,RSL->RS', zg, V_PQLarr[atomI])
         # comp-smoothcomp
         A += numpy.einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
 
         # sharp RHS
-        # el-sharpcomp
+        # smoothel-sharpcomp
         B = -numpy.einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
         # comp-sharpcomp
         B -= numpy.einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
