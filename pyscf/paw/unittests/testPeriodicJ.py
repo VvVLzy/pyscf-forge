@@ -32,7 +32,7 @@ basis = "ccpv"+zeta
 # ''')}
 verbose = 3
 a = numpy.eye(3) * L
-ke_cutoff = 800
+ke_cutoff = 200
 precision = 1e-8
 
 cell = pgto.M(
@@ -54,7 +54,7 @@ cell_fftdf = pgto.M(
 )
 
 init_guess = '1e'
-xc = ''
+xc = 'pbe'
 
 def debugNumpyJ(alpha0=20, Rb=1.5):
     # fftdf
@@ -179,8 +179,8 @@ def debug_J2(alpha0=20, Rb=1.5):
     import pdb; pdb.set_trace()
 
 def check_J_scan(alpha0=20, Rb=1.5):
-    rscales = numpy.linspace(0.7, 1.5, 10)
-    results = numpy.zeros((rscales.shape[0], 3))
+    rscales = numpy.linspace(0.7, 1.5, 9)
+    results = []
     r0 = 1.
     for i, rscale in enumerate(rscales):
         r       = r0*rscale    # rescale C=C bond length
@@ -225,16 +225,120 @@ def check_J_scan(alpha0=20, Rb=1.5):
 
         print(numpy.max(numpy.abs(J_fftdf-J_paw)))
         print(numpy.max(numpy.abs(J_fftdf-J_paw_new)))
-        results[i, 0] = r
-        results[i, 1] = numpy.max(numpy.abs(J_fftdf-J_paw))
-        results[i, 2] = numpy.max(numpy.abs(J_fftdf-J_paw_new))
+        results.append({
+            'r': r,
+            'Before': numpy.max(numpy.abs(J_fftdf-J_paw)),
+            'After': numpy.max(numpy.abs(J_fftdf-J_paw_new))
+        })
+        # results[i, 0] = r
+        # results[i, 1] = numpy.max(numpy.abs(J_fftdf-J_paw))
+        # results[i, 2] = numpy.max(numpy.abs(J_fftdf-J_paw_new))
 
         del mf_per_rks
         del mf_per_rks_paw
         del mf_per_rks_paw_new
         del mydf
 
-    print(results)
+    # print(results)
+    # write to csv
+    prefix = './'
+    path = prefix + f"data/J_scan_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}_{xc}.csv"
+    print(f"Calculation done. Saving data to {path}...")
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "r", "Before", "After"
+        ])
+        writer.writeheader()
+        writer.writerows(results)
+
+def check_J_random_position(alpha0=20, Rb=1.5):
+    results = []
+    r0 = 1.
+    r       = r0*1.27    # rescale C=C bond length
+    atom    = f'He {r1} {r1} {r1}; He {r1+r} {r1} {r1}'
+
+    cell.atom = atom
+    cell.build()
+
+    cell_fftdf.atom = atom
+    cell_fftdf.build()
+
+    # fftdf
+    mf_per_rks = pscf.RKS(cell_fftdf)
+    mf_per_rks.init_guess = init_guess
+    mf_per_rks.xc = xc
+
+    # compare different ways of getting Js using the converged dm
+    mf_per_rks.kernel()
+    dm = mf_per_rks.make_rdm1()
+    J_fftdf = mf_per_rks.get_j(dm=dm)
+
+    xyzs = numpy.random.random((10, 3)) * L
+    # xyzs = numpy.array([
+    #     [0.,0.,0.],
+    #     [1.5,1.5,1.5]
+    # ])
+    for xyz in xyzs:
+        x = xyz[0]
+        y = xyz[1]
+        z = xyz[2]
+
+        atom = f'He {x} {y} {z}; He {x+r} {y} {z}'
+        cell.atom = atom
+        cell.build()
+
+        # print(cell._atom)
+
+        # old coulomb
+        mf_per_rks_paw = pscf.RKS(cell)
+        mf_per_rks_paw.init_guess = init_guess
+        mf_per_rks_paw.xc = xc
+        mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+        # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
+        # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, PAWorbitalCutOff=1e-8).build()
+        mf_per_rks_paw.with_df = mydf
+
+        # new coulomb
+        mf_per_rks_paw_new = pscf.RKS(cell)
+        mf_per_rks_paw_new.init_guess = init_guess
+        mf_per_rks_paw_new.xc = xc
+        mydf = NewPAW.from_mf(mf_per_rks_paw_new, alpha0=alpha0, augRadius=Rb).build()
+        # mydf = NewPAW.from_mf(mf_per_rks_paw_new, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
+        # mydf = NewPAW.from_mf(mf_per_rks_paw_new, PWAccuracy=1e-8, PAWorbitalCutOff=1e-8).build()
+        mf_per_rks_paw_new.with_df = mydf
+
+        # import pdb; pdb.set_trace()
+        
+
+        J_paw = mf_per_rks_paw.get_j(dm=dm)
+        J_paw_new = mf_per_rks_paw_new.get_j(dm=dm)
+
+        print(numpy.max(numpy.abs(J_fftdf-J_paw)))
+        print(numpy.max(numpy.abs(J_fftdf-J_paw_new)))
+        results.append({
+            'r': numpy.sqrt(numpy.sum(xyz**2)),
+            'Before': numpy.max(numpy.abs(J_fftdf-J_paw)),
+            'After': numpy.max(numpy.abs(J_fftdf-J_paw_new))
+        })
+        # results[i, 0] = r
+        # results[i, 1] = numpy.max(numpy.abs(J_fftdf-J_paw))
+        # results[i, 2] = numpy.max(numpy.abs(J_fftdf-J_paw_new))
+
+        del mf_per_rks_paw
+        del mf_per_rks_paw_new
+        del mydf
+
+    # print(results)
+    # write to csv
+    prefix = './'
+    path = prefix + f"data/J_random_pos_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}_{xc}.csv"
+    print(f"Calculation done. Saving data to {path}...")
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "r", "Before", "After"
+        ])
+        writer.writeheader()
+        writer.writerows(results)
 
 def check_J(alpha0=10, Rb=1.5):
     # fftdf
@@ -298,13 +402,14 @@ def check_J(alpha0=10, Rb=1.5):
 
 
 def main():
-    debugNumpyJ(alpha0=20, Rb=1.5)
-    debugNumpyJ(alpha0=20, Rb=3.0)
+    # debugNumpyJ(alpha0=20, Rb=1.5)
+    # debugNumpyJ(alpha0=20, Rb=3.0)
     # debugRb(1.5, 3.0, alpha0=20)
     # debug_J2(alpha0=20, Rb=1.5)
     # debug_J(alpha0=20, Rb=3.0)
     # check_J()
     # check_J_scan(alpha0=10, Rb=1.5)
+    check_J_random_position(alpha0=10, Rb=1.5)
     # check_nuc()
 
 if __name__ == '__main__':
