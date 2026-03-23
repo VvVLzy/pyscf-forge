@@ -6,6 +6,7 @@ from pyscf import __config__
 from pyscf.df import df_jk
 from pyscf.pbc.df.gdf_builder import _CCNucBuilder
 from pyscf.pbc.df.rsdf_builder import _RSNucBuilder
+from pyscf.lib import logger
 
 import pyscf
 import numpy
@@ -49,27 +50,29 @@ def getPAWdataNew(mol,
     alpha0_wf = alpha0 # it seems that this works better in practice
 
     # PAWData
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
-        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNew(
+        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, 1.2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
     M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.mergeCompensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
     # Evaluate AOs on uniform grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
     gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
-    
+
+    # Prepare PAW data
+    result = PAWutils.separateNuclearElectron(
+        pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr)
+    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gridIdx, gOnR)
+    PAWNucdata = result[-3:]
 
     # JAX version of PAWdata
-    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR)
     # PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
-
-    
 
     if (printLevel > 0):
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
+    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
 
 def getPAWdata(mol,
                PAWorbitalCutOff=1.e-5,
@@ -105,27 +108,29 @@ def getPAWdata(mol,
     alpha0_wf = alpha0 # it seems that this works better in practice
 
     # PAWData
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
-        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNew(
+        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, 2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
     M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.compensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
     # Evaluate AOs on uniform grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
     gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
-    
+
+    # Prepare PAW data
+    result = PAWutils.separateNuclearElectron(
+        pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr)
+    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gridIdx, gOnR)
+    PAWNucdata = result[-3:]
 
     # JAX version of PAWdata
-    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR)
-    PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
-
-    
+    # PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
 
     if (printLevel > 0):
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
+    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
     if mydf.scf_iter == 0:
@@ -164,11 +169,31 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
         # TODO: test paw jk here
         vj = vk = None
         if with_j:
-            vj = PAWutils.getj_PAW(cell, dm, 
+            # vj = PAWutils.getj_PAW(cell, dm, 
+            #                             mydf.aoOnR_tilde,
+            #                             mydf.mesh,
+            #                             mydf.PAWdata,
+            #                             Periodic=mydf.Periodic)
+            cpu0 = (logger.process_clock(), logger.perf_counter())
+            vj1 = PAWutils.getjSmoothPW(cell, dm, 
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
                                         mydf.PAWdata,
                                         Periodic=mydf.Periodic)
+            logger.timer(mydf, 'vj PW', *cpu0)
+            cpu0 = (logger.process_clock(), logger.perf_counter())
+            vj2 = PAWutils.getjSharpLocal(cell, dm, 
+                                        mydf.aoOnR_tilde,
+                                        mydf.mesh,
+                                        mydf.PAWdata,
+                                        Periodic=mydf.Periodic)
+            vj3 = PAWutils.getjSmoothLocal(cell, dm, 
+                                        mydf.aoOnR_tilde,
+                                        mydf.mesh,
+                                        mydf.PAWdata,
+                                        Periodic=mydf.Periodic)
+            logger.timer(mydf, 'vj atom', *cpu0)
+            vj = vj1 + vj2 + vj3
         if with_k:
             vk = PAWutils.getk_PAW_JAX(cell, dm,
                                         mydf.aoOnR_tilde,
@@ -214,11 +239,26 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
 
     vj = vk = None
     if with_j:
-        vj = PAWutils.getj_PAW_Numpy(cell, dm, 
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        vj1 = PAWutils.getjSmoothPW(cell, dm, 
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
-                                    mydf.PAWdataNumpy,
+                                    mydf.PAWdata,
                                     Periodic=mydf.Periodic)
+        logger.timer(mydf, 'vj PW', *cpu0)
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        vj2 = PAWutils.getjSharpLocal(cell, dm, 
+                                    mydf.aoOnR_tilde,
+                                    mydf.mesh,
+                                    mydf.PAWdata,
+                                    Periodic=mydf.Periodic)
+        vj3 = PAWutils.getjSmoothLocal(cell, dm, 
+                                    mydf.aoOnR_tilde,
+                                    mydf.mesh,
+                                    mydf.PAWdata,
+                                    Periodic=mydf.Periodic)
+        logger.timer(mydf, 'vj atom', *cpu0)
+        vj = vj1 + vj2 + vj3
     if with_k:
         vk = PAWutils.getk_PAW_loop(cell, dm,
                                     mydf.aoOnR_tilde,
@@ -288,7 +328,7 @@ class PAW(FFTDF):
 
     def initPAW(self, cell):
         t0 = time.time()
-        PAWdata, PAWdataJAX, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdata(
+        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdata(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
@@ -318,7 +358,7 @@ class PAW(FFTDF):
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
-        self.PAWdataNumpy = PAWdata
+        self.PAWNucdata = PAWNucdata
         self.Rgrid = Rgrid
         self.pcell = pmol
         self.gcell = gmol
@@ -333,18 +373,70 @@ class PAW(FFTDF):
     def get_nuc(self, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
         '''
+        # TODO: kpt not implemented
         cell = self.cell
         kpts, is_single_kpt = _check_kpts(self, kpts)
-        # if self._prefer_ccdf or cell.omega > 0:
-        #     # For long-range integrals _CCGDFBuilder is the only option
-        #     dfbuilder = _CCNucBuilder(cell, kpts).build()
-        # else:
-        #     dfbuilder = _RSNucBuilder(cell, kpts).build()
-        dfbuilder = _RSNucBuilder(cell, kpts).build()
-        nuc = dfbuilder.get_nuc()
+        
+        nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
+    
+    def get_nuc_paw1(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        # TODO: kpt not implemented
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        
+        nuc = PAWutils.getNucPAWSmoothPW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
+    
+    def get_nuc_paw2(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        # TODO: kpt not implemented
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        
+        nuc = PAWutils.getNucPAWSharpLocal(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
+    
+    def get_nuc_paw3(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        # TODO: kpt not implemented
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        
+        nuc = PAWutils.getNucPAWSmoothLocal(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
+    
+    # def get_nuc(self, kpts=None):
+    #     '''Get the periodic nuc-el AO matrix, with G=0 removed.
+    #     '''
+    #     cell = self.cell
+    #     kpts, is_single_kpt = _check_kpts(self, kpts)
+    #     # if self._prefer_ccdf or cell.omega > 0:
+    #     #     # For long-range integrals _CCGDFBuilder is the only option
+    #     #     dfbuilder = _CCNucBuilder(cell, kpts).build()
+    #     # else:
+    #     #     dfbuilder = _RSNucBuilder(cell, kpts).build()
+    #     dfbuilder = _RSNucBuilder(cell, kpts).build()
+    #     nuc = dfbuilder.get_nuc()
+    #     if is_single_kpt:
+    #         nuc = nuc[0]
+    #     return nuc
     
     def getJ1(self, dm, hermi=1, kpts=None, kpts_band=None,
               with_j=True, with_k=True, omega=None, exxdiv=None):
@@ -418,7 +510,6 @@ class PAW(FFTDF):
         
         return J3
     
-
     @classmethod
     def from_mf(cls, mf, cell=None, **kwargs):
         """Create OCCRI instance from mean-field object
@@ -559,7 +650,7 @@ class NewPAW(FFTDF):
 
     def initPAW(self, cell):
         t0 = time.time()
-        PAWdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdataNew(
+        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdataNew(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
@@ -589,6 +680,7 @@ class NewPAW(FFTDF):
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
+        self.PAWNucdata = PAWNucdata
         self.Rgrid = Rgrid
         self.pcell = pmol
         self.gcell = gmol
@@ -604,6 +696,57 @@ class NewPAW(FFTDF):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
         '''
         # TODO: kpt not implemented
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        
+        nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
+    
+    def get_nuc_paw1(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        # TODO: kpt not implemented
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        
+        nuc = PAWutils.getNucPAWSmoothPW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
+    
+    def get_nuc_paw2(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        # TODO: kpt not implemented
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        
+        nuc = PAWutils.getNucPAWSharpLocal(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
+    
+    def get_nuc_paw3(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        # TODO: kpt not implemented
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        
+        nuc = PAWutils.getNucPAWSmoothLocal(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                 self.PAWNucdata, self.Periodic)
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
+    
+    def get_nuc_rsdf(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
         cell = self.cell
         kpts, is_single_kpt = _check_kpts(self, kpts)
         # if self._prefer_ccdf or cell.omega > 0:

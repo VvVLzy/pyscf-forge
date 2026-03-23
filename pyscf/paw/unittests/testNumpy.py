@@ -11,8 +11,8 @@ import time
 L = 3  # box size
 
 # specify He2
-r1      = 0.    # location of first carbon
-r0      = 0.7    # N-N bond length
+r1      = 0    # location of first carbon
+r0      = 1    # N-N bond length
 atom    = f'He {r1} {r1} {r1}; He {r1+r0} {r1} {r1}'
 # atom    = f'He 0 0 0'
 
@@ -21,7 +21,7 @@ basis = "ccpv"+zeta
 
 verbose = 3
 a = numpy.eye(3) * L
-ke_cutoff = 100
+ke_cutoff = 200
 precision = 1e-8
 
 cell = pgto.M(
@@ -268,15 +268,46 @@ def testobtainLocalFns():
             # print(numpy.max(numpy.abs(result[i][atom]-result1[i][atom])))
             assert(numpy.isclose(result[i][atom], result1[i][atom]).all())
 
+def testobtainLocalFnsNew():
+    from PAWutilsNumpy import obtainLocalFns as old
+    from PAWutilsNumpy import obtainLocalFnsNew as new
+    pmol = mydf.pcell
+    mol = mydf.cell
+    ctr_coeff = mydf.ctr_coeff
+    grids = mydf.BeckeGrid
+    alpha0 = mydf.alpha0
+    epsilon = mydf.PAWorbitalCutOff
+    Rb = mydf.augRadius
+    Periodic = mydf.Periodic
+
+    start = time.time()
+    # result = old(pmol, mol, ctr_coeff, grids, alpha0, epsilon=epsilon, Rb=0.5, Periodic=Periodic, rtol=1e-10)
+    # result = new(pmol, mol, ctr_coeff, grids, alpha0, 2.0, epsilon=epsilon, Rb=Rb, Periodic=Periodic, rtol=1e-10)
+    print(f'Jaxtime: {time.time()-start: .10f}')
+    start = time.time()
+    result1 = new(pmol, mol, ctr_coeff, grids, 60, 1.5, epsilon=epsilon, Rb=Rb, Periodic=Periodic, rtol=1e-10)
+    print(f'Npytime: {time.time()-start: .10f}')
+    # print(result[1][0][:, 5])
+    # print(result1[1][0][:, 5])
+    import pdb; pdb.set_trace()
+
+def testPeriodicOverlap():
+    s1e_pbc = cell.pbc_intor('int1e_ovlp')
+    s1e_mol = cell.intor('int1e_ovlp')
+    import pdb; pdb.set_trace()
+    print(s1e_pbc - s1e_mol)
+
 def main():
-    testmakeWignerSeitz()
-    testcompensatingCharge()
-    testcompensatingChargeSph()
-    testgetMPQLarray()
-    testgetjSmoothPW()
-    testgetjSharpLocal()
-    testgetjSmoothLocal()
-    testobtainLocalFns()
+    # testmakeWignerSeitz()
+    # testcompensatingCharge()
+    # testcompensatingChargeSph()
+    # testgetMPQLarray()
+    # testgetjSmoothPW()
+    # testgetjSharpLocal()
+    # testgetjSmoothLocal()
+    # testobtainLocalFns()
+    testobtainLocalFnsNew()
+    # testPeriodicOverlap()
 
 if __name__ == '__main__':
     main()

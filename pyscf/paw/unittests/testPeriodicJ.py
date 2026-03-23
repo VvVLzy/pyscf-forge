@@ -408,8 +408,8 @@ def main():
     # debug_J2(alpha0=20, Rb=1.5)
     # debug_J(alpha0=20, Rb=3.0)
     # check_J()
-    # check_J_scan(alpha0=10, Rb=1.5)
-    check_J_random_position(alpha0=10, Rb=1.5)
+    check_J_scan(alpha0=10, Rb=1.5)
+    # check_J_random_position(alpha0=10, Rb=1.5)
     # check_nuc()
 
 if __name__ == '__main__':
