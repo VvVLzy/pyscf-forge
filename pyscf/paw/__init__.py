@@ -252,7 +252,7 @@ class PAW(FFTDF):
         # nocc = nelec//2
         # madelung = pyscf.pbc.tools.pbc.madelung(self.cell, self.cell.make_kpts([1,1,1])) if self.Periodic else 0.
 
-        mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis, unit=cell.unit))
+        mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis, unit=cell.unit, spin=cell.spin))
 
         t0 = time.time()
         # hcore = mf.get_hcore().reshape((nao,nao))
@@ -262,7 +262,8 @@ class PAW(FFTDF):
         self.Times_["1e-orbs"] += time.time()-t0
 
         self.S = S
-        self.aoOnR_tilde = jnp.einsum('xi,x->xi',aoOnR_tilde,gaussgrid.gridwts)
+        #self.aoOnR_tilde = jnp.einsum('xi,x->xi',aoOnR_tilde,gaussgrid.gridwts)
+        self.aoOnR_tilde=aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
         

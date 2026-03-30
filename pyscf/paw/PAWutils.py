@@ -381,6 +381,12 @@ def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False
     # TODO: generalize to multiple k-points
     
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
+    print(gOnR.shape)
+    print(gridIdx.shape)
+    for j in range(gOnR.shape[0]):
+        print(j)
+        for i in range(gOnR.shape[2]):
+            print(jnp.sum(gOnR[j,:,i]*wts[gridIdx[j]]))
 
     ### the factors of two come from RHF
     # TODO: generalize to beyond RHF
@@ -411,15 +417,17 @@ def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False
         DPQ      = jnp.einsum('Pm, Qn, mn',      f_pmu,      f_pmu, subMat)
         DPQtilde = jnp.einsum('Pm, Qn, mn', ftilde_pmu, ftilde_pmu, subMat)
         zg = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
-        update = jnp.einsum('g,rg,r->r',zg, gonr,wts[grididx]*wts[grididx]) + density[grididx]
+        update = jnp.einsum('g,rg->r',zg, gonr) + density[grididx]
         return density.at[grididx].set( update ), None
 
     ##add the compensating change to the diffuse density
     density, _ = lax.scan(atomContribution, density, (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx))
 
     #potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
-    #potential = jnp.einsum("kl,l->k",V2e,density)
-    potential = jnp.asarray(gaussgrid.getPotential(numpy.array(density)))
+    V2e=gaussgrid.formFullIntegrals()
+    #V2e=V2e['V2e']
+    potential = jnp.einsum("kl,l->k",V2e,density)
+    #potential = jnp.asarray(gaussgrid.getPotential(numpy.array(density)))
 
     J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde).block_until_ready()
     #jax.debug.print('{x}',x=J)
@@ -438,7 +446,7 @@ def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False
         #jax.debug.print('dpqr {x}',x=DPQtilde)
         zg  = jnp.einsum('PQ, PQl->l', DPQ-DPQtilde, m_pql)
         #jax.debug.print('zg {x}',x=zg)
-        zg2 = jnp.einsum('r,rg,r->g', potential[grididx], gonr,wts[grididx]*wts[grididx])
+        zg2 = jnp.einsum('r,rg->g', potential[grididx], gonr)
         #jax.debug.print('zg2 {x}',x=zg2)
         GL  = jnp.einsum('g,PQg', zg2, m_pql)  ##global-local term
         #jax.debug.print('gl {x}',x=GL)
