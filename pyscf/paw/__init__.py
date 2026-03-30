@@ -37,7 +37,6 @@ def getPAWdata(mol,
     mf.grids.build()
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
-    Rgrid=gaussgrid.getGrid()
 
     # get alpha0
     if alpha0 is None:
@@ -47,15 +46,32 @@ def getPAWdata(mol,
 
     alpha0_wf = alpha0 # it seems that this works better in practice
 
+    # Build gmol before ISDF grid setup
+    alpha, atoms, L, M = PAWutils.getAlphaAtomsL(pmol._bas, pmol._env)
+    gmax = int(L.max()*2)
+    gbas = {}
+    for atomI in range(pmol._atm.shape[0]):
+        elem = pmol._atom[atomI][0]
+        gbas[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+    gmol = pyscf.pbc.gto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit)
+
+    # Now setup ISDF Grid
+    gaussgrid.setup_isdf(gmol=gmol)
+    
+    # Get the sparse grid
+    Rgrid = gaussgrid.get_sparse_grid()
+    mesh = (Rgrid.shape[0],)  # mesh tuple doesn't make sense for sparse, but we keep it for signature
+    Ng = Rgrid.shape[0]
+
     # PAWData
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns1(
         pmol, mol, ctr_coeff, mf.grids, alpha0_wf, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
-    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol, gOnR    = PAWutils.compensatingCharge(
+    M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gmol_chk, gOnR = PAWutils.compensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
-    # Evaluate AOs on uniform grid
+    # Evaluate AOs on sparse grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
-    gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
+    gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid) if Periodic else gmol.eval_gto('GTOval', Rgrid)
     
 
     # JAX version of PAWdata
@@ -107,13 +123,13 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
         # TODO: test paw jk here
         vj = vk = None
         if with_j:
-            vj = PAWutils.getj_PAW_JAX(cell, dm, 
+            vj = PAWutils.getj_PAW_JAX(cell, dm, mydf.gaussgrid,
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
                                         mydf.PAWdata,
                                         Periodic=mydf.Periodic)
         if with_k:
-            vk = PAWutils.getk_PAW_JAX(cell, dm,
+            vk = PAWutils.getk_PAW_JAX(cell, dm, mydf.gaussgrid,
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
                                         mydf.PAWdata,
@@ -165,7 +181,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
     if with_k:
         # TODO: get k here has some problems
         # different nmo than GAPW
-        vk = PAWutils.getk_PAW_loop(cell, dm,
+        vk = PAWutils.getk_PAW_loop(cell, dm, mydf.gaussgrid,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
                                     mydf.PAWdata,

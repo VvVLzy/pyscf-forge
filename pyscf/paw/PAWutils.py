@@ -376,17 +376,10 @@ def get_PAW_inUsefulFormForJax(PAWdata):
     return localIdxJax, F_PmuJax, Ftilde_PmuJax, VPQRSarrayJax, M_PQLarrJax, V_PQLarrJax, V_LMarrJax, gIdxJax, gridIdxJax, gOnRJax
 
 def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    wts=jnp.asarray(gaussgrid.gridwts)
     start=time.time()
     # TODO: generalize to multiple k-points
     
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gIdx, gridIdx, gOnR = PAWdata
-    print(gOnR.shape)
-    print(gridIdx.shape)
-    for j in range(gOnR.shape[0]):
-        print(j)
-        for i in range(gOnR.shape[2]):
-            print(jnp.sum(gOnR[j,:,i]*wts[gridIdx[j]]))
 
     ### the factors of two come from RHF
     # TODO: generalize to beyond RHF
@@ -396,8 +389,7 @@ def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False
     ###
 
     Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    f = 1.0  # weights absorbed into sparse potential
     Ng=len(aoOnR_tilde)
 
     def dens(carry, occmoi):
@@ -423,12 +415,11 @@ def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False
     ##add the compensating change to the diffuse density
     density, _ = lax.scan(atomContribution, density, (F_Pmu, Ftilde_Pmu, M_PQLarr, gOnR, localIdx, gridIdx))
 
-    #potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
-    V2e=gaussgrid.formFullIntegrals()
-    #V2e=V2e['V2e']
-    potential = jnp.einsum("kl,l->k",V2e,density)
-    #potential = jnp.asarray(gaussgrid.getPotential(numpy.array(density)))
+    # potential = jnp.fft.ifftn( FF * jnp.fft.fftn(density.reshape(mesh))).real.flatten()
+    # Using sparse ISDF grid potential solver
+    potential = jnp.asarray(gaussgrid.get_potential_sparse(numpy.asarray(density)))
 
+    # Removed the uniform volume element `f` because sparse potential absorbs weights
     J = jnp.einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde).block_until_ready()
     #jax.debug.print('{x}',x=J)
     assert(J.shape[0] == cell.nao)
@@ -485,7 +476,7 @@ def getj_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False
 ## below I try to fix the jax problem of getk
 
 # this is the original get k
-def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+def getk_PAW_JAX_old(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     print("entering exchange")
     t0 = time.time()
 
@@ -502,10 +493,7 @@ def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     nao, nmo = occMo.shape[0], occMo.shape[1]
     print(f'nmo: {nmo}')
     Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
-    FF = jnp.array(FF)
-
+    f = 1.0  # weights absorbed into sparse potential
     Kimu = 0.*occMo.T  ##occRI exchange i, mu
 
 
@@ -525,7 +513,13 @@ def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 
         Rho_ij, _ = lax.scan(updateRho, Rho_ij, (gridIdx, Gi, Gj, Gtildei, Gtildej, M_PQLarr, gOnR)) # looping over atom
 
-        potential_ij = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+        import jax.experimental
+        import numpy
+        potential_ij = jax.pure_callback(
+            lambda x: numpy.asarray(gaussgrid.get_potential_sparse(numpy.asarray(x))),
+            jax.ShapeDtypeStruct(Rho_ij.shape, Rho_ij.dtype),
+            Rho_ij
+        )
 
         kimu = jnp.einsum('r,r,rm->m', potential_ij, phi_j, aoOnR_tilde) * f +\
                 kimu #
@@ -594,7 +588,7 @@ def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 
 
 # update Kimu for each i one time instead of j times
-def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+def getk_PAW_JAX_new(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     print("entering exchange")
     t0 = time.time()
 
@@ -611,10 +605,7 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     nao, nmo = occMo.shape[0], occMo.shape[1]
     print(f'nmo: {nmo}')
     Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
-    FF = jnp.array(FF)
-
+    f = 1.0  # weights absorbed into sparse potential
     Kimu = 0.*occMo.T  ##occRI exchange i, mu
 
 
@@ -634,7 +625,13 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 
         Rho_ij, _ = lax.scan(updateRho, Rho_ij, (gridIdx, Gi, Gj, Gtildei, Gtildej, M_PQLarr, gOnR)) # looping over atom
 
-        potential_ij = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+        import jax.experimental
+        import numpy
+        potential_ij = jax.pure_callback(
+            lambda x: numpy.asarray(gaussgrid.get_potential_sparse(numpy.asarray(x))),
+            jax.ShapeDtypeStruct(Rho_ij.shape, Rho_ij.dtype),
+            Rho_ij
+        )
 
         potential_phi_i = potential_ij*phi_j
 
@@ -705,7 +702,7 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     return numpy.asarray(K*2)
 
 # test function for fft only
-def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+def getk_PAW_loop(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     print("entering exchange")
     # TODO: rewrite this whole thing in jax
     # aoOnR_tilde = jnp.array(aoOnR_tilde)
@@ -723,10 +720,7 @@ def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     nao, nmo = occMo.shape[0], occMo.shape[1]
     print(f'nmo: {nmo}')
     Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
-    FF = jnp.array(FF)
-
+    f = 1.0  # weights absorbed into sparse potential
     Kimu = 0.*occMo.T  ##occRI exchange i, mu
 
     G = vmap(lambda f, l: f @ occMo[l], (0,0))(F_Pmu, localIdx)             # shape: (atom, P, MO)
@@ -743,7 +737,13 @@ def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 
         Rho_ij, _ = lax.scan(updateRho, Rho_ij, (gridIdx, Gi, Gj, Gtildei, Gtildej, M_PQLarr, gOnR)) # looping over atom
 
-        potential_ij = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+        import jax.experimental
+        import numpy
+        potential_ij = jax.pure_callback(
+            lambda x: numpy.asarray(gaussgrid.get_potential_sparse(numpy.asarray(x))),
+            jax.ShapeDtypeStruct(Rho_ij.shape, Rho_ij.dtype),
+            Rho_ij
+        )
 
         potential_phi_i = potential_ij*phi_j
 
@@ -806,7 +806,7 @@ def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 
     return numpy.asarray(K*2)
 
-def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
+def getk_PAW_JAX(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     print("entering exchange")
     # TODO: rewrite this whole thing
     # some thing fishy going on that makes matmul very slow
@@ -824,10 +824,7 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     nao, nmo = occMo.shape[0], occMo.shape[1]
     print(f'nmo: {nmo}')
     Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
-    FF = jnp.array(FF)
-
+    f = 1.0  # weights absorbed into sparse potential
     Kimu = 0.*occMo.T  ##occRI exchange i, mu
 
 
@@ -848,7 +845,13 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 
         Rho_ij = phi_j
 
-        potential_phi_i = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+        import jax.experimental
+        import numpy
+        potential_phi_i = jax.pure_callback(
+            lambda x: numpy.asarray(gaussgrid.get_potential_sparse(numpy.asarray(x))),
+            jax.ShapeDtypeStruct(Rho_ij.shape, Rho_ij.dtype),
+            Rho_ij
+        )
 
         return (kimu, phi_i, Gi, Gtildei), (potential_phi_i,)
 
@@ -883,7 +886,13 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         phi_j = occMoj @ aoOnR_tilde
         Rho_ij = phi_j
         # startfft = time.time()
-        potential_phi_i = jnp.fft.ifftn( FF * jnp.fft.fftn(Rho_ij.reshape(mesh))).real.flatten()
+        import jax.experimental
+        import numpy
+        potential_phi_i = jax.pure_callback(
+            lambda x: numpy.asarray(gaussgrid.get_potential_sparse(numpy.asarray(x))),
+            jax.ShapeDtypeStruct(Rho_ij.shape, Rho_ij.dtype),
+            Rho_ij
+        )
         # endfft = time.time()
         # print(f'single fft time: {endfft-startfft}')
     end1 = time.time()
