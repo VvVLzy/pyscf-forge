@@ -12,7 +12,7 @@ L = 3  # box size
 
 # specify He2
 r1      = 0    # location of first carbon
-r0      = 1    # N-N bond length
+r0      = 0.7    # N-N bond length
 atom    = f'He {r1} {r1} {r1}; He {r1+r0} {r1} {r1}'
 # atom    = f'He 0 0 0'
 
@@ -30,7 +30,7 @@ cell = pgto.M(
     verbose     = verbose,
     a           = a,
     ke_cutoff   = ke_cutoff,
-    precision   = precision
+    precision   = precision,
 )
 
 cell_fftdf = pgto.M(
@@ -43,7 +43,7 @@ cell_fftdf = pgto.M(
 )
 
 init_guess = '1e'
-xc = ''
+xc = 'pbe'
 
 mf_per_rks_paw = pscf.RKS(cell)
 mf_per_rks_paw.init_guess = init_guess
@@ -297,6 +297,66 @@ def testPeriodicOverlap():
     import pdb; pdb.set_trace()
     print(s1e_pbc - s1e_mol)
 
+def testmakeAugmentationRadius():
+    from PAWutilsNumpy import makeAugmentationRadius as new
+    r = new(cell)
+    print(r)
+
+def testpickalpha0():
+    from PAWutilsNumpy import makeAugmentationRadius, basisnorm
+    from PAWutilsNumpy import pickalpha0 as new
+    r = makeAugmentationRadius(cell)
+    alpha0 = new(cell, r, 1e-5)
+    # print(basisnorm(alpha0, 1))
+    print(alpha0)
+
+def testPartitionAOs():
+    from PAWutilsNumpy import partitionAOs as old
+    from vxc import smoothCell as new
+
+    mol = mydf.cell
+    pmol = mydf.pcell
+    alpha0 = mydf.alpha0
+    Rgrid = mydf.Rgrid
+    ctr_coeff = mydf.ctr_coeff
+    result = old(mol, pmol, Rgrid, ctr_coeff, alpha0)
+    result1 = new(mol, alpha0)
+
+    print(numpy.max(numpy.abs(result[0] - mol.pbc_eval_gto('GTOval', Rgrid))))
+    print(numpy.max(numpy.abs(result[1] - result1.pbc_eval_gto('GTOval', Rgrid))))
+    import pdb; pdb.set_trace()
+
+def testvxc():
+    from vxc import PAWNumInt
+    from pyscf import lib
+
+    cell = mydf.cell
+    nk = 1
+    nao = cell.nao
+
+    # fftdf
+    mf_per_rks = pscf.RKS(cell_fftdf)
+    mf_per_rks.init_guess = init_guess
+    mf_per_rks.xc = xc
+
+    mf_per_rks.kernel()
+    dm = mf_per_rks.make_rdm1()
+    # mo_coeff = numpy.asarray(dm.mo_coeff).reshape(-1, nk, nao, nao)
+    # mo_occ = numpy.asarray(dm.mo_occ).reshape(-1, nk, nao)
+    # dm = lib.tag_array(dm.reshape(-1, nk, nao, nao), mo_coeff=mo_coeff, mo_occ=mo_occ)
+
+    # vxc 1
+    # vxc1 = mf_per_rks_paw.get_veff(cell, dm) - mf_per_rks_paw.get_j(cell, dm)
+
+    # vxc 2
+    nelec1, exc1, vxc1 = mf_per_rks._numint.nr_rks(cell_fftdf, mf_per_rks.with_df.grids, xc, dm)
+    pawnumint = PAWNumInt(mydf)
+    nelec2, exc2, vxc2 = pawnumint.nr_rks(cell, mydf.grids, xc, dm)
+    import pdb; pdb.set_trace()
+    
+
+    print(numpy.max(numpy.abs(vxc1-vxc2)))
+
 def main():
     # testmakeWignerSeitz()
     # testcompensatingCharge()
@@ -306,8 +366,12 @@ def main():
     # testgetjSharpLocal()
     # testgetjSmoothLocal()
     # testobtainLocalFns()
-    testobtainLocalFnsNew()
+    # testobtainLocalFnsNew()
     # testPeriodicOverlap()
+    # testmakeAugmentationRadius()
+    # testpickalpha0()
+    # testPartitionAOs()
+    testvxc()
 
 if __name__ == '__main__':
     main()

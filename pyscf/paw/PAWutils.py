@@ -23,6 +23,67 @@ from . import ClebschGordan
 from functools import partial
 smart_einsum = partial(numpy.einsum, optimize='optimal')
 
+def makeAugmentationRadius(mol):
+    # Create the 3x3x3 supercell to account for periodic boundary conditions
+    repMol = pyscf.pbc.tools.pbc.cell_plus_imgs(mol, [1, 1, 1])
+    
+    # PySCF provides a direct way to get atomic coordinates as an (N, 3) numpy array
+    atomPos = repMol.atom_coords() 
+    
+    # Calculate pairwise distance matrix using NumPy broadcasting
+    # (N, 1, 3) - (1, N, 3) results in an (N, N, 3) array, then we take the norm
+    diff = atomPos[:, numpy.newaxis, :] - atomPos[numpy.newaxis, :, :]
+    atomAtomDistance = numpy.linalg.norm(diff, axis=-1)
+
+    # Mask self-distances (and any perfectly overlapping atoms)
+    atomAtomDistance = numpy.where(atomAtomDistance < 1.e-5, 1.e11, atomAtomDistance)
+    
+    # Minimum distance for each atom, halved
+    Rb = numpy.min(atomAtomDistance, axis=0) / 2.0
+    
+    return numpy.min(Rb) ####This needs a proper fix
+
+
+def pickalpha0(mol, Rb, epsilon = 1.e-5, maxL = 6):
+    def solve_alpha(r_c, l, epsilon):
+        """
+        Solves for alpha in the equation:
+        sqrt((2*(2*alpha)**(l+1.5))/gamma(l+1.5)) * r_c**l * exp(-alpha * r_c**2) = epsilon
+        """
+        
+        # 1. Define the substituted variables to keep the code clean
+        p = (l + 1.5) / 2.0
+        
+        # Calculate the constant C
+        numerator_C = 2**(l + 2.5)
+        denominator_C = scipy.special.gamma(l + 1.5)
+        C = (r_c**l) * numpy.sqrt(numerator_C / denominator_C)
+        
+        # 2. Calculate z (the argument for the Lambert W function)
+        z = -(r_c**2 / p) * (epsilon / C)**(1.0 / p)
+        
+        # 3. Apply the Lambert W function
+        # We use the k=-1 branch because we expect a small epsilon and a large positive alpha.
+        # The argument z will be small and negative (between -1/e and 0).
+        W_val = scipy.special.lambertw(z, k=-1)
+        
+        # 4. Solve for alpha
+        alpha = -(p / r_c**2) * W_val
+        
+        # The Lambert W function returns a complex number type in SciPy.
+        # The physical solution we want is purely real, so we return the real part.
+        return alpha.real
+
+    alpha0 = []
+    for i in range(mol._atm.shape[0]):
+        basI = mol._bas[mol._bas[:,0]==i]
+        maxl = min(2*numpy.max(basI[:,1]), maxL) ##cannot go beyond 6 for practical reasons
+        alpha = solve_alpha(Rb, maxl, epsilon)
+        alpha0.append(-numpy.log(epsilon/max(1., Rb**maxl))/Rb**2)
+        # alpha0.append(alpha)
+
+    return numpy.max(alpha0)
+
 def prepareMolForPAW(mol):
     ##move the atoms so they are in the center of the cell
     atomPos = numpy.asarray([mol._atom[i][1] for i in range(len(mol._atom))])

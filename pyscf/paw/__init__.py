@@ -40,6 +40,11 @@ def getPAWdataNew(mol,
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
 
+    # if alpha0 is None:
+    #     rc = PAWutils.makeAugmentationRadius(mol)
+    #     alpha0 = PAWutils.pickalpha0(mol, rc, 1e-6)
+    #     alpha0_wf = alpha0/2
+
     # get alpha0
     if alpha0 is None:
         alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
@@ -47,11 +52,13 @@ def getPAWdataNew(mol,
         _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
         alpha0_wf = alpha0/2
 
-    alpha0_wf = alpha0 # it seems that this works better in practice
+    alpha0_wf = alpha0 # must be this!
 
     # PAWData
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNew(
-        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, 1.2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, 1.5, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+    # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
+    #     pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
     M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.mergeCompensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
