@@ -2,6 +2,8 @@ import numpy
 from pyscf import lib
 from pyscf.pbc.dft.numint import NumInt, KNumInt, nr_rks
 from pyscf.pbc.dft.gen_grid import BeckeGrids
+from pyscf.dft.gen_grid import Grids
+from pyscf.lib import logger
 from .PAWutils import buildPmolAtom
 
 from functools import partial
@@ -27,7 +29,8 @@ def smoothCell(mol, alpha0):
     return smoothMol
 
 class PAWNumInt(NumInt):
-    def __init__(self, mydf):
+    def __init__(self, mydf, mf):
+        self.mf = mf
         self.cell = mydf.cell
         self.smoothCell = smoothCell(self.cell, mydf.alpha0)
         self.pcell = mydf.pcell
@@ -36,6 +39,7 @@ class PAWNumInt(NumInt):
 
         # atomic data
         self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = self.prepareAtomicData(mydf.alpha0)
+        self.localIdx = mydf.PAWdata[0]
         self.F_PmuArr = mydf.PAWdata[1]
         self.Ftilde_PmuArr = mydf.PAWdata[2]
         super().__init__()
@@ -49,6 +53,8 @@ class PAWNumInt(NumInt):
             pcellAtom = buildPmolAtom(self.cell, self.pcell, atomI, self.pcell.cart)
             smoothpcellAtom = smoothCell(pcellAtom, alpha0)
             grid = BeckeGrids(pcellAtom)
+            # grid = Grids(pcellAtom)
+            grid.build()
             # grid.level = 5 # doesn't affect much
 
             pcellAtoms.append(pcellAtom)
@@ -60,8 +66,22 @@ class PAWNumInt(NumInt):
     def nr_rks_uniform_smooth(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
         cell = self.smoothCell
         grids = self.uniform_grid
-        return nr_rks(self, cell, grids, xc_code, dms, spin, relativity,
-                      hermi, kpt, kpts_band, max_memory, verbose)
+        if self._xc_type(xc_code) == 'HF':
+            temp = xc_code
+            xc_code = 'lda' # still want to check electron density
+            nelec1, exc1, vxc1 = nr_rks(
+                self, cell, grids, xc_code, dms, spin, relativity,
+                hermi, kpt, kpts_band, max_memory, verbose
+            )
+            exc1 = 0
+            vxc1 = numpy.zeros_like(vxc1)
+            xc_code = temp
+        else:
+            nelec1, exc1, vxc1 = nr_rks(
+                self, cell, grids, xc_code, dms, spin, relativity,
+                hermi, kpt, kpts_band, max_memory, verbose
+            )
+        return nelec1, exc1, vxc1
     
     def nr_rks_atomic_sharp(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
         nelec2 = 0
@@ -69,19 +89,36 @@ class PAWNumInt(NumInt):
         vxc2 = numpy.zeros((self.cell.nao, self.cell.nao))
 
         f = self.F_PmuArr
+        l = self.localIdx
         for atomI in range(self.cell._atm.shape[0]):
             pcellAtom = self.pcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
-            dm = smart_einsum('mn,Pm,Qn->PQ', dms, f[atomI], f[atomI])
+            dm_loc = dms[l[atomI]][:, l[atomI]]
+            dm = smart_einsum('mn,Pm,Qn->PQ', dm_loc, f[atomI], f[atomI])
 
-            nelec2a, exc2a, vxc2a = nr_rks(
-                self, pcellAtom, grids, xc_code, dm, spin, relativity,
-                hermi, kpt, kpts_band, max_memory, verbose
-            )
-
+            if self._xc_type(xc_code) == 'HF':
+                temp = xc_code
+                xc_code = 'lda' # still want to check electron density
+                nelec2a, exc2a, vxc2a = nr_rks(
+                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
+                    hermi, kpt, kpts_band, max_memory, verbose
+                )
+                exc2a = 0
+                vxc2a = numpy.zeros_like(vxc2a)
+                xc_code = temp
+            else:
+                nelec2a, exc2a, vxc2a = nr_rks(
+                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
+                    hermi, kpt, kpts_band, max_memory, verbose
+                )
+            # import pdb; pdb.set_trace()
             nelec2 += nelec2a
             exc2 += exc2a
-            vxc2 += smart_einsum('PQ,Pm,Qn->mn', vxc2a, f[atomI], f[atomI])
+            numpy.add.at(
+                vxc2, numpy.ix_(l[atomI], l[atomI]),
+                smart_einsum('PQ,Pm,Qn->mn', vxc2a, f[atomI], f[atomI])
+            )
+            # vxc2 += smart_einsum('PQ,Pm,Qn->mn', vxc2a, f[atomI], f[atomI])
 
         return nelec2, exc2, vxc2
 
@@ -91,19 +128,35 @@ class PAWNumInt(NumInt):
         vxc3 = numpy.zeros((self.cell.nao, self.cell.nao))
 
         f = self.Ftilde_PmuArr
+        l = self.localIdx
         for atomI in range(self.cell._atm.shape[0]):
             pcellAtom = self.smoothPcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
-            dm = smart_einsum('mn,Pm,Qn->PQ', dms, f[atomI], f[atomI])
+            dm_loc = dms[l[atomI]][:, l[atomI]]
+            dm = smart_einsum('mn,Pm,Qn->PQ', dm_loc, f[atomI], f[atomI])
 
-            nelec3a, exc3a, vxc3a = nr_rks(
-                self, pcellAtom, grids, xc_code, dm, spin, relativity,
-                hermi, kpt, kpts_band, max_memory, verbose
-            )
+            if self._xc_type(xc_code) == 'HF':
+                temp = xc_code
+                xc_code = 'lda' # still want to check electron density
+                nelec3a, exc3a, vxc3a = nr_rks(
+                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
+                    hermi, kpt, kpts_band, max_memory, verbose
+                )
+                exc3a = 0
+                vxc3a = numpy.zeros_like(vxc3a)
+                xc_code = temp
+            else:
+                nelec3a, exc3a, vxc3a = nr_rks(
+                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
+                    hermi, kpt, kpts_band, max_memory, verbose
+                )
 
             nelec3 += nelec3a
             exc3 += exc3a
-            vxc3 += smart_einsum('PQ,Pm,Qn->mn', vxc3a, f[atomI], f[atomI])
+            numpy.add.at(
+                vxc3, numpy.ix_(l[atomI], l[atomI]),
+                smart_einsum('PQ,Pm,Qn->mn', vxc3a, f[atomI], f[atomI])
+            )
 
         return nelec3, exc3, vxc3
     
@@ -123,7 +176,6 @@ class PAWNumInt(NumInt):
         nelec1, exc1, vxc1 = self.nr_rks_uniform_smooth(
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
         )
-
         # atomic grid
         nelec2, exc2, vxc2 = self.nr_rks_atomic_sharp(
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
@@ -131,7 +183,10 @@ class PAWNumInt(NumInt):
         nelec3, exc3, vxc3 = self.nr_rks_atomic_smooth(
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
         )
-
+        logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec1)
+        logger.info(self.mf, 'all nelec with atomic grids = %s', nelec2)
+        logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec3)
+        logger.info(self.mf, 'sharp nelec with uniform grids = %s', nelec2 - nelec3)
         nelec = nelec1 + nelec2 - nelec3
         exc = exc1 + exc2 - exc3
         vxc = vxc1 + vxc2 - vxc3

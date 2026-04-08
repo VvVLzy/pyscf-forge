@@ -1,0 +1,11 @@
+#!/bin/bash
+
+prefix="Si"
+for i in {1..8}; do
+	echo ${prefix}${i}
+	mkdir ${prefix}${i}
+	cp temp.inp ${prefix}${i}/${prefix}${i}.inp
+	cp CCPVxZ ${prefix}${i}/CCPVxZ
+	cp POTENTIAL ${prefix}${i}/POTENTIAL
+#	cp ../../structures/Si.xyz ${prefix}${i}/Si.xyz
+done

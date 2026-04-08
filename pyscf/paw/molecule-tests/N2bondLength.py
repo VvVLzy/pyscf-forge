@@ -12,14 +12,21 @@ from pyscf.paw import PAW
 # specify C2
 r1      = 0.    # location of first carbon
 r0       = 1.10    # N-N bond length
-atom    = f'N {r1} {r1} {r1}; N {r1+r0/3.**0.5} {r1+r0/3.**0.5} {r1+r0/3.**0.5}'
+# atom    = f'N {r1} {r1} {r1}; N {r1+r0/3.**0.5} {r1+r0/3.**0.5} {r1+r0/3.**0.5}'
+L = 50
+# L = 20
+# atom    = [
+#     ['N', [L/2+1.037, L/2, L/2]],
+#     ['N', [L/2-1.037, L/2, L/2]]
+# ]
+atom=[['Ne',[L/2,L/2,L/2]]]
 rscales = np.linspace(0.7, 1.5, 15)
 
 # other params
 verbose     = 4
-basis       = "cc-pvtz"
-ke_cutoff   = 100.
-aa          = 20.
+basis       = "unc-cc-pvdz"
+ke_cutoff   = 50.
+aa          = L
 a           = np.eye(3) * aa
 
 # periodic cell for PAW calculation
@@ -28,7 +35,8 @@ cell = pgto.M(
     verbose     = verbose,
     basis       = basis,
     ke_cutoff   = ke_cutoff,
-    a           = a
+    a           = a,
+    unit        = 'B'
 )
 
 # corresponding mol for pyscf exact calculation
@@ -36,11 +44,31 @@ mol = gto.M(
     atom        = atom,
     verbose     = verbose,
     basis       = basis,
+    unit        = 'B'
 )
 
 # mf params
-xc = 'PBE'
+xc = ''
 init_guess = '1e'
+
+def single_point():
+    # exact calculation
+    mf_mol_exact = scf.RKS(mol)
+    mf_mol_exact.xc = xc
+    mf_mol_exact.init_guess = init_guess
+    mf_mol_exact.kernel()
+
+    # paw calculation
+    mf_mol_paw = scf.RKS(mol).density_fit()
+    mf_mol_paw.xc = xc
+    mf_mol_paw.init_guess = init_guess
+    mydf = PAW.from_mf(mf_mol_paw, cell,
+                        alpha0=1, augRadius=15).build()
+    mf_mol_paw.with_df = mydf
+    mf_mol_paw.kernel()
+
+    print(mf_mol_exact.e_tot - mf_mol_paw.e_tot)
+
 
 def exact_paw_diff():
     results = []
@@ -179,12 +207,12 @@ def basis_set_convergence():
 
 def main():
     # basis_set_convergence()
-    import time
-    start = time.time()
-    exact_paw_diff()
-    print(f'Time elapsed: {time.time()-start:.2f}')
-
+    # import time
+    # start = time.time()
+    # exact_paw_diff()
+    # print(f'Time elapsed: {time.time()-start:.2f}')
     # exact_gdf_diff()
+    single_point()
 
 if __name__ == '__main__':
     main()

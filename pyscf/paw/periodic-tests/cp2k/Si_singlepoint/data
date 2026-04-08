@@ -1,0 +1,59 @@
+#!/bin/bash
+
+prefix="Si"
+
+# echo "Total numLoc"
+# for i in {1..6}; do
+# 	cd ${prefix}${i}
+# 	grep -P "a[0-9]:" *.out | awk -F'[ ;]' '{sum += $3} END {print sum}'
+# 	cd ..
+# done
+# echo
+
+# echo "Total numPrim"
+# for i in {1..6}; do
+# 	cd ${prefix}${i}
+# 	grep -P "a[0-7]:" *.out | awk -F'[ ;]' '{sum += $6} END {print sum}'
+# 	cd ..
+# done
+# echo
+
+# echo "Total numPrim"
+# for i in {1..6}; do
+# 	cd ${prefix}${i}
+# 	grep -P -o "(?<=pGTOs = )[0-9]+" *.out
+# 	cd ..
+# done
+# echo
+
+# echo "Total numConc"
+# for i in {1..6}; do
+# 	cd ${prefix}${i}
+# 	grep -P -o "(?<=cGTOs = )[0-9]+" *.out
+# 	cd ..
+# done
+# echo
+
+# echo "Total gridpoints"
+# for i in {1..6}; do
+# 	cd ${prefix}${i}
+# 	grep -P -o "(?<=points: )[0-9]+" *.out
+# 	cd ..
+# done
+# echo
+
+echo "scf time"
+for i in {1..8}; do
+	cd ${prefix}${i}
+	grep -P "[0-9]+ P_" *out | tail -n 1|  awk '{print $4}'
+	cd ..
+done
+echo
+
+# echo "J atom time"
+# for i in {1..6}; do
+# 	cd ${prefix}${i}
+# 	grep "vj atom" *out | tail -n 1 | awk '{print $(NF-1)}'
+# 	cd ..
+# done
+# echo

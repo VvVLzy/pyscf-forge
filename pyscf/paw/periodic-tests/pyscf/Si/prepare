@@ -1,0 +1,8 @@
+#!/bin/bash
+
+prefix="Si"
+for i in {1..8}; do
+	echo ${prefix}${i}
+	mkdir ${prefix}${i}
+	cp temp.py ${prefix}${i}/${prefix}${i}.py
+done

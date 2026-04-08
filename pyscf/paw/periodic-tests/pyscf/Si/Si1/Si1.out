@@ -1,0 +1,220 @@
+[0.7        0.75714286 0.81428571 0.87142857 0.92857143 0.98571429
+ 1.04285714 1.1        1.15714286 1.21428571 1.27142857 1.32857143
+ 1.38571429 1.44285714 1.5       ]
+#INFO: **** input file is /home/lebox/Github/pyscf-forge/pyscf/paw/periodic-tests/pyscf/Si/Si1/Si1.py ****
+import numpy
+from pyscf.pbc import gto as pgto
+from pyscf.pbc import scf as pscf
+from pyscf.paw import NewPAW as PAW
+
+L = 5.443702372939453  # box size
+
+# specify He2
+atom    = '''
+Si 4.082777 4.082777 1.360926
+# Si -0.000000 2.721851 2.721851
+# Si 4.082777 1.360926 4.082777
+# Si 0.000000 0.000000 0.000000
+# Si 1.360926 4.082777 4.082777
+# Si 2.721851 2.721851 0.000000
+# Si 1.360926 1.360926 1.360926
+# Si 2.721851 0.000000 2.721851
+'''
+rscales = numpy.linspace(0.7, 1.5, 15)
+# rscales = [1.5]
+print(rscales)
+
+basis = "ccpvdz"
+verbose = 4
+a = numpy.eye(3) * L
+ke_cutoff = 200
+precision = 1e-8
+
+cell = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = verbose,
+    a           = a,
+    ke_cutoff   = ke_cutoff,
+    precision   = precision
+)
+
+cell_fftdf = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = 3,
+    a           = a,
+    ke_cutoff   = 2000,
+    precision   = precision
+)
+
+# TODO: the default minao guess usually give mo that is not (cell.nao, cell.nao)
+# and thus will give an error
+init_guess = '1e'
+xc = 'pbe'
+
+def single_point_paw_manual(alpha0=None, Rb=None):
+    mf_per_rks_paw = pscf.RKS(cell)
+    mf_per_rks_paw.init_guess = init_guess
+    mf_per_rks_paw.xc = xc
+    mf_per_rks_paw.max_cycle = 1
+    mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+    mf_per_rks_paw.with_df = mydf
+    mf_per_rks_paw.kernel()
+
+def main():
+    single_point_paw_manual(alpha0=10, Rb=1.5)
+
+if __name__ == '__main__':
+    main()
+#INFO: ******************** input file end ********************
+
+
+System: uname_result(system='Linux', node='lebox', release='6.17.0-14-generic', version='#14~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Jan 15 15:52:10 UTC 2', machine='x86_64')  Threads 1
+Python 3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:16:10) [GCC 11.2.0]
+numpy 2.3.5  scipy 1.16.3  h5py 3.15.1
+Date: Tue Mar 17 16:04:06 2026
+PySCF version 2.11.0
+PySCF path  /home/lebox/Github/pyscf
+GIT HEAD (branch master) 2a157a1f44be7883fbe9076673e077b25075dc21
+
+[ENV] PYSCF_EXT_PATH /home/lebox/Github/pyscf-forge:/home/lebox/Github/pyscf-dispersion
+[CONFIG] conf_file /home/lebox/.pyscf_conf.py
+[INPUT] verbose = 4
+[INPUT] num. atoms = 1
+[INPUT] num. electrons = 14
+[INPUT] charge = 0
+[INPUT] spin (= nelec alpha-beta = 2S) = 0
+[INPUT] symmetry False subgroup None
+[INPUT] Mole.unit = angstrom
+[INPUT] Symbol           X                Y                Z      unit          X                Y                Z       unit  Magmom
+[INPUT]  1 Si     4.082777000000   4.082777000000   1.360926000000 AA    7.715330357673   7.715330357673   2.571777415800 Bohr   0.0
+
+nuclear repulsion = -27.0294810884847
+number of shells = 5
+number of NR pGTOs = 41
+number of NR cGTOs = 18
+basis = ccpvdz
+ecp = {}
+CPU time:         5.63
+lattice vectors  a1 [10.287106589, 0.000000000, 0.000000000]
+                 a2 [0.000000000, 10.287106589, 0.000000000]
+                 a3 [0.000000000, 0.000000000, 10.287106589]
+dimension = 3
+low_dim_ft_type = None
+Cell volume = 1088.63
+rcut = 25.525451153069152 (nimgs = [3 3 3])
+lattice sum = 81 cells
+precision = 1e-08
+pseudo = None
+ke_cutoff = 200
+    = [67 67 67] mesh (300763 PWs)
+tot grids = 19184
+DFT grid size: 19184
+Recommended alpha0 for the given PW cutoff 20.145473684210526
+Making augmentation sphere for Becke grid:
+L max is :2
+The max augmentation radius is: 1.5 Bohr
+a0: numLoc 18; numPrim 41
+
+WARN: Even tempered Gaussians are generated as DF auxbasis for  Si
+
+Making augmentation sphere for uniform grid:
+L max is :4
+The max augmentation radius is: 1.5 Bohr
+alpha0      : 10.00     
+alpha0_wf      : 10.00     
+Nelection   : 14        
+Ngrid points: 300763    
+delta-a     : 0.15      
+
+WARN: FFTDF integrals are found in all-electron calculation.  It often causes huge error.
+Recommended methods are DF or MDF. In SCF calculation, they can be initialized as
+        mf = mf.density_fit()
+or
+        mf = mf.mix_density_fit()
+
+
+WARN: ke_cutoff/mesh (200 / [67 67 67]) is not enough for FFTDF to get integral accuracy 1e-08.
+Coulomb integral error is ~ 0.51 Eh.
+Recommended ke_cutoff/mesh are 3.97644e+06 / [9237 9237 9237].
+
+
+
+******** <class 'pyscf.pbc.dft.rks.RKS'> ********
+method = RKS
+initial guess = 1e
+damping factor = 0
+level_shift factor = 0
+DIIS = <class 'pyscf.scf.diis.CDIIS'>
+diis_start_cycle = 1
+diis_space = 8
+diis_damp = 0
+SCF conv_tol = 1e-07
+SCF conv_tol_grad = None
+SCF max_cycles = 1
+direct_scf = True
+direct_scf_tol = 1e-13
+chkfile to save SCF result = /tmp/tmplrlv9haw
+max_memory 4000 MB (current use 1064 MB)
+******** PBC SCF flags ********
+kpt = [0. 0. 0.]
+Exchange divergence treatment (exxdiv) = ewald
+    madelung (= occupied orbital energy shift) = 0.2758110315151509
+    Total energy shift due to Ewald probe charge = -1/2 * Nelec*madelung = -1.93067722061
+DF object = <pyscf.paw.NewPAW object at 0x7544d7a41d30>
+XC functionals = pbe
+small_rho_cutoff = 1e-07
+Uniform grid, mesh = [67 67 67]
+Set gradient conv threshold to 0.000316228
+Initial guess from hcore.
+
+
+******** <class 'pyscf.pbc.df.rsdf_builder._RSNucBuilder'> ********
+mesh = [21 21 21] (9261 PWs)
+ke_cutoff = 18.65276683975167
+omega = 0.5423489144168433
+exclude_d_aux = False
+exclude_dd_block = True
+j2c_eig_always = False
+has_long_range = True
+    CPU time for int3c kernel initialization      0.01 sec, wall time      0.00 sec
+    CPU time for get_nuc      0.79 sec, wall time      0.33 sec
+
+WARN: HOMO -3.56504148423229 == LUMO -3.56504148423229
+
+
+
+******** <class 'pyscf.pbc.df.rsdf_builder._RSNucBuilder'> ********
+mesh = [21 21 21] (9261 PWs)
+ke_cutoff = 18.65276683975167
+omega = 0.5423489144168433
+exclude_d_aux = False
+exclude_dd_block = True
+j2c_eig_always = False
+has_long_range = True
+    CPU time for int3c kernel initialization      0.00 sec, wall time      0.00 sec
+    CPU time for get_nuc      0.75 sec, wall time      0.30 sec
+nelec by numeric integration = 13.91860981012707
+    CPU time for vxc      3.81 sec, wall time      0.96 sec
+    CPU time for vj PW      0.68 sec, wall time      0.05 sec
+    CPU time for vj atom      0.03 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.72 sec, wall time      0.05 sec
+    CPU time for veff      0.72 sec, wall time      0.05 sec
+init E= -287.049701007662
+    CPU time for initialize scf      6.11 sec, wall time      1.66 sec
+
+WARN: HOMO 0.0739596138685036 == LUMO 0.0744186656188203
+
+nelec by numeric integration = 13.91964351532168
+    CPU time for vxc      3.27 sec, wall time      0.81 sec
+    CPU time for vj PW      0.68 sec, wall time      0.05 sec
+    CPU time for vj atom      0.03 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.71 sec, wall time      0.05 sec
+    CPU time for veff      0.71 sec, wall time      0.05 sec
+cycle= 1 E= -288.194849206595  delta_E= -1.15  |g|= 0.735  |ddm|=  6.2
+    CPU time for cycle= 1      4.01 sec, wall time      0.86 sec
+    CPU time for scf_cycle     10.13 sec, wall time      2.52 sec
+    CPU time for SCF     10.33 sec, wall time      2.54 sec
+SCF not converged.
+SCF energy = -288.194849206595

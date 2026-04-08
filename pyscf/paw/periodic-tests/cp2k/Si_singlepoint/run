@@ -1,0 +1,15 @@
+#!/bin/bash
+
+source ~/.bashrc
+
+export OMP_NUM_THREADS=1
+
+prefix="Si"
+for i in {1..8}; do
+	echo ${prefix}${i}
+	cd ${prefix}${i}
+	/home/lebox/sw/cp2k/install/bin/launch cp2k -o ${prefix}${i}.out ${prefix}${i}.inp
+	wait
+	echo "Done"
+	cd ..
+done

@@ -1,0 +1,17 @@
+#!/bin/bash
+
+source ~/.bashrc
+conda init
+conda activate qchem
+
+export OMP_NUM_THREADS=1
+
+prefix="C"
+for i in {1..8}; do
+	echo ${prefix}${i}
+	cd ${prefix}${i}
+	python ${prefix}${i}.py > ${prefix}${i}.out
+	wait
+	echo "Done"
+	cd ..
+done

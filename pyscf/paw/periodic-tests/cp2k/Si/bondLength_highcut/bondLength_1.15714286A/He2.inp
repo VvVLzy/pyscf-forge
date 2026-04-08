@@ -1,0 +1,61 @@
+&GLOBAL
+  PRINT_LEVEL MEDIUM
+  PROJECT_NAME He2
+  RUN_TYPE ENERGY
+&END GLOBAL
+&FORCE_EVAL
+  METHOD Quickstep
+  &PRINT
+    &TOTAL_NUMBERS ON
+    &END TOTAL_NUMBERS
+  &END PRINT
+  &SUBSYS
+    &CELL
+      ABC 3.0 3.0 3.0          # 5 Angstrom cubic cell
+      PERIODIC XYZ             # Re-affirm periodic calculation for the cell
+    &END CELL
+    &COORD
+      ! Coordinates for a single Helium atom
+      He   0.00000000   0.00000000   0.00000000
+      He   1.15714286   0.00000000   0.00000000
+    &END COORD
+    &KIND He
+      POTENTIAL ALL
+      BASIS_SET CC-PVDZ
+      HARD_EXP_RADIUS 1.5
+    &END KIND
+  &END SUBSYS
+  &DFT
+    POTENTIAL_FILE_NAME /u/zluo4/packages/cp2k/data/POTENTIAL
+    BASIS_SET_FILE_NAME CCPVxZ
+    &MGRID
+      NGRIDS 1
+      CUTOFF 1600
+    &END MGRID
+    &QS
+      METHOD GAPW
+      EPS_DEFAULT 1.0E-16
+      EPSFIT 1.0E-8
+      ALPHA0_HARD 10 # might have factor of 2 difference with ours, No! just use high pw cutoff this is grid artifact
+      !LMAXN0 4
+    &END QS
+    &XC
+      &XC_FUNCTIONAL NONE
+      &END XC_FUNCTIONAL
+    &END XC
+    &SCF
+      EPS_SCF 1e-07
+      MAX_SCF 100
+      SCF_GUESS CORE
+      &DIAGONALIZATION ON
+        ALGORITHM STANDARD
+      &END DIAGONALIZATION
+    &END SCF
+    &PRINT
+      &GAPW
+        &RHO0_INFORMATION HIGH
+        &END RHO0_INFORMATION
+      &END GAPW
+    &END PRINT
+  &END DFT
+&END FORCE_EVAL

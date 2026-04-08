@@ -55,8 +55,10 @@ def getPAWdataNew(mol,
     alpha0_wf = alpha0 # must be this!
 
     # PAWData
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNew(
-        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, 1.5, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
+        pmol, mol, ctr_coeff, mf.grids, 6.373938, r=2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-8)
+    # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
+    #     pmol, mol, ctr_coeff, mf.grids, 6.373938, r=2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-8)
     # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
     #     pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
     M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.mergeCompensatingCharge(
@@ -79,7 +81,7 @@ def getPAWdataNew(mol,
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
+    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids, alpha0
 
 def getPAWdata(mol,
                PAWorbitalCutOff=1.e-5,
@@ -608,6 +610,7 @@ class NewPAW(FFTDF):
             Periodic=False,
             alpha0=None,
             augRadius=None,
+            gdfNuc=False
     ):
         
         self.scf_iter = 0
@@ -632,8 +635,8 @@ class NewPAW(FFTDF):
         self.PAWorbitalCutOff = PAWorbitalCutOff
         self.PWAccuracy = PWAccuracy
         self.Periodic = Periodic
-        self.alpha0 = alpha0
         self.augRadius = augRadius
+        self.gdfNuc = gdfNuc
         self.Times_ = {
             "Diagonalize":0.,
             "Exchange"   :0.,
@@ -644,7 +647,7 @@ class NewPAW(FFTDF):
             "Fock"       :0.
         }
 
-        self.initPAW(cell)
+        self.initPAW(cell, alpha0)
 
         
 
@@ -655,15 +658,15 @@ class NewPAW(FFTDF):
             self.get_jk = get_jk_molecule.__get__(self, self.__class__)
         ###
 
-    def initPAW(self, cell):
+    def initPAW(self, cell, alpha0):
         t0 = time.time()
-        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdataNew(
+        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid, alpha0 = getPAWdataNew(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
             Periodic=self.Periodic,
-            alpha0=self.alpha0,
+            alpha0=alpha0,
             augRadius=self.augRadius
         )
 
@@ -693,6 +696,7 @@ class NewPAW(FFTDF):
         self.gcell = gmol
         self.ctr_coeff = ctr_coeff
         self.BeckeGrid = BeckeGrid
+        self.alpha0 = alpha0
         
         if (self.printLevel > 0):
             print ("Nelection   : {0:<10d}".format(nelec))
@@ -706,8 +710,12 @@ class NewPAW(FFTDF):
         cell = self.cell
         kpts, is_single_kpt = _check_kpts(self, kpts)
         
-        nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                 self.PAWNucdata, self.Periodic)
+        if self.gdfNuc:
+            dfbuilder = _RSNucBuilder(cell, kpts).build()
+            nuc = dfbuilder.get_nuc()
+        else:
+            nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                      self.PAWNucdata, self.Periodic)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc

@@ -1,0 +1,345 @@
+[0.7        0.75714286 0.81428571 0.87142857 0.92857143 0.98571429
+ 1.04285714 1.1        1.15714286 1.21428571 1.27142857 1.32857143
+ 1.38571429 1.44285714 1.5       ]
+#INFO: **** input file is /home/lebox/Github/pyscf-forge/pyscf/paw/periodic-tests/pyscf/C/C8/C8.py ****
+import numpy
+from pyscf.pbc import gto as pgto
+from pyscf.pbc import scf as pscf
+from pyscf.paw import NewPAW as PAW
+from pyscf.paw.vxc import PAWNumInt
+
+L = 3.56074511  # box size
+
+# specify He2
+atom    = '''
+C 0.000000 0.000000 1.780373
+C 0.890186 0.890186 2.670559
+C 0.000000 1.780373 0.000000
+C 0.890186 2.670559 0.890186
+C 1.780373 0.000000 0.000000
+C 2.670559 0.890186 0.890186
+C 1.780373 1.780373 1.780373
+C 2.670559 2.670559 2.670559
+'''
+rscales = numpy.linspace(0.7, 1.5, 15)
+# rscales = [1.5]
+print(rscales)
+
+basis = "ccpvdz"
+verbose = 4
+a = numpy.eye(3) * L
+ke_cutoff = 200
+precision = 1e-8
+
+cell = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = verbose,
+    a           = a,
+    ke_cutoff   = ke_cutoff,
+    precision   = precision
+)
+
+cell_fftdf = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = 3,
+    a           = a,
+    ke_cutoff   = 2000,
+    precision   = precision
+)
+
+# TODO: the default minao guess usually give mo that is not (cell.nao, cell.nao)
+# and thus will give an error
+init_guess = '1e'
+xc = 'pbe'
+
+def single_point_paw_manual(alpha0=None, Rb=None):
+    mf_per_rks_paw = pscf.RKS(cell)
+    mf_per_rks_paw.init_guess = init_guess
+    mf_per_rks_paw.xc = xc
+    mf_per_rks_paw.max_cycle = 50
+    mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+    mf_per_rks_paw.with_df = mydf
+    pawnumint = PAWNumInt(mydf)
+    mf_per_rks_paw._numint = pawnumint
+    mf_per_rks_paw.kernel()
+
+def main():
+    single_point_paw_manual(alpha0=10, Rb=1.5)
+
+if __name__ == '__main__':
+    main()
+#INFO: ******************** input file end ********************
+
+
+System: uname_result(system='Linux', node='lebox', release='6.17.0-19-generic', version='#19~24.04.2-Ubuntu SMP PREEMPT_DYNAMIC Fri Mar  6 23:08:46 UTC 2', machine='x86_64')  Threads 1
+Python 3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:16:10) [GCC 11.2.0]
+numpy 2.3.5  scipy 1.16.3  h5py 3.15.1
+Date: Thu Apr  2 17:43:01 2026
+PySCF version 2.11.0
+PySCF path  /home/lebox/Github/pyscf
+GIT HEAD (branch master) 2a157a1f44be7883fbe9076673e077b25075dc21
+
+[ENV] PYSCF_EXT_PATH /home/lebox/Github/pyscf-forge:/home/lebox/Github/pyscf-dispersion
+[CONFIG] conf_file /home/lebox/.pyscf_conf.py
+[INPUT] verbose = 4
+[INPUT] num. atoms = 8
+[INPUT] num. electrons = 48
+[INPUT] charge = 0
+[INPUT] spin (= nelec alpha-beta = 2S) = 0
+[INPUT] symmetry False subgroup None
+[INPUT] Mole.unit = angstrom
+[INPUT] Symbol           X                Y                Z      unit          X                Y                Z       unit  Magmom
+[INPUT]  1 C      0.000000000000   0.000000000000   1.780373000000 AA    0.000000000000   0.000000000000   3.364417369570 Bohr   0.0
+[INPUT]  2 C      0.890186000000   0.890186000000   2.670559000000 AA    1.682207739922   1.682207739922   5.046625109492 Bohr   0.0
+[INPUT]  3 C      0.000000000000   1.780373000000   0.000000000000 AA    0.000000000000   3.364417369570   0.000000000000 Bohr   0.0
+[INPUT]  4 C      0.890186000000   2.670559000000   0.890186000000 AA    1.682207739922   5.046625109492   1.682207739922 Bohr   0.0
+[INPUT]  5 C      1.780373000000   0.000000000000   0.000000000000 AA    3.364417369570   0.000000000000   0.000000000000 Bohr   0.0
+[INPUT]  6 C      2.670559000000   0.890186000000   0.890186000000 AA    5.046625109492   1.682207739922   1.682207739922 Bohr   0.0
+[INPUT]  7 C      1.780373000000   1.780373000000   1.780373000000 AA    3.364417369570   3.364417369570   3.364417369570 Bohr   0.0
+[INPUT]  8 C      2.670559000000   2.670559000000   2.670559000000 AA    5.046625109492   5.046625109492   5.046625109492 Bohr   0.0
+
+nuclear repulsion = -115.279857852408
+number of shells = 40
+number of NR pGTOs = 208
+number of NR cGTOs = 112
+basis = ccpvdz
+ecp = {}
+CPU time:         5.67
+lattice vectors  a1 [6.728833057, 0.000000000, 0.000000000]
+                 a2 [0.000000000, 6.728833057, 0.000000000]
+                 a3 [0.000000000, 0.000000000, 6.728833057]
+dimension = 3
+low_dim_ft_type = None
+Cell volume = 304.663
+rcut = 19.635739477185215 (nimgs = [3 3 3])
+lattice sum = 257 cells
+precision = 1e-08
+pseudo = None
+ke_cutoff = 200
+    = [45 45 45] mesh (91125 PWs)
+tot grids = 112944
+DFT grid size: 112944
+Recommended alpha0 for the given PW cutoff 21.324526315789473
+LocId: [  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17
+  18  19  20  21  22  23  24  25  26  27  29  30  32  33  34  35  36  37
+  38  39  40  41  42  43  44  45  46  47  48  49  50  51  52  53  54  55
+  57  58  59  61  62  63  64  65  66  67  68  69  70  71  72  73  74  75
+  76  77  78  79  80  81  82  83  85  86  87  88  90  91  92  93  94  95
+  96  97  98  99 100 101 102 103 104 105 106 107 108 109 110 111]
+LocId: [  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17
+  18  19  20  21  22  23  24  25  26  27  28  29  30  31  32  33  34  35
+  36  37  38  39  40  41  43  44  46  47  48  49  50  51  52  53  54  55
+  56  57  58  59  60  61  62  63  64  65  66  67  68  69  71  72  73  75
+  76  77  78  79  80  81  82  83  84  85  86  87  88  89  90  91  92  93
+  94  95  96  97  99 100 101 102 104 105 106 107 108 109 110 111]
+LocId: [  1   2   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18  19
+  20  21  22  23  24  25  26  27  28  29  30  31  32  33  34  35  36  37
+  38  39  40  41  42  43  44  45  46  47  48  49  50  51  52  53  54  55
+  57  58  59  60  62  63  64  65  66  67  68  69  70  71  72  73  74  75
+  76  77  78  79  80  81  82  83  85  86  87  89  90  91  92  93  94  95
+  96  97  98  99 100 101 102 103 104 105 106 107 108 109 110 111]
+LocId: [  0   1   2   3   4   5   6   7   8   9  10  11  12  13  15  16  18  19
+  20  21  22  23  24  25  26  27  28  29  30  31  32  33  34  35  36  37
+  38  39  40  41  42  43  44  45  46  47  48  49  50  51  52  53  54  55
+  56  57  58  59  60  61  62  63  64  65  66  67  68  69  71  72  73  74
+  76  77  78  79  80  81  82  83  84  85  86  87  88  89  90  91  92  93
+  94  95  96  97  99 100 101 103 104 105 106 107 108 109 110 111]
+LocId: [  1   2   3   5   6   7   8   9  10  11  12  13  14  15  16  17  18  19
+  20  21  22  23  24  25  26  27  29  30  31  32  34  35  36  37  38  39
+  40  41  42  43  44  45  46  47  48  49  50  51  52  53  54  55  56  57
+  58  59  60  61  62  63  64  65  66  67  68  69  70  71  72  73  74  75
+  76  77  78  79  80  81  82  83  85  86  88  89  90  91  92  93  94  95
+  96  97  98  99 100 101 102 103 104 105 106 107 108 109 110 111]
+LocId: [  0   1   2   3   4   5   6   7   8   9  10  11  12  13  15  16  17  19
+  20  21  22  23  24  25  26  27  28  29  30  31  32  33  34  35  36  37
+  38  39  40  41  43  44  45  46  48  49  50  51  52  53  54  55  56  57
+  58  59  60  61  62  63  64  65  66  67  68  69  70  71  72  73  74  75
+  76  77  78  79  80  81  82  83  84  85  86  87  88  89  90  91  92  93
+  94  95  96  97  99 100 102 103 104 105 106 107 108 109 110 111]
+LocId: [  1   2   3   4   6   7   8   9  10  11  12  13  14  15  16  17  18  19
+  20  21  22  23  24  25  26  27  29  30  31  33  34  35  36  37  38  39
+  40  41  42  43  44  45  46  47  48  49  50  51  52  53  54  55  57  58
+  60  61  62  63  64  65  66  67  68  69  70  71  72  73  74  75  76  77
+  78  79  80  81  82  83  84  85  86  87  88  89  90  91  92  93  94  95
+  96  97  98  99 100 101 102 103 104 105 106 107 108 109 110 111]
+LocId: [  0   1   2   3   4   5   6   7   8   9  10  11  12  13  15  16  17  18
+  20  21  22  23  24  25  26  27  28  29  30  31  32  33  34  35  36  37
+  38  39  40  41  43  44  45  47  48  49  50  51  52  53  54  55  56  57
+  58  59  60  61  62  63  64  65  66  67  68  69  71  72  74  75  76  77
+  78  79  80  81  82  83  84  85  86  87  88  89  90  91  92  93  94  95
+  96  97  98  99 100 101 102 103 104 105 106 107 108 109 110 111]
+
+WARN: Even tempered Gaussians are generated as DF auxbasis for  C
+
+Making augmentation sphere for uniform grid:
+L max is :4
+The max augmentation radius is: 1.5 Bohr
+alpha0      : 10.00     
+alpha0_wf      : 10.00     
+Nelection   : 48        
+Ngrid points: 91125     
+delta-a     : 0.15      
+
+WARN: FFTDF integrals are found in all-electron calculation.  It often causes huge error.
+Recommended methods are DF or MDF. In SCF calculation, they can be initialized as
+        mf = mf.density_fit()
+or
+        mf = mf.mix_density_fit()
+
+
+WARN: ke_cutoff/mesh (200 / [45 45 45]) is not enough for FFTDF to get integral accuracy 1e-08.
+Coulomb integral error is ~ 0.58 Eh.
+Recommended ke_cutoff/mesh are 353629 / [1803 1803 1803].
+
+
+
+******** <class 'pyscf.pbc.dft.rks.RKS'> ********
+method = RKS
+initial guess = 1e
+damping factor = 0
+level_shift factor = 0
+DIIS = <class 'pyscf.scf.diis.CDIIS'>
+diis_start_cycle = 1
+diis_space = 8
+diis_damp = 0
+SCF conv_tol = 1e-07
+SCF conv_tol_grad = None
+SCF max_cycles = 50
+direct_scf = True
+direct_scf_tol = 1e-13
+chkfile to save SCF result = /tmp/tmp0evf5fsf
+max_memory 4000 MB (current use 1040 MB)
+******** PBC SCF flags ********
+kpt = [0. 0. 0.]
+Exchange divergence treatment (exxdiv) = ewald
+    madelung (= occupied orbital energy shift) = 0.4216626353077828
+    Total energy shift due to Ewald probe charge = -1/2 * Nelec*madelung = -10.1199032474
+DF object = <pyscf.paw.NewPAW object at 0x7c2f370e6a50>
+XC functionals = pbe
+small_rho_cutoff = 1e-07
+Uniform grid, mesh = [45 45 45]
+Set gradient conv threshold to 0.000316228
+Initial guess from hcore.
+  HOMO = 0.0570557144058136  LUMO = 0.24946732586329
+nelec by numeric integration = 48.84575988805694
+    CPU time for vxc     14.46 sec, wall time      3.79 sec
+    CPU time for vj PW      0.60 sec, wall time      0.04 sec
+    CPU time for vj atom      0.21 sec, wall time      0.01 sec
+    CPU time for vj and vk      1.42 sec, wall time      0.09 sec
+    CPU time for veff      1.42 sec, wall time      0.09 sec
+init E= -299.346706825562
+    CPU time for initialize scf     17.68 sec, wall time      4.17 sec
+
+WARN: HOMO 0.707983201430122 == LUMO 0.70798497554389
+
+nelec by numeric integration = 49.700544147438265
+    CPU time for vxc     11.55 sec, wall time      2.25 sec
+    CPU time for vj PW      0.53 sec, wall time      0.04 sec
+    CPU time for vj atom      0.20 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.73 sec, wall time      0.05 sec
+    CPU time for veff      0.74 sec, wall time      0.05 sec
+cycle= 1 E= -304.682945475285  delta_E= -5.34  |g|= 1.34  |ddm|= 52.5
+    CPU time for cycle= 1     12.33 sec, wall time      2.31 sec
+  HOMO = 0.478948621794817  LUMO = 0.536751877867425
+nelec by numeric integration = 50.13746432285039
+    CPU time for vxc     10.59 sec, wall time      2.19 sec
+    CPU time for vj PW      0.41 sec, wall time      0.03 sec
+    CPU time for vj atom      0.17 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.58 sec, wall time      0.04 sec
+    CPU time for veff      0.58 sec, wall time      0.04 sec
+cycle= 2 E= -305.258612212381  delta_E= -0.576  |g|= 0.865  |ddm|= 39.1
+    CPU time for cycle= 2     11.25 sec, wall time      2.23 sec
+  HOMO = 0.544325596241258  LUMO = 0.574935514556118
+nelec by numeric integration = 50.11628391721989
+    CPU time for vxc     12.25 sec, wall time      2.29 sec
+    CPU time for vj PW      0.52 sec, wall time      0.03 sec
+    CPU time for vj atom      0.19 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.71 sec, wall time      0.05 sec
+    CPU time for veff      0.91 sec, wall time      0.06 sec
+cycle= 3 E= -305.374708338606  delta_E= -0.116  |g|= 0.491  |ddm|= 7.92
+    CPU time for cycle= 3     13.20 sec, wall time      2.36 sec
+  HOMO = 0.558722195220051  LUMO = 0.587117393169899
+nelec by numeric integration = 50.10018752414676
+    CPU time for vxc      9.54 sec, wall time      2.12 sec
+    CPU time for vj PW      0.42 sec, wall time      0.03 sec
+    CPU time for vj atom      0.17 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.59 sec, wall time      0.04 sec
+    CPU time for veff      0.59 sec, wall time      0.04 sec
+cycle= 4 E= -305.421962702123  delta_E= -0.0473  |g|= 0.227  |ddm|= 6.76
+    CPU time for cycle= 4     10.29 sec, wall time      2.17 sec
+  HOMO = 0.562146401800477  LUMO = 0.589504967612405
+nelec by numeric integration = 50.107465767530286
+    CPU time for vxc      9.52 sec, wall time      2.10 sec
+    CPU time for vj PW      0.42 sec, wall time      0.03 sec
+    CPU time for vj atom      0.18 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.60 sec, wall time      0.04 sec
+    CPU time for veff      0.60 sec, wall time      0.04 sec
+cycle= 5 E= -305.432010740299  delta_E= -0.01  |g|= 0.0685  |ddm|= 2.37
+    CPU time for cycle= 5     10.18 sec, wall time      2.14 sec
+  HOMO = 0.562389267642697  LUMO = 0.589099631363106
+nelec by numeric integration = 50.108803347891396
+    CPU time for vxc     12.22 sec, wall time      2.29 sec
+    CPU time for vj PW      0.53 sec, wall time      0.04 sec
+    CPU time for vj atom      0.20 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.73 sec, wall time      0.05 sec
+    CPU time for veff      0.74 sec, wall time      0.05 sec
+cycle= 6 E= -305.433690242981  delta_E= -0.00168  |g|= 0.0192  |ddm|= 1.36
+    CPU time for cycle= 6     13.00 sec, wall time      2.34 sec
+  HOMO = 0.562362919678535  LUMO = 0.590458199800626
+nelec by numeric integration = 50.11073338080472
+    CPU time for vxc     12.20 sec, wall time      2.28 sec
+    CPU time for vj PW      0.52 sec, wall time      0.03 sec
+    CPU time for vj atom      0.20 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.73 sec, wall time      0.05 sec
+    CPU time for veff      0.73 sec, wall time      0.05 sec
+cycle= 7 E= -305.433740395684  delta_E= -5.02e-05  |g|= 0.0179  |ddm|= 1.07
+    CPU time for cycle= 7     12.98 sec, wall time      2.34 sec
+  HOMO = 0.562362266895354  LUMO = 0.590835395972166
+nelec by numeric integration = 50.11097285087246
+    CPU time for vxc      9.76 sec, wall time      2.12 sec
+    CPU time for vj PW      0.42 sec, wall time      0.03 sec
+    CPU time for vj atom      0.17 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.59 sec, wall time      0.04 sec
+    CPU time for veff      0.59 sec, wall time      0.04 sec
+cycle= 8 E= -305.433816968298  delta_E= -7.66e-05  |g|= 0.00436  |ddm|= 0.37
+    CPU time for cycle= 8     10.40 sec, wall time      2.16 sec
+  HOMO = 0.562393941489975  LUMO = 0.590915668628328
+nelec by numeric integration = 50.110685617039564
+    CPU time for vxc      9.50 sec, wall time      2.09 sec
+    CPU time for vj PW      0.41 sec, wall time      0.03 sec
+    CPU time for vj atom      0.17 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.59 sec, wall time      0.04 sec
+    CPU time for veff      0.59 sec, wall time      0.04 sec
+cycle= 9 E= -305.433823672671  delta_E= -6.7e-06  |g|= 0.000919  |ddm|= 0.116
+    CPU time for cycle= 9     10.15 sec, wall time      2.13 sec
+  HOMO = 0.562401802338373  LUMO = 0.590928262545408
+nelec by numeric integration = 50.110530392667116
+    CPU time for vxc     12.19 sec, wall time      2.27 sec
+    CPU time for vj PW      0.52 sec, wall time      0.03 sec
+    CPU time for vj atom      0.20 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.72 sec, wall time      0.05 sec
+    CPU time for veff      0.72 sec, wall time      0.05 sec
+cycle= 10 E= -305.4338239029  delta_E= -2.3e-07  |g|= 0.000524  |ddm|= 0.0243
+    CPU time for cycle= 10     12.96 sec, wall time      2.33 sec
+  HOMO = 0.562392803647666  LUMO = 0.59094551289093
+nelec by numeric integration = 50.11041997499592
+    CPU time for vxc     11.72 sec, wall time      2.31 sec
+    CPU time for vj PW      0.53 sec, wall time      0.04 sec
+    CPU time for vj atom      0.20 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.73 sec, wall time      0.05 sec
+    CPU time for veff      0.73 sec, wall time      0.05 sec
+cycle= 11 E= -305.433823972256  delta_E= -6.94e-08  |g|= 0.000194  |ddm|= 0.0129
+    CPU time for cycle= 11     13.51 sec, wall time      2.42 sec
+  HOMO = 0.562384962736463  LUMO = 0.590950345648084
+nelec by numeric integration = 50.11033465859262
+    CPU time for vxc     12.06 sec, wall time      2.27 sec
+    CPU time for vj PW      0.53 sec, wall time      0.04 sec
+    CPU time for vj atom      0.20 sec, wall time      0.01 sec
+    CPU time for vj and vk      0.73 sec, wall time      0.05 sec
+    CPU time for veff      0.74 sec, wall time      0.05 sec
+Extra cycle  E= -305.433823958752  delta_E= 1.35e-08  |g|= 0.000312  |ddm|= 0.00829
+    CPU time for scf_cycle    160.90 sec, wall time     31.42 sec
+    CPU time for SCF    160.95 sec, wall time     31.46 sec
+converged SCF energy = -305.433823958752

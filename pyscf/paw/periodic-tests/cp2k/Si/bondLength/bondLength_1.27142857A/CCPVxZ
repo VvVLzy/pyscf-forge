@@ -1,0 +1,90 @@
+# =================================================================================================================================================================
+#
+# This is a library of molecularly optimised basis functions as described in the paper:
+#
+# Gaussian basis sets for accurate calculations on molecular systems
+# in gas and condensed phases
+#
+# Joost VandeVondele and Juerg Hutter
+# J. Chem. Phys. 127, 114105 (2007)
+#
+# URL: http://link.aip.org/link/?JCP/127/114105
+# DOI: 10.1063/1.2770708
+#
+# In this work, we have shown that accurate basis sets (e.g. small BSSE, close to the basis set limit)
+# but well conditioned (and thus suitable for a wide variety of chemical environments, i.e. gas and condensed phases)
+# can be derived by optimising highly contracted family basis sets, including diffuse exponents, on molecular systems.
+# Typically, these basis sets outperform split valence basis sets of similar size. For small gas-phase systems (including QMMM)
+# or large systems (thousands of atoms) their cost is moderate, whereas the diffuse nature of the basis set increases the computational
+# for medium size condensed phase systems. 
+#
+# This file contains the molecularly optimised basis sets for the elements H , C , N , O , F , Si , P , S , Cl
+# as discussed in the paper (SZV-MOLOPT-GTH, DZVP-MOLOPT-GTH, TZVP-MOLOPT-GTH, TZV2P-MOLOPT-GTH, TZV2PX-MOLOPT-GTH).
+#
+# Usage hint : 'NGRIDS 5' (section &MGRID) will deal more efficiently (2x speedup) with the diffuse nature of the basis.
+#
+# In addition to the basis sets discussed in the paper above, we have generated with the same procedure
+# variants of these basis sets using less and thus less diffuse primitives (based on the atomic code being with 1mHt of the basis set limit)
+# These are the  SZV-MOLOPT-SR-GTH and DZVP-MOLOPT-SR-GTH (Shorter Range) basis sets for most of the periodic table
+# These basis sets reduce the cost for medium size condensed phase systems, while most properties are only slightly affected.
+# Most affected is BSSE, which increases to 0.32, 0.16, 0.31, 0.24 from 0.23, 0.11, 0.41, 0.20 kcal/mol (DZVP-MOLOPT-SR-GTH vs. DZVP-MOLOPT-GTH),
+# while for a box with 64 molecules timings are 25 and 111 s respectively.
+#
+#
+# the -qXX documents the valence of the pseudo corresponding to the basis set. Of course, a matching valence in basis and pseudo is required.
+#
+#
+# =================================================================================================================================================================
+#
+# Basis set format:
+#
+# Element symbol  Name of the basis set  Alias names
+# nset (repeat the following block of lines nset times)
+# n lmin lmax nexp nshell(lmin) nshell(lmin+1) ... nshell(lmax-1) nshell(lmax)
+# a(1)      c(1,l,1)      c(1,l,2) ...      c(1,l,nshell(l)-1)      c(1,l,nshell(l)), l=lmin,lmax
+# a(2)      c(2,l,1)      c(2,l,2) ...      c(2,l,nshell(l)-1)      c(2,l,nshell(l)), l=lmin,lmax
+#  .         .             .                 .                       .
+#  .         .             .                 .                       .
+#  .         .             .                 .                       .
+# a(nexp-1) c(nexp-1,l,1) c(nexp-1,l,2) ... c(nexp-1,l,nshell(l)-1) c(nexp-1,l,nshell(l)), l=lmin,lmax
+# a(nexp)   c(nexp,l,1)   c(nexp,l,2)   ... c(nexp,l,nshell(l)-1)   c(nexp,l,nshell(l)), l=lmin,lmax
+#
+#
+# nset     : Number of exponent sets
+# n        : Principle quantum number (only for orbital label printing)
+# lmax     : Maximum angular momentum quantum number l
+# lmin     : Minimum angular momentum quantum number l
+# nshell(l): Number of shells for angular momentum quantum number l
+# a        : Exponent
+# c        : Contraction coefficient
+#
+
+He  CC-PVDZ CC-PVDZ-q2
+3
+1 0 0 3 1
+    38.3600000              0.0238090        
+     5.7700000              0.1548910        
+     1.2400000              0.4699870
+2 0 0 1 1
+     0.2976000              1.0000000        
+2 1 1 1 1
+     1.2750000              1.0000000 
+
+He  CC-PVTZ CC-PVTZ-q2
+6
+1 0 0 4 1
+   234.0000000              0.0025870        
+    35.1600000              0.0195330        
+     7.9890000              0.0909980        
+     2.2120000              0.2720500
+2 0 0 1 1
+     0.6669000              1.0000000
+3 0 0 1 1
+     0.2089000              1.0000000
+2 1 1 1 1
+     3.0440000              1.0000000       
+3 1 1 1 1
+     0.7580000              1.0000000
+3 2 2 1 1
+     1.9650000              1.0000000     
+ 

@@ -1,0 +1,72 @@
+Pyscf lattice matrix for Si
+[[3.333573 0.       1.924639]
+ [1.111191 3.142924 1.924639]
+ [0.       0.       3.849278]]
+Cp2k lattice matrix for Si
+&CELL
+  A	3.333573	0.0	1.924639
+  B	1.111191	3.142924	1.924639
+  C	0.0	0.0	3.849278
+  PERIODIC XYZ
+&END CELL
+
+Pyscf lattice matrix for NaCl
+[[3.422015 0.       1.975702]
+ [1.140671 3.226306 1.975702]
+ [0.       0.       3.951402]]
+Cp2k lattice matrix for NaCl
+&CELL
+  A	3.422015	0.0	1.9757019999999992
+  B	1.140671	3.226306	1.9757019999999992
+  C	0.0	0.0	3.951402
+  PERIODIC XYZ
+&END CELL
+
+Pyscf lattice matrix for BaTiO3
+[[ 4.90749137e+00 -1.00000000e-08 -2.83279164e+00]
+ [-1.63519609e+00  4.62705099e+00 -2.83279164e+00]
+ [ 6.57700000e-04  9.30360000e-04  5.66837377e+00]]
+Cp2k lattice matrix for BaTiO3
+&CELL
+  A	4.90749137	-1e-08	-2.83279164
+  B	-1.63519609	4.62705099	-2.83279164
+  C	0.0006577	0.00093036	5.66837377
+  PERIODIC XYZ
+&END CELL
+
+Pyscf lattice matrix for FeS2
+[[ 5.3968238  0.         0.       ]
+ [-0.         5.3968238  0.       ]
+ [ 0.         0.         5.3968238]]
+Cp2k lattice matrix for FeS2
+&CELL
+  A	5.3968238	0.0	0.0
+  B	-0.0	5.3968238	0.0
+  C	0.0	0.0	5.3968238
+  PERIODIC XYZ
+&END CELL
+
+Pyscf lattice matrix for SnO2
+[[ 3.20749977  0.          0.        ]
+ [ 0.          4.76383605 -0.        ]
+ [ 0.         -0.          4.76580004]]
+Cp2k lattice matrix for SnO2
+&CELL
+  A	3.20749977	0.0	0.0
+  B	0.0	4.76383605	-0.0
+  C	0.0	-0.0	4.76580004
+  PERIODIC XYZ
+&END CELL
+
+Pyscf lattice matrix for C
+[[ 2.18050236  0.          1.25891346]
+ [ 0.72683412  2.05579703  1.25891346]
+ [-0.          0.          2.51782692]]
+Cp2k lattice matrix for C
+&CELL
+  A	2.18050236	0.0	1.25891346
+  B	0.72683412	2.05579703	1.25891346
+  C	-0.0	0.0	2.51782692
+  PERIODIC XYZ
+&END CELL
+

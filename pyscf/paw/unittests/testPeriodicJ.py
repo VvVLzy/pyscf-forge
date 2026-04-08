@@ -7,16 +7,27 @@ from pyscf import gto
 from pyscf.pbc import gto as pgto
 from pyscf.pbc import scf as pscf
 from pyscf.paw import PAW, NewPAW
+from pyscf.paw.vxc import PAWNumInt
 
-L = 3  # box size
+# L = 2.4  # box size
+# a = numpy.eye(3) * L
 
-# specify He2
-r1      = 0.    # location of first carbon
-r0      = 0.7    # N-N bond length
-atom    = f'He {r1} {r1} {r1}; He {r1+r0} {r1} {r1}'
-# atom    = f'He 0 0 0'
+# # specify He2
+# r1      = 0.    # location of first carbon
+# r0      = 1.2    # N-N bond length
+# atom    = f'C {r1} {r1} {r1}; C {r1+r0} {r1} {r1}'
+# # atom    = f'He 0 0 0'
 
-zeta = 'dz'
+a = numpy.array([[ 2.18050236,  0.,          1.25891346],
+                 [ 0.72683412,  2.05579703,  1.25891346],
+                 [-0.,          0.,          2.51782692]])
+
+atom = '''
+C 2.543919 1.798822 4.406197
+C 0.363417 0.256975 0.629457
+'''
+
+zeta = 'tz'
 basis = "ccpv"+zeta
 
 ## ccpvdz
@@ -31,7 +42,6 @@ basis = "ccpv"+zeta
 #       1.2750000              1.0000000 
 # ''')}
 verbose = 3
-a = numpy.eye(3) * L
 ke_cutoff = 200
 precision = 1e-8
 
@@ -54,7 +64,72 @@ cell_fftdf = pgto.M(
 )
 
 init_guess = '1e'
-xc = 'pbe'
+xc = 'lda'
+
+def check_J(alpha0=10, Rb=1.5):
+    # fftdf
+    # mf_per_rks = pscf.RKS(cell_fftdf)
+    # mf_per_rks.init_guess = init_guess
+    # mf_per_rks.xc = xc
+
+    # gdf
+    from pyscf.pbc import df
+    mf_per_rks_gdf = pscf.RKS(cell)
+    mf_per_rks_gdf.init_guess = init_guess
+    mf_per_rks_gdf.xc = xc
+    mydf = df.GDF(cell)
+    # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
+    mf_per_rks_gdf.with_df = mydf
+
+    # # old coulomb
+    # mf_per_rks_paw = pscf.RKS(cell)
+    # mf_per_rks_paw.init_guess = init_guess
+    # mf_per_rks_paw.xc = xc
+    # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, augRadius=Rb).build()
+    # # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
+    # mf_per_rks_paw.with_df = mydf
+
+    # new coulomb
+    mf_per_rks_paw_new = pscf.RKS(cell)
+    mf_per_rks_paw_new.init_guess = init_guess
+    mf_per_rks_paw_new.xc = xc
+    mf_per_rks_paw_new.verbose = 4
+    mydf = NewPAW.from_mf(mf_per_rks_paw_new, PWAccuracy=1e-8, alpha0=alpha0, augRadius=Rb).build()
+    pawnumint = PAWNumInt(mydf)
+    mf_per_rks_paw_new._numint = pawnumint
+    # mydf = NewPAW.from_mf(mf_per_rks_paw_new, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
+    mf_per_rks_paw_new.with_df = mydf
+
+    # compare different ways of getting Js using the converged dm
+    mf_per_rks_gdf.kernel()
+    dm = mf_per_rks_gdf.make_rdm1()
+
+    # J_fftdf = mf_per_rks.get_j(dm=dm)
+    # J_paw = mf_per_rks_paw.get_j(dm=dm)
+    J_gdf = mf_per_rks_gdf.get_j(dm=dm)
+    J_paw_new = mf_per_rks_paw_new.get_j(dm=dm)
+
+    print(numpy.max(numpy.abs(J_paw_new-J_gdf)))
+    # print(numpy.max(numpy.abs(J_fftdf-J_paw_new)))
+
+    mf_per_rks_paw_new.kernel()
+
+    import pdb; pdb.set_trace()
+
+
+def main():
+    # debugNumpyJ(alpha0=20, Rb=1.5)
+    # debugNumpyJ(alpha0=20, Rb=3.0)
+    # debugRb(1.5, 3.0, alpha0=20)
+    # debug_J2(alpha0=20, Rb=1.5)
+    # debug_J(alpha0=20, Rb=3.0)
+    check_J(alpha0=10, Rb=1.5)
+    # check_J_scan(alpha0=10, Rb=1.5)
+    # check_J_random_position(alpha0=10, Rb=1.5)
+    # check_nuc()
+
+if __name__ == '__main__':
+    main()
 
 def debugNumpyJ(alpha0=20, Rb=1.5):
     # fftdf
@@ -339,78 +414,3 @@ def check_J_random_position(alpha0=20, Rb=1.5):
         ])
         writer.writeheader()
         writer.writerows(results)
-
-def check_J(alpha0=10, Rb=1.5):
-    # fftdf
-    mf_per_rks = pscf.RKS(cell_fftdf)
-    mf_per_rks.init_guess = init_guess
-    mf_per_rks.xc = xc
-
-    # old coulomb
-    mf_per_rks_paw = pscf.RKS(cell)
-    mf_per_rks_paw.init_guess = init_guess
-    mf_per_rks_paw.xc = xc
-    mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, augRadius=Rb).build()
-    # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
-    mf_per_rks_paw.with_df = mydf
-
-    # new coulomb
-    mf_per_rks_paw_new = pscf.RKS(cell)
-    mf_per_rks_paw_new.init_guess = init_guess
-    mf_per_rks_paw_new.xc = xc
-    mydf = NewPAW.from_mf(mf_per_rks_paw_new, PWAccuracy=1e-8, alpha0=alpha0, augRadius=Rb).build()
-    # mydf = NewPAW.from_mf(mf_per_rks_paw_new, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
-    mf_per_rks_paw_new.with_df = mydf
-
-    # compare different ways of getting Js using the converged dm
-    mf_per_rks.kernel()
-    dm = mf_per_rks.make_rdm1()
-
-    J_fftdf = mf_per_rks.get_j(dm=dm)
-    J_paw = mf_per_rks_paw.get_j(dm=dm)
-    J_paw_new = mf_per_rks_paw_new.get_j(dm=dm)
-
-    print(numpy.max(numpy.abs(J_fftdf-J_paw)))
-    print(numpy.max(numpy.abs(J_fftdf-J_paw_new)))
-
-    import pdb; pdb.set_trace()
-
-#PWcut: 200
-# with Numpy
-# [[7.00000000e-01 1.01288658e-04 4.18760258e-05]
-#  [7.88888889e-01 1.05158958e-04 3.90737203e-05]
-#  [8.77777778e-01 1.04520931e-04 3.53078435e-05]
-#  [9.66666667e-01 1.00762154e-04 3.11806371e-05]
-#  [1.05555556e+00 9.62367356e-05 2.63836144e-05]
-#  [1.14444444e+00 9.19873748e-05 2.13465306e-05]
-#  [1.23333333e+00 8.78218812e-05 1.64856668e-05]
-#  [1.32222222e+00 8.43851283e-05 1.17293834e-05]
-#  [1.41111111e+00 8.26710738e-05 9.05100209e-06]
-#  [1.50000000e+00 8.21945332e-05 7.97939740e-06]]
-
-# with Jax
-# [[7.00000000e-01 1.01288655e-04 4.18760093e-05]
-#  [7.88888889e-01 1.05158958e-04 3.90737202e-05]
-#  [8.77777778e-01 1.04520931e-04 3.53078435e-05]
-#  [9.66666667e-01 1.00762154e-04 3.11806371e-05]
-#  [1.05555556e+00 9.62367356e-05 2.63836144e-05]
-#  [1.14444444e+00 9.19873748e-05 2.13465306e-05]
-#  [1.23333333e+00 8.78218812e-05 1.64856668e-05]
-#  [1.32222222e+00 8.43851283e-05 1.17293834e-05]
-#  [1.41111111e+00 8.26710738e-05 9.05100209e-06]
-#  [1.50000000e+00 3.86514369e-04 1.02021616e-03]]
-
-
-def main():
-    # debugNumpyJ(alpha0=20, Rb=1.5)
-    # debugNumpyJ(alpha0=20, Rb=3.0)
-    # debugRb(1.5, 3.0, alpha0=20)
-    # debug_J2(alpha0=20, Rb=1.5)
-    # debug_J(alpha0=20, Rb=3.0)
-    # check_J()
-    check_J_scan(alpha0=10, Rb=1.5)
-    # check_J_random_position(alpha0=10, Rb=1.5)
-    # check_nuc()
-
-if __name__ == '__main__':
-    main()

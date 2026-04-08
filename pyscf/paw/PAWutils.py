@@ -1600,7 +1600,29 @@ def obtainLocalFns(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, 
 
     return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
 
-def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
+def smoothCell(mol, alpha0, projAOMol=False):
+    smoothMol = mol.copy()
+    env2Mod = smoothMol._env.copy()
+    for shell in smoothMol._bas:
+        # import pdb; pdb.set_trace()
+        if projAOMol and shell[0] == mol._atm.shape[0]-1:
+            continue
+        nprim = shell[2]
+
+        # locate sharp alphas
+        alphaStart = shell[-3]
+        alphas = smoothMol._env[alphaStart:alphaStart+nprim]
+        sharpAlphaId = numpy.where(alphas > alpha0)[0]
+
+        # set sharp contraction coeff to 0
+        coeffStart = shell[-2]
+        coeffs = smoothMol._env[coeffStart:coeffStart+nprim]
+        env2Mod[sharpAlphaId+coeffStart] = 0
+        # print(env2Mod)
+    smoothMol._env = env2Mod
+    return smoothMol
+
+def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
     '''
     Fit AO and diffuse AO directly, much faster
     set F_Pmu directly to contraction coefficient when P=mu
@@ -1648,11 +1670,12 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=
         # coord = projAOAtom.pop(atomI)[1]
         projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
         projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
+        # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
         projAOOvlp = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
 
         # determine local functions
         locId = numpy.where(numpy.max(numpy.abs(projAOOvlp), axis=0) > epsilon)[0]
-        print(f'LocId: {locId}')
+        # print(f'LocId: {locId}')
         assert(numpy.isin(ACenteredAOId, locId).all()) # this must be true
         idxToFit = numpy.where(~numpy.isin(locId, ACenteredAOId))[0]
         idxToSet = numpy.where(numpy.isin(locId, ACenteredAOId))[0]
@@ -1660,6 +1683,126 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=
         # fit the functions
         projAOOvlp = projAOOvlp[:, locId][:, idxToFit]
         F_fitted, residuals, rank, s = numpy.linalg.lstsq(projPrimOvlp, projAOOvlp, rcond=None)
+        # print(F_fitted[:, 0])
+        # import pdb; pdb.set_trace()
+
+        # update arrays
+        F_Pmu = numpy.zeros((len(ACenteredId), len(locId)))
+        Ftilde_Pmu = numpy.zeros_like(F_Pmu)
+        F_Pmu[:, idxToFit] = F_fitted
+        Ftilde_Pmu[:, idxToFit] = F_fitted
+
+        # set local, a-centered function directly as contraction coefficient (no fitting)
+        diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
+        C_Pa = getContMatFromID(ACenteredAOId, ACenteredId, ctr_coeff, labels, mol)
+        Ctilde_Pa = numpy.zeros_like(C_Pa)
+        Ctilde_Pa[diffuseAcenteredPrimMask, :] = C_Pa[diffuseAcenteredPrimMask, :]
+        assert(C_Pa.shape[0] == F_Pmu.shape[0])
+        assert(Ctilde_Pa.shape[0] == Ftilde_Pmu.shape[0])
+        assert(numpy.isin(ACenteredAOId, locId).all())
+        F_Pmu[:, idxToSet] = C_Pa
+        Ftilde_Pmu[:, idxToSet] = Ctilde_Pa
+
+        # update array
+        localIdx.append(locId)
+        SArr.append(idxToFit)
+        F_PmuArr.append(F_Pmu)
+        Ftilde_PmuArr.append(Ftilde_Pmu)
+
+    VPQRSArr = obtainLocal2e(mol, pmol, Periodic)
+
+    return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
+
+def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-8):
+    '''
+    Fit AO and diffuse AO directly, much faster
+    set F_Pmu directly to contraction coefficient when P=mu
+    new projectors!!
+    '''
+
+    labels = labelShellWithIdx(ctr_coeff, mol)
+
+
+    # BeckeCoords = grids.coords
+    alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
+    atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
+    
+    # print('Making augmentation sphere for Becke grid:')
+    # WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
+    # gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
+
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
+
+    for atomI in range(mol._atm.shape[0]):
+        # fit all local primitives with atom centered primitives
+        ACenteredId = numpy.where(atoms == atomI)[0]
+        ACenteredAOId = numpy.where(atomsAO == atomI)[0]
+
+        # construct projectors
+        numPrim = len(ACenteredId)
+        Latom = L[ACenteredId]
+        alphaAtom = alpha[ACenteredId]
+
+        primCounts = {}
+        for l in Latom:
+            count = primCounts.get(l, 0)
+            primCounts[l] = count + 1
+        
+        projBasis = []
+        for l, c in primCounts.items():
+            nAlpha = c//(2*l+1) # assume spherical GTO
+            assert(c == nAlpha*(2*l+1))
+
+            projBasis.extend([[l, [alpha0*r**i, 1.]] for i in range(nAlpha)])
+
+        projElem = pmol._atom[atomI][0] + '!' # make sure this doens't coincide with existing elements
+
+        # construct proj-prim overlap 
+        projPrimBasis = pmol._basis.copy()
+        projPrimBasis[projElem] = projBasis
+        projPrimAtom = [pmol._atom[atomI], (projElem, pmol._atom[atomI][1])]
+        projPrimMol = pgto.M(atom=projPrimAtom, basis=projPrimBasis, a = pmol.lattice_vectors(), unit='B', cart = pmol.cart)
+        # projPrimMol._env[projPrimMol._bas[:,-2]] = numpy.sqrt(numpy.pi * 4) # quick hack to check consistency with cp2k
+        # projPrimMol._env[projPrimMol._bas[:,-2]] = 1 # quick hack to check consistency with cp2k
+        # projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
+        projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
+
+        # isolated projectors
+        sharpAlphaId = numpy.where(alphaAtom > alpha0)[0] # could use a different threshold?
+        for i in sharpAlphaId:
+            projPrimOvlp[i, :] = 0
+            projPrimOvlp[:, i] = 0
+
+        ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
+        # print(ppoinv[1:4][:, 1:4])
+        # import pdb; pdb.set_trace()
+
+        # construct proj-ao overlap
+        numProj = projPrimOvlp.shape[0]
+        projAOBasis = mol._basis.copy()
+        projAOBasis[projElem] = projBasis
+        projAOAtom = mol._atom.copy()
+        # coord = projAOAtom.pop(atomI)[1]
+        projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
+        projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
+        # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
+        projAOOvlp = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
+
+        # determine local functions
+        locId = numpy.where(numpy.max(numpy.abs(projAOOvlp), axis=0) > epsilon)[0]
+        # print(f'LocId: {locId}')
+        assert(numpy.isin(ACenteredAOId, locId).all()) # this must be true
+        idxToFit = numpy.where(~numpy.isin(locId, ACenteredAOId))[0]
+        idxToSet = numpy.where(numpy.isin(locId, ACenteredAOId))[0]
+
+        # fit the functions
+        projAOOvlp = projAOOvlp[:, locId][:, idxToFit]
+        # F_fitted, residuals, rank, s = numpy.linalg.lstsq(projPrimOvlp, projAOOvlp, rcond=None)
+        F_fitted = numpy.linalg.pinv(projPrimOvlp, rtol=rtol) @ projAOOvlp
+        # import pdb; pdb.set_trace()
+
+        # print(F_fitted[:, 0])
+        # import pdb; pdb.set_trace()
 
         # update arrays
         F_Pmu = numpy.zeros((len(ACenteredId), len(locId)))
@@ -1727,6 +1870,7 @@ def obtainLocal2e(mol, pmol, Periodic):
             # import pdb; pdb.set_trace()
             VPQRS = mydf.get_eri(compact=False).reshape((molAtom.nao, molAtom.nao, molAtom.nao, molAtom.nao))
         else:
+            molAtom = buildPmolAtom(mol, pmol, atomI, pmol.cart)
             VPQRS = pmol.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1))
 
         VPQRSWithNuc = numpy.zeros([VPQRS.shape[0]+1]*len(VPQRS.shape))
