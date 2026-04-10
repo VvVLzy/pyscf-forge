@@ -56,7 +56,7 @@ def getPAWdataNew(mol,
 
     # PAWData
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
-        pmol, mol, ctr_coeff, mf.grids, 6.373938, r=2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-8)
+        pmol, mol, ctr_coeff, Rgrid, alpha0, r=2, epsilon=PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic, rtol=1e-8)
     # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
     #     pmol, mol, ctr_coeff, mf.grids, 6.373938, r=2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-8)
     # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(

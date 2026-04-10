@@ -756,7 +756,8 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
         gmol = gmolCart
     else:
         M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol = compensatingChargeSph(
-            pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
+            # pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
+            pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmolSph, Rgrid, gridIdx
         )
 
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
@@ -1670,7 +1671,6 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
         # coord = projAOAtom.pop(atomI)[1]
         projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
         projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
-        # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
         projAOOvlp = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
 
         # determine local functions
@@ -1722,14 +1722,14 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
 
     labels = labelShellWithIdx(ctr_coeff, mol)
 
-
+    dv = mol.vol/grids.shape[0]
     # BeckeCoords = grids.coords
     alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
     
-    # print('Making augmentation sphere for Becke grid:')
-    # WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
-    # gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
+    print('Making augmentation sphere for uniform grid:')
+    WignerSeitzData = makeWignerSeitz(grids, mol, Periodic=True) # Becke grid should not be interpreted periodically
+    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
 
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
@@ -1773,9 +1773,9 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
             projPrimOvlp[i, :] = 0
             projPrimOvlp[:, i] = 0
 
-        ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
+        # ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
         # print(ppoinv[1:4][:, 1:4])
-        # import pdb; pdb.set_trace()
+        import pdb; pdb.set_trace()
 
         # construct proj-ao overlap
         numProj = projPrimOvlp.shape[0]
@@ -1800,6 +1800,16 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
         # F_fitted, residuals, rank, s = numpy.linalg.lstsq(projPrimOvlp, projAOOvlp, rcond=None)
         F_fitted = numpy.linalg.pinv(projPrimOvlp, rtol=rtol) @ projAOOvlp
         # import pdb; pdb.set_trace()
+
+        ### check normalization of fitted AO and original AO
+        gridOnA = grids[gridIdx[atomI]]
+        AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
+        primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
+        fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
+        print(AOOnA.sum(axis=0)*dv)
+        print(fAOOnA.sum(axis=0)*dv)
+        print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
+        import pdb; pdb.set_trace()
 
         # print(F_fitted[:, 0])
         # import pdb; pdb.set_trace()
