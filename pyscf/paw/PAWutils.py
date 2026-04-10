@@ -918,6 +918,45 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     
     return J*2
 
+def getjSmoothISDF(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    # TODO: generalize to multiple k-points
+    # use list of numpy arrays instead of jax arrays
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+
+    ### the factors of two come from RHF
+    # TODO: generalize to beyond RHF
+    occ_cut = 1e-12 # TODO: is this reasonable?
+    dm, mo_coeff, mo_occ = dm[0, 0, :, :]/2, dm.mo_coeff[0, 0, :, :], dm.mo_occ[0, 0, :]
+    occMo = mo_coeff[:,numpy.abs(mo_occ)>occ_cut] * mo_occ[numpy.abs(mo_occ)>occ_cut]/2
+    ###
+
+    moOnR = smart_einsum('ra,am->rm', aoOnR_tilde, occMo)
+    density = smart_einsum('rm,rm->r', moOnR.conj(), moOnR)
+
+    for atomI in range(cell._atm.shape[0]):
+        submat = dm[localIdx[atomI]][:, localIdx[atomI]]
+        DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
+        DPQtilde = smart_einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
+        zg = smart_einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
+        numpy.add.at(density, gridIdx[atomI], smart_einsum('L,rL->r', zg, gOnR[atomI]))
+    potential = gaussgrid.get_potential_sparse(density)
+
+    J = smart_einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)
+    assert(J.shape[0] == cell.nao)
+    assert(J.shape[1] == cell.nao)
+
+    for atomI in range(cell._atm.shape[0]):
+        # el+comp-compOnA
+        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])
+        GL  = smart_einsum('L,RSL->RS', zg2, M_PQLarr[atomI])
+        numpy.add.at(
+            J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
+             smart_einsum('RS,Rm,Sn->mn', GL, F_Pmu[atomI], F_Pmu[atomI])\
+            -smart_einsum('RS,Rm,Sn->mn', GL, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])
+        )
+    
+    return J*2
+
 def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
     
@@ -1775,7 +1814,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
 
         # ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
         # print(ppoinv[1:4][:, 1:4])
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
 
         # construct proj-ao overlap
         numProj = projPrimOvlp.shape[0]
@@ -1808,8 +1847,9 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
         fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
         print(AOOnA.sum(axis=0)*dv)
         print(fAOOnA.sum(axis=0)*dv)
-        print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
-        import pdb; pdb.set_trace()
+        if len(idxToFit)>0:
+            print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
+        #import pdb; pdb.set_trace()
 
         # print(F_fitted[:, 0])
         # import pdb; pdb.set_trace()

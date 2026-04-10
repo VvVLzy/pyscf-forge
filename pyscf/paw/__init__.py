@@ -1,6 +1,7 @@
 from pyscf.pbc.df.fft import FFTDF
 from pyscf.pbc.df.aft import _check_kpts
 from pyscf.pbc.tools.k2gamma import kpts_to_kmesh
+from pyscf.pbc import gto as pgto
 from pyscf import lib
 from pyscf import __config__
 from pyscf.df import df_jk
@@ -17,6 +18,7 @@ import time
 
 
 def getPAWdataNew(mol,
+                  gaussgrid,
                PAWorbitalCutOff=1.e-5,
                PWAccuracy=1e-5,
                printLevel = 1,
@@ -37,8 +39,20 @@ def getPAWdataNew(mol,
     # mf.grids.level = 9
     mf.grids.build()
     print(f'DFT grid size: {mf.grids.coords.shape[0]}')
-    mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
-    Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
+    #mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
+    #Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
+    #TODO just hacking gmol in here early to set up isdf but this could be done better
+    alpha, atoms, L, M = PAWutils.getAlphaAtomsL(pmol._bas, pmol._env)
+    gmax = int(L.max()*2)
+    gbas = {}
+    for atomI in range(pmol._atm.shape[0]):
+        elem = pmol._atom[atomI][0]
+        gbas[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+
+    gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit) ##if periodic then cartesian functions
+    gaussgrid.setup_isdf(gmol=gmol)
+    Rgrid=gaussgrid.get_sparse_grid()
+    mesh = (Rgrid.shape[0],)
 
     # if alpha0 is None:
     #     rc = PAWutils.makeAugmentationRadius(mol)
@@ -49,7 +63,7 @@ def getPAWdataNew(mol,
     if alpha0 is None:
         alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
     else:
-        _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+        #_, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
         alpha0_wf = alpha0/2
 
     alpha0_wf = alpha0 # must be this!
@@ -184,7 +198,12 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
             #                             mydf.PAWdata,
             #                             Periodic=mydf.Periodic)
             cpu0 = (logger.process_clock(), logger.perf_counter())
-            vj1 = PAWutils.getjSmoothPW(cell, dm, 
+            #vj1 = PAWutils.getjSmoothPW(cell, dm, 
+            #                            mydf.aoOnR_tilde,
+            #                            mydf.mesh,
+            #                            mydf.PAWdata,
+            #                            Periodic=mydf.Periodic)
+            vj1 = PAWutils.getjSmoothISDF(cell, dm, mydf.gaussgrid,
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
                                         mydf.PAWdata,
@@ -249,7 +268,12 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
     vj = vk = None
     if with_j:
         cpu0 = (logger.process_clock(), logger.perf_counter())
-        vj1 = PAWutils.getjSmoothPW(cell, dm, 
+        #vj1 = PAWutils.getjSmoothPW(cell, dm, 
+        #                            mydf.aoOnR_tilde,
+        #                            mydf.mesh,
+        #                            mydf.PAWdata,
+        #                            Periodic=mydf.Periodic)
+        vj1 = PAWutils.getjSmoothISDF(cell, dm, mydf.gaussgrid,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
                                     mydf.PAWdata,
@@ -339,6 +363,7 @@ class PAW(FFTDF):
         t0 = time.time()
         PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdata(
             cell,
+            gaussgrid,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
@@ -520,7 +545,7 @@ class PAW(FFTDF):
         return J3
     
     @classmethod
-    def from_mf(cls, mf, cell=None, **kwargs):
+    def from_mf(cls, mf, cell=None, gaussgrid=None, **kwargs):
         """Create OCCRI instance from mean-field object
 
         Parameters
@@ -590,7 +615,7 @@ class PAW(FFTDF):
             assert(getattr(mf, 'mol'))
             assert(cell is not None)
             # molecular
-            occri = cls(cell, Periodic=False, **kwargs)
+            occri = cls(cell, gaussgrid, Periodic=False, **kwargs)
         occri.method = method
 
         # cell will be modified for molecular case
@@ -603,6 +628,7 @@ class NewPAW(FFTDF):
     def __init__(
             self,
             cell,
+            gaussgrid,
             kpts=None,
             printLevel=1,
             PAWorbitalCutOff=1e-5,
@@ -647,7 +673,8 @@ class NewPAW(FFTDF):
             "Fock"       :0.
         }
 
-        self.initPAW(cell, alpha0)
+        self.initPAW(cell, gaussgrid, alpha0)
+        self.gaussgrid=gaussgrid
 
         
 
@@ -658,10 +685,11 @@ class NewPAW(FFTDF):
             self.get_jk = get_jk_molecule.__get__(self, self.__class__)
         ###
 
-    def initPAW(self, cell, alpha0):
+    def initPAW(self, cell, gaussgrid, alpha0):
         t0 = time.time()
         PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid, alpha0 = getPAWdataNew(
             cell,
+            gaussgrid,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
@@ -848,7 +876,7 @@ class NewPAW(FFTDF):
         return J3
     
     @classmethod
-    def from_mf(cls, mf, cell=None, **kwargs):
+    def from_mf(cls, mf, cell=None, gaussgrid=None, **kwargs):
         """Create OCCRI instance from mean-field object
 
         Parameters
@@ -918,7 +946,7 @@ class NewPAW(FFTDF):
             assert(getattr(mf, 'mol'))
             assert(cell is not None)
             # molecular
-            occri = cls(cell, Periodic=False, **kwargs)
+            occri = cls(cell, gaussgrid, Periodic=False, **kwargs)
         occri.method = method
 
         # cell will be modified for molecular case
