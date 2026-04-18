@@ -324,9 +324,11 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
 
 def buildPmolAtom(mol, pmol, atomI, cart):
-    if mol.nao != pmol.nao and isinstance(pmol.basis, str): # mol uses a contracted basis
-            pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.lattice_vectors(), unit='B', cart = cart) 
-    elif mol.nao != pmol.nao or isinstance(pmol.basis, dict):
+    # if mol.nao != pmol.nao and isinstance(pmol.basis, str): # mol uses a contracted basis
+    #         pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.lattice_vectors(), unit='B', cart = cart) 
+    # elif mol.nao != pmol.nao or isinstance(pmol.basis, dict):
+    #     pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol._basis, a = pmol.lattice_vectors(), unit='B', cart = cart)
+    if mol.nao != pmol.nao:
         pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol._basis, a = pmol.lattice_vectors(), unit='B', cart = cart)
     else:
         assert(mol.nao == pmol.nao)
@@ -650,7 +652,7 @@ def getMPQLarrayAtom(atomI, CG, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax
 
     if gmax < 2:
         # M_PQLarray.append(MPQLCart)
-        return MPQLCart
+        M_PQL = MPQLCart
     else:
         # Mask logic from original code
         maskSph = numpy.zeros(MPQLSph.shape[-1], dtype=bool)
@@ -659,13 +661,27 @@ def getMPQLarrayAtom(atomI, CG, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax
         maskSph[[0, 6, 8]] = True
         
         # Combine Cart (N, N, 4) with Sph subset (N, N, K_subset)
-        combined = numpy.concatenate([
+        M_PQL = numpy.concatenate([
             MPQLCart, 
             MPQLSph[:, :, ~maskSph]
         ], axis=-1)
         
         # M_PQLarray.append(combined)
-        return combined
+    # do analytical M_00L
+    alpha2 = alphaG[0]
+    alpha1 = 2*alpha[idx][0]
+    NN2 = (alpha2/numpy.pi)**(3/2)
+    # C0_num = -NN2 * (3*alpha2/2/alpha1 - 5/2)
+    C0 = NN2 * 5/2
+    # C0_num1 = M_PQL[0, 0, 0] * basisnorm(alpha2, 0) / numpy.sqrt(4*numpy.pi)
+    # C2_num = -NN2 * (alpha2 - alpha2**2/alpha1)
+    C2 = -NN2 * alpha2
+    # C2_num1 = M_PQL[0, 0, 1] * basisnorm(alpha2, 2)
+    M_000 = C0 / basisnorm(alpha2, 0) * numpy.sqrt(4*numpy.pi)
+    M_002 = C2 / basisnorm(alpha2, 2)
+    M_PQL[0, 0, 0] = M_000
+    M_PQL[0, 1:4, 1:4] = M_002
+    return M_PQL
     
     # # do analytical M_00L
     # alpha2 = alphaG[0]
@@ -748,7 +764,8 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
         gmol = gmolCart
     else:
         M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol = compensatingChargeSph(
-            pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
+            # pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
+            pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmolSph, Rgrid, gridIdx
         )
 
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
@@ -815,7 +832,6 @@ tillL = lambda l : int( (l+1) * (l+2) * (l+3)//6 )
 
 def partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0):
     aoOnR = mol.pbc_eval_gto('GTOval', Rgrid)
-
 
     aoOnR_prim = pmol.pbc_eval_gto('GTOval', Rgrid)
     alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
@@ -1559,8 +1575,6 @@ def obtainLocalFns(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, 
 
         SrP  = pmol.eval_gto('GTOval_sph', coordsA)[:, ACenteredId]
         Sra_tilde = aoOnA_tilde[:, locId][:, idxToFit]
-        print(numpy.dot(wtsA, Sra_tilde))
-        # import pdb; pdb.set_trace()
 
         ##least square minimization which tries to fit the local function in terms of atom centered function
         ## on the local grid
@@ -1594,7 +1608,29 @@ def obtainLocalFns(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, 
 
     return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
 
-def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
+def smoothCell(mol, alpha0, projAOMol=False):
+    smoothMol = mol.copy()
+    env2Mod = smoothMol._env.copy()
+    for shell in smoothMol._bas:
+        # import pdb; pdb.set_trace()
+        if projAOMol and shell[0] == mol._atm.shape[0]-1:
+            continue
+        nprim = shell[2]
+
+        # locate sharp alphas
+        alphaStart = shell[-3]
+        alphas = smoothMol._env[alphaStart:alphaStart+nprim]
+        sharpAlphaId = numpy.where(alphas > alpha0)[0]
+
+        # set sharp contraction coeff to 0
+        coeffStart = shell[-2]
+        coeffs = smoothMol._env[coeffStart:coeffStart+nprim]
+        env2Mod[sharpAlphaId+coeffStart] = 0
+        # print(env2Mod)
+    smoothMol._env = env2Mod
+    return smoothMol
+
+def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-10):
     '''
     Fit AO and diffuse AO directly, much faster
     set F_Pmu directly to contraction coefficient when P=mu
@@ -1607,10 +1643,12 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=
     # BeckeCoords = grids.coords
     alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
+
+    dv = mol.vol/grids.shape[0]
     
-    # print('Making augmentation sphere for Becke grid:')
-    # WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
-    # gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
+    print('Making augmentation sphere for uniform grid:')
+    WignerSeitzData = makeWignerSeitz(grids, mol, Periodic=True)
+    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
 
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
@@ -1642,11 +1680,12 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=
         # coord = projAOAtom.pop(atomI)[1]
         projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
         projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
+        # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
         projAOOvlp = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
-        
+
         # determine local functions
         locId = numpy.where(numpy.max(numpy.abs(projAOOvlp), axis=0) > epsilon)[0]
-        print(f'LocId: {locId}')
+        # print(f'LocId: {locId}')
         assert(numpy.isin(ACenteredAOId, locId).all()) # this must be true
         idxToFit = numpy.where(~numpy.isin(locId, ACenteredAOId))[0]
         idxToSet = numpy.where(numpy.isin(locId, ACenteredAOId))[0]
@@ -1654,6 +1693,142 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=
         # fit the functions
         projAOOvlp = projAOOvlp[:, locId][:, idxToFit]
         F_fitted, residuals, rank, s = numpy.linalg.lstsq(projPrimOvlp, projAOOvlp, rcond=None)
+        # print(F_fitted[:, 0])
+        # import pdb; pdb.set_trace()
+
+        # update arrays
+        F_Pmu = numpy.zeros((len(ACenteredId), len(locId)))
+        Ftilde_Pmu = numpy.zeros_like(F_Pmu)
+        F_Pmu[:, idxToFit] = F_fitted
+        Ftilde_Pmu[:, idxToFit] = F_fitted
+
+        ### check normalization of fitted AO and original AO
+        gridOnA = grids[gridIdx[atomI]]
+        AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
+        primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
+        fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
+        print(AOOnA.sum(axis=0)*dv)
+        print(fAOOnA.sum(axis=0)*dv)
+        print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
+        import pdb; pdb.set_trace()
+
+        # set local, a-centered function directly as contraction coefficient (no fitting)
+        diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
+        C_Pa = getContMatFromID(ACenteredAOId, ACenteredId, ctr_coeff, labels, mol)
+        Ctilde_Pa = numpy.zeros_like(C_Pa)
+        Ctilde_Pa[diffuseAcenteredPrimMask, :] = C_Pa[diffuseAcenteredPrimMask, :]
+        assert(C_Pa.shape[0] == F_Pmu.shape[0])
+        assert(Ctilde_Pa.shape[0] == Ftilde_Pmu.shape[0])
+        assert(numpy.isin(ACenteredAOId, locId).all())
+        F_Pmu[:, idxToSet] = C_Pa
+        Ftilde_Pmu[:, idxToSet] = Ctilde_Pa
+
+        # update array
+        localIdx.append(locId)
+        SArr.append(idxToFit)
+        F_PmuArr.append(F_Pmu)
+        Ftilde_PmuArr.append(Ftilde_Pmu)
+
+    VPQRSArr = obtainLocal2e(mol, pmol, Periodic)
+
+    return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
+
+def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-8):
+    '''
+    Fit AO and diffuse AO directly, much faster
+    set F_Pmu directly to contraction coefficient when P=mu
+    new projectors!!
+    '''
+
+    labels = labelShellWithIdx(ctr_coeff, mol)
+
+    alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
+    atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
+    
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
+
+    for atomI in range(mol._atm.shape[0]):
+        # fit all local primitives with atom centered primitives
+        ACenteredId = numpy.where(atoms == atomI)[0]
+        ACenteredAOId = numpy.where(atomsAO == atomI)[0]
+
+        # construct projectors
+        numPrim = len(ACenteredId)
+        Latom = L[ACenteredId]
+        alphaAtom = alpha[ACenteredId]
+
+        primCounts = {}
+        for l in Latom:
+            count = primCounts.get(l, 0)
+            primCounts[l] = count + 1
+        
+        projBasis = []
+        for l, c in primCounts.items():
+            # nAlpha = c//(2*l+1) # assume spherical GTO
+            alphaProj = (l * numpy.log(Rb) - numpy.log(epsilon)) / Rb**2
+            alphaAtomL = alphaAtom[Latom==l]
+            isoPrim = alphaAtomL > alpha0
+            numPrimL = len(alphaAtomL) // (2*l+1)
+            numIsoPrimL = sum(isoPrim) // (2*l+1)
+            assert(c == numPrimL*(2*l+1))
+
+            # smallest exponent nees to be contained in the sphere
+            # cp2k way of determining the ratio
+            x = (80.0/alphaProj)**(1.0/max(1, float(numPrimL - numIsoPrimL - 1))) if numPrimL - numIsoPrimL - 1 > 2 else 2.0
+            if x > 2.0: x = 2.0
+            alphasProj = numpy.zeros(numPrimL); zetval = alphaProj
+            for i in range(numPrimL-1, -1, -1):
+                if not isoPrim[i]: alphasProj[i] = zetval; zetval *= x
+            for i in range(numPrimL-1, -1, -1):
+                if isoPrim[i]: alphasProj[i] = zetval; zetval *= x
+
+            projBasis4L = [[l, [a, 1.]] for a in alphasProj]
+            print(projBasis4L)
+            projBasis.extend(projBasis4L)
+
+
+        projElem = pmol._atom[atomI][0] + '!' # make sure this doens't coincide with existing elements
+
+        # construct proj-prim overlap 
+        projPrimBasis = pmol._basis.copy()
+        projPrimBasis[projElem] = projBasis
+        projPrimAtom = [pmol._atom[atomI], (projElem, pmol._atom[atomI][1])]
+        projPrimMol = pgto.M(atom=projPrimAtom, basis=projPrimBasis, a = pmol.lattice_vectors(), unit='B', cart = pmol.cart)
+        projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
+
+        # isolated projectors
+        sharpAlphaId = numpy.where(alphaAtom > alpha0)[0] # could use a different threshold?
+        for i in sharpAlphaId:
+            projPrimOvlp[i, :] = 0
+            projPrimOvlp[:, i] = 0
+
+        # ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
+        U, s, Vh = numpy.linalg.svd(projPrimOvlp)
+        s_inv = 1/s
+        s_inv[s<rtol] = 0
+        ppoinv = Vh.T@numpy.diag(s_inv)@U.T
+
+        # construct proj-ao overlap
+        numProj = projPrimOvlp.shape[0]
+        projAOBasis = mol._basis.copy()
+        projAOBasis[projElem] = projBasis
+        projAOAtom = mol._atom.copy()
+        projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
+        projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
+        # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
+        projAOOvlp = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
+
+        # determine local functions
+        locId = numpy.where(numpy.max(numpy.abs(projAOOvlp), axis=0) > epsilon)[0]
+        # print(f'LocId: {locId}')
+        assert(numpy.isin(ACenteredAOId, locId).all()) # this must be true
+        idxToFit = numpy.where(~numpy.isin(locId, ACenteredAOId))[0]
+        idxToSet = numpy.where(numpy.isin(locId, ACenteredAOId))[0]
+
+        # fit the functions
+        projAOOvlp = projAOOvlp[:, locId][:, idxToFit]
+        # F_fitted, residuals, rank, s = numpy.linalg.lstsq(projPrimOvlp, projAOOvlp, rcond=None)
+        F_fitted = ppoinv @ projAOOvlp
 
         # update arrays
         F_Pmu = numpy.zeros((len(ACenteredId), len(locId)))
@@ -1681,6 +1856,200 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r, epsilon=1.e-5, Rb=
     VPQRSArr = obtainLocal2e(mol, pmol, Periodic)
 
     return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
+
+def obtainLocalFnsAnalytical(pmol, mol, ctr_coeff, rc, eps_fit, eps_iso, rtol=1e-8):
+    '''
+    Analytical GAPW projector construction matching CP2K exactly.
+    Uses pure radial integrals and CP2K's geometric progression for exponents.
+    '''
+    alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env, cart=pmol.cart)
+    atomsAO, _, _ = getAtomsL(mol._bas, mol._env, cart=mol.cart)
+    
+    def dfac(n):
+        return scipy.special.factorial2(n)
+
+    def get_zetmin(l, rc, eps):
+        return (l * numpy.log(rc) - numpy.log(eps)) / rc**2
+
+    numPrimOnA = len(alpha) // mol.natm # assumes identical basis on all atoms for simplicity in this helper
+    ppoinv_arr = []
+
+    for atomI in range(mol._atm.shape[0]):
+        ACenteredId = numpy.where(atoms == atomI)[0]
+        Latom = L[ACenteredId]
+        M_atom = M[ACenteredId]
+        alphaAtom = alpha[ACenteredId]
+        uniqueL = numpy.unique(Latom)
+        
+        ppoinv = numpy.zeros((len(ACenteredId), len(ACenteredId)))
+
+        for l in uniqueL:
+            idx_l = numpy.where(Latom == l)[0]
+            zet = []
+            for i in idx_l:
+                e = alphaAtom[i]
+                if e not in zet:
+                    zet.append(e)
+            zet = numpy.array(zet)
+            np = len(zet)
+            
+            zmin = get_zetmin(l, rc, eps_fit)
+            ziso = get_zetmin(l, rc, eps_iso)
+            
+            isoprj = zet >= ziso
+            nisop = numpy.sum(isoprj)
+            
+            if np - nisop - 1 > 2:
+                x = (80.0/zmin)**(1.0/float(np - nisop - 1))
+            else:
+                x = 2.0
+            if x > 2.0: x = 2.0
+            
+            zetp = numpy.zeros(np)
+            zetval = zmin
+            for i in range(np-1, -1, -1):
+                if not isoprj[i]:
+                    zetp[i] = zetval
+                    zetval *= x
+            for i in range(np-1, -1, -1):
+                if isoprj[i]:
+                    zetp[i] = zetval
+                    zetval *= x
+            
+            prefac = 0.5**(l + 2) * numpy.sqrt(numpy.pi) * dfac(2*l + 1)
+            expzet = l + 1.5
+            smat = numpy.zeros((np, np))
+            for i in range(np):
+                for j in range(np):
+                    if isoprj[i] == isoprj[j]:
+                        smat[i, j] = prefac / (zetp[i] + zet[j])**expzet
+            
+            gcc = numpy.linalg.pinv(smat, rtol=rtol)
+            for i in range(np):
+                if isoprj[i]:
+                    gcc[i, :] = 0
+                    gcc[:, i] = 0
+            
+            uniqueM = numpy.unique(M_atom[idx_l])
+            for m in uniqueM:
+                idx_lm = numpy.where((Latom == l) & (M_atom == m))[0]
+                ppoinv[numpy.ix_(idx_lm, idx_lm)] = gcc
+        
+        ppoinv_arr.append(ppoinv)
+
+    return ppoinv_arr
+
+def obtainLocalFnsPySCFMatchCP2K(pmol, mol, ctr_coeff, rc, eps_fit, eps_iso, rtol=1e-8):
+    '''
+    Matches CP2K by using PySCF's engine but "undoing" the 3D normalization.
+    This demonstrates the normalization mapping between the two codes.
+    '''
+    alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env, cart=pmol.cart)
+    
+    def get_zetmin(l, rc, eps):
+        return (l * numpy.log(rc) - numpy.log(eps)) / rc**2
+
+    ppoinv_arr = []
+
+    for atomI in range(mol._atm.shape[0]):
+        ACenteredId = numpy.where(atoms == atomI)[0]
+        Latom = L[ACenteredId]
+        alphaAtom = alpha[ACenteredId]
+        uniqueL = numpy.unique(Latom)
+        
+        ppoinv = numpy.zeros((len(ACenteredId), len(ACenteredId)))
+
+        for l in uniqueL:
+            idx_l = numpy.where(Latom == l)[0]
+            zet = []
+            for i in idx_l:
+                if alphaAtom[i] not in zet:
+                    zet.append(alphaAtom[i])
+            zet = numpy.array(zet)
+            np = len(zet)
+            
+            zmin = get_zetmin(l, rc, eps_fit)
+            ziso = get_zetmin(l, rc, eps_iso)
+            isoprj = zet >= ziso
+            
+            # Geometric progression for zetp
+            # (Same logic as Analytical to generate matching exponents)
+            nisop = numpy.sum(isoprj)
+            x = (80.0/zmin)**(1.0/max(1, float(np - nisop - 1))) if np - nisop - 1 > 2 else 2.0
+            if x > 2.0: x = 2.0
+            zetp = numpy.zeros(np); zetval = zmin
+            for i in range(np-1, -1, -1):
+                if not isoprj[i]: zetp[i] = zetval; zetval *= x
+            for i in range(np-1, -1, -1):
+                if isoprj[i]: zetp[i] = zetval; zetval *= x
+
+            # Now use PySCF to get smat
+            # We create a mol with TWO atoms at the same position
+            # Atom 1: Basis functions with exponents zetp
+            # Atom 2: Basis functions with exponents zet
+            
+            def get_inv_norm(l, a):
+                # PySCF 3D normalization: N^2 * RadialOverlap(2a) = 1
+                # RadialOverlap(A) = (2l+1)!! * sqrt(pi) / (2^(l+2) * A^(l+1.5))
+                radial_ovlp = scipy.special.factorial2(2*l+1) * numpy.sqrt(numpy.pi) / (2**(l+2) * (2*a)**(l+1.5))
+                return numpy.sqrt(radial_ovlp) # Since N = 1/sqrt(RadialOverlap_3D)
+
+            proj_basis = [[l, [a, 1.0]] for a in zetp]
+            prim_basis = [[l, [a, 1.0]] for a in zet]
+            
+            # Use distinct element names to ensure different basis sets are applied
+            temp_mol = gto.M(atom='He! 0 0 0; He 0 0 0', 
+                            basis={'He!': proj_basis, 'He': prim_basis},
+                            cart=pmol.cart) # H(1e) + He(2e) = 3e
+            
+            deg = (2*l+1) if not pmol.cart else (l+1)*(l+2)//2
+            full_ovlp = temp_mol.intor('int1e_ovlp')
+            # Select the block <H|He> and take one component (e.g. first of each shell)
+            # Atom H functions are 0 to np*deg-1
+            # Atom He functions are np*deg to 2*np*deg-1
+            smat = full_ovlp[0 : np*deg : deg, np*deg : 2*np*deg : deg]
+            
+            # Scale to get unnormalized radial overlaps
+            ni = numpy.array([get_inv_norm(l, a) for a in zetp])
+            nj = numpy.array([get_inv_norm(l, a) for a in zet])
+            smat = smat * ni[:, None] * nj[None, :]
+            
+            # Block diagonalize isolated vs diffuse
+            for i in range(np):
+                for j in range(np):
+                    if isoprj[i] != isoprj[j]:
+                        smat[i, j] = 0
+
+            gcc = numpy.linalg.pinv(smat, rtol=rtol)
+            for i in range(np):
+                if isoprj[i]:
+                    gcc[i, :], gcc[:, i] = 0, 0
+            
+            # Map back
+            uniqueM = numpy.unique(M[ACenteredId][idx_l])
+            for m in uniqueM:
+                idx_lm = numpy.where((L[ACenteredId] == l) & (M[ACenteredId] == m))[0]
+                ppoinv[numpy.ix_(idx_lm, idx_lm)] = gcc
+        
+        ppoinv_arr.append(ppoinv)
+
+    return ppoinv_arr
+
+
+def obtainLocalFnsNewerTest(pmol, mol, ctr_coeff, alpha0, r=2, epsilon=1.e-5, Periodic = False, rtol=1e-8):
+    '''
+    Revised to call the Analytical version which matches CP2K.
+    '''
+    # Hardcoded CP2K-He parameters for comparison
+    rc = 1.7
+    eps_fit = 1e-8
+    eps_iso = 1e-8
+    
+    ppoinv_arr = obtainLocalFnsAnalytical(pmol, mol, ctr_coeff, rc, eps_fit, eps_iso, rtol=rtol)
+    
+    # Just return the first atom's matrix for the test script
+    return ppoinv_arr[0]
+
 
 def obtainLocal2e(mol, pmol, Periodic):
     VPQRSArr = []
@@ -1710,7 +2079,7 @@ def obtainLocal2e(mol, pmol, Periodic):
             continue
 
         # calculate integrals
-        auxbasis = getAuxbasis(pmol)
+        # auxbasis = getAuxbasis(pmol)
         if Periodic :
             molAtom = buildPmolAtom(mol, pmol, atomI, pmol.cart)
             mydf = pyscf.pbc.df.RSDF(molAtom)
@@ -1721,6 +2090,7 @@ def obtainLocal2e(mol, pmol, Periodic):
             # import pdb; pdb.set_trace()
             VPQRS = mydf.get_eri(compact=False).reshape((molAtom.nao, molAtom.nao, molAtom.nao, molAtom.nao))
         else:
+            molAtom = buildPmolAtom(mol, pmol, atomI, pmol.cart)
             VPQRS = pmol.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1))
 
         VPQRSWithNuc = numpy.zeros([VPQRS.shape[0]+1]*len(VPQRS.shape))

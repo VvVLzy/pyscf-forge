@@ -14,7 +14,7 @@ def convert_basis(input_file, output_file, basis_name):
             continue
             
         # Detect Element Header (e.g., "Na S")
-        if re.match(r'^[A-Za-z]+\s+[SPD]', line):
+        if re.match(r'^[A-Za-z]+\s+[SPDFG]', line, re.IGNORECASE):
             parts = line.split()
             current_element = parts[0]
             orb_type = {'S': 0, 'P': 1, 'D': 2, 'F': 3, 'G': 4}[parts[1].upper()]

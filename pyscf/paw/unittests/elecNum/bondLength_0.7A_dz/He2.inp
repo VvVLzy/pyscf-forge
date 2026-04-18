@@ -1,6 +1,6 @@
 &GLOBAL
   PRINT_LEVEL MEDIUM
-  PROJECT_NAME C
+  PROJECT_NAME He2
   RUN_TYPE ENERGY
 &END GLOBAL
 &FORCE_EVAL
@@ -11,27 +11,26 @@
   &END PRINT
   &SUBSYS
     &CELL
-      A	2.18050236	0.0	1.25891346
-      B	0.72683412	2.05579703	1.25891346
-      C	-0.0	0.0	2.51782692
-      PERIODIC XYZ
+      ABC 3.0 3.0 3.0          # 5 Angstrom cubic cell
+      PERIODIC XYZ             # Re-affirm periodic calculation for the cell
     &END CELL
-    &TOPOLOGY
-      COORD_FILE_NAME C.xyz
-      COORD_FILE_FORMAT XYZ
-    &END TOPOLOGY
-    &KIND C
+    &COORD
+      ! Coordinates for a single Helium atom
+      He   0.00000000   0.00000000   0.00000000
+      He   1.0   0.00000000   0.00000000
+    &END COORD
+    &KIND He
       POTENTIAL ALL
-      BASIS_SET CC-PVTZ
-      HARD_EXP_RADIUS 1.2
+      BASIS_SET unc-CC-PVDZ
+      HARD_EXP_RADIUS 1.7
     &END KIND
   &END SUBSYS
   &DFT
-    POTENTIAL_FILE_NAME POTENTIAL
+    POTENTIAL_FILE_NAME /home/lebox/sw/cp2k/data/POTENTIAL
     BASIS_SET_FILE_NAME CCPVxZ
     &MGRID
       NGRIDS 1
-      CUTOFF 400
+      CUTOFF 800
     &END MGRID
     &QS
       METHOD GAPW
@@ -40,6 +39,7 @@
       EPSFIT 1.0E-8
       EPS_CPC 1.0E-10
       EPS_ISO 1.0E-8
+      EPS_PGF_ORB 1.0E-8
       ALPHA0_HARD 12.5 # might have factor of 2 difference with ours, No! just use high pw cutoff this is grid artifact
       !MAX_RAD_LOCAL 1.5
       !LMAXN0 4
@@ -49,9 +49,9 @@
       &END XC_FUNCTIONAL
     &END XC
     &SCF
-      IGNORE_CONVERGENCE_FAILURE TRUE
       EPS_SCF 1e-07
-      MAX_SCF 50
+      MAX_SCF 20
+      IGNORE_CONVERGENCE_FAILURE T
       SCF_GUESS CORE
       &DIAGONALIZATION ON
         ALGORITHM STANDARD
@@ -71,8 +71,14 @@
       &AO_MATRICES ON
         OCE_HARD T
         OCE_SOFT T
-        DENSITY T
+        DENSITY F
+        OVERLAP T
+        NDIGITS 8
       &END AO_MATRICES
+      &MO_MOLDEN ON
+        NDIGITS 8
+        FILENAME =He2-MO.molden
+      &END MO_MOLDEN
     &END PRINT
   &END DFT
 &END FORCE_EVAL
