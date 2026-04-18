@@ -332,9 +332,11 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
 
 def buildPmolAtom(mol, pmol, atomI, cart):
-    if mol.nao != pmol.nao and isinstance(pmol.basis, str): # mol uses a contracted basis
-            pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.lattice_vectors(), unit='B', cart = cart) 
-    elif mol.nao != pmol.nao or isinstance(pmol.basis, dict):
+    # if mol.nao != pmol.nao and isinstance(pmol.basis, str): # mol uses a contracted basis
+    #         pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = 'unc-'+pmol.basis, a = pmol.lattice_vectors(), unit='B', cart = cart) 
+    # elif mol.nao != pmol.nao or isinstance(pmol.basis, dict):
+    #     pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol._basis, a = pmol.lattice_vectors(), unit='B', cart = cart)
+    if mol.nao != pmol.nao:
         pmolAtom = pgto.M(atom = [pmol._atom[atomI]], basis = pmol._basis, a = pmol.lattice_vectors(), unit='B', cart = cart)
     else:
         assert(mol.nao == pmol.nao)
@@ -658,7 +660,7 @@ def getMPQLarrayAtom(atomI, CG, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax
 
     if gmax < 2:
         # M_PQLarray.append(MPQLCart)
-        return MPQLCart
+        M_PQL = MPQLCart
     else:
         # Mask logic from original code
         maskSph = numpy.zeros(MPQLSph.shape[-1], dtype=bool)
@@ -667,13 +669,27 @@ def getMPQLarrayAtom(atomI, CG, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax
         maskSph[[0, 6, 8]] = True
         
         # Combine Cart (N, N, 4) with Sph subset (N, N, K_subset)
-        combined = numpy.concatenate([
+        M_PQL = numpy.concatenate([
             MPQLCart, 
             MPQLSph[:, :, ~maskSph]
         ], axis=-1)
         
         # M_PQLarray.append(combined)
-        return combined
+    # do analytical M_00L
+    alpha2 = alphaG[0]
+    alpha1 = 2*alpha[idx][0]
+    NN2 = (alpha2/numpy.pi)**(3/2)
+    # C0_num = -NN2 * (3*alpha2/2/alpha1 - 5/2)
+    C0 = NN2 * 5/2
+    # C0_num1 = M_PQL[0, 0, 0] * basisnorm(alpha2, 0) / numpy.sqrt(4*numpy.pi)
+    # C2_num = -NN2 * (alpha2 - alpha2**2/alpha1)
+    C2 = -NN2 * alpha2
+    # C2_num1 = M_PQL[0, 0, 1] * basisnorm(alpha2, 2)
+    M_000 = C0 / basisnorm(alpha2, 0) * numpy.sqrt(4*numpy.pi)
+    M_002 = C2 / basisnorm(alpha2, 2)
+    M_PQL[0, 0, 0] = M_000
+    M_PQL[0, 1:4, 1:4] = M_002
+    return M_PQL
     
     # # do analytical M_00L
     # alpha2 = alphaG[0]
@@ -747,7 +763,7 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     print('Making augmentation sphere for uniform grid:')
     WignerSeitzData = makeWignerSeitz(Rgrid, gmolSph, Periodic=Periodic)
     Lmax = numpy.array([max(LG.max(), 2)]*len(LG))
-    gridIdx = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)[0]
+    gridIdx, _, _, Rs = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)
 
     if Periodic:
         M_PQLarray = getMPQLarray(pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax)
@@ -760,7 +776,7 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
             pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmolSph, Rgrid, gridIdx
         )
 
-    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
+    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
 
 def intor_cross(intor, mol1, mol2, shls_slice, comp=None):
     nbas1 = len(mol1._bas)
@@ -824,7 +840,6 @@ tillL = lambda l : int( (l+1) * (l+2) * (l+3)//6 )
 
 def partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0):
     aoOnR = mol.pbc_eval_gto('GTOval', Rgrid)
-
 
     aoOnR_prim = pmol.pbc_eval_gto('GTOval', Rgrid)
     alpha, atoms, L, M = getAlphaAtomsL(pmol._bas, pmol._env)
@@ -1636,10 +1651,12 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
     # BeckeCoords = grids.coords
     alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
+
+    dv = mol.vol/grids.shape[0]
     
-    # print('Making augmentation sphere for Becke grid:')
-    # WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
-    # gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
+    print('Making augmentation sphere for uniform grid:')
+    WignerSeitzData = makeWignerSeitz(grids, mol, Periodic=True)
+    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
 
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
@@ -1671,6 +1688,7 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
         # coord = projAOAtom.pop(atomI)[1]
         projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
         projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
+        # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
         projAOOvlp = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
 
         # determine local functions
@@ -1691,6 +1709,16 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
         Ftilde_Pmu = numpy.zeros_like(F_Pmu)
         F_Pmu[:, idxToFit] = F_fitted
         Ftilde_Pmu[:, idxToFit] = F_fitted
+
+        ### check normalization of fitted AO and original AO
+        gridOnA = grids[gridIdx[atomI]]
+        AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
+        primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
+        fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
+        print(AOOnA.sum(axis=0)*dv)
+        print(fAOOnA.sum(axis=0)*dv)
+        print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
+        import pdb; pdb.set_trace()
 
         # set local, a-centered function directly as contraction coefficient (no fitting)
         diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
@@ -1713,7 +1741,7 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
 
     return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
 
-def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-8):
+def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-8):
     '''
     Fit AO and diffuse AO directly, much faster
     set F_Pmu directly to contraction coefficient when P=mu
@@ -1722,18 +1750,14 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
 
     labels = labelShellWithIdx(ctr_coeff, mol)
 
-    dv = mol.vol/grids.shape[0]
-    # BeckeCoords = grids.coords
     alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
     
-    print('Making augmentation sphere for uniform grid:')
-    WignerSeitzData = makeWignerSeitz(grids, mol, Periodic=True) # Becke grid should not be interpreted periodically
-    gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
-
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
+    print('Building projectors...')
     for atomI in range(mol._atm.shape[0]):
+        print(f'Atom {atomI}:')
         # fit all local primitives with atom centered primitives
         ACenteredId = numpy.where(atoms == atomI)[0]
         ACenteredAOId = numpy.where(atomsAO == atomI)[0]
@@ -1750,10 +1774,28 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
         
         projBasis = []
         for l, c in primCounts.items():
-            nAlpha = c//(2*l+1) # assume spherical GTO
-            assert(c == nAlpha*(2*l+1))
+            # nAlpha = c//(2*l+1) # assume spherical GTO
+            alphaProj = (l * numpy.log(Rb) - numpy.log(epsilon)) / Rb**2
+            alphaAtomL = alphaAtom[Latom==l]
+            isoPrim = alphaAtomL > alpha0
+            numPrimL = len(alphaAtomL) // (2*l+1)
+            numIsoPrimL = sum(isoPrim) // (2*l+1)
+            assert(c == numPrimL*(2*l+1))
 
-            projBasis.extend([[l, [alpha0*r**i, 1.]] for i in range(nAlpha)])
+            # smallest exponent nees to be contained in the sphere
+            # cp2k way of determining the ratio
+            x = (80.0/alphaProj)**(1.0/max(1, float(numPrimL - numIsoPrimL - 1))) if numPrimL - numIsoPrimL - 1 > 2 else 2.0
+            if x > 2.0: x = 2.0
+            alphasProj = numpy.zeros(numPrimL); zetval = alphaProj
+            for i in range(numPrimL-1, -1, -1):
+                if not isoPrim[i]: alphasProj[i] = zetval; zetval *= x
+            for i in range(numPrimL-1, -1, -1):
+                if isoPrim[i]: alphasProj[i] = zetval; zetval *= x
+
+            projBasis4L = [[l, [a, 1.]] for a in alphasProj]
+            print(f'L={l}: projExp {alphasProj}')
+            projBasis.extend(projBasis4L)
+
 
         projElem = pmol._atom[atomI][0] + '!' # make sure this doens't coincide with existing elements
 
@@ -1762,9 +1804,6 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
         projPrimBasis[projElem] = projBasis
         projPrimAtom = [pmol._atom[atomI], (projElem, pmol._atom[atomI][1])]
         projPrimMol = pgto.M(atom=projPrimAtom, basis=projPrimBasis, a = pmol.lattice_vectors(), unit='B', cart = pmol.cart)
-        # projPrimMol._env[projPrimMol._bas[:,-2]] = numpy.sqrt(numpy.pi * 4) # quick hack to check consistency with cp2k
-        # projPrimMol._env[projPrimMol._bas[:,-2]] = 1 # quick hack to check consistency with cp2k
-        # projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
         projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
 
         # isolated projectors
@@ -1774,15 +1813,16 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
             projPrimOvlp[:, i] = 0
 
         # ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
-        # print(ppoinv[1:4][:, 1:4])
-        import pdb; pdb.set_trace()
+        U, s, Vh = numpy.linalg.svd(projPrimOvlp)
+        s_inv = numpy.zeros_like(s)
+        s_inv[s>rtol] = 1/s[s>rtol]
+        ppoinv = Vh.T@numpy.diag(s_inv)@U.T
 
         # construct proj-ao overlap
         numProj = projPrimOvlp.shape[0]
         projAOBasis = mol._basis.copy()
         projAOBasis[projElem] = projBasis
         projAOAtom = mol._atom.copy()
-        # coord = projAOAtom.pop(atomI)[1]
         projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
         projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
         # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
@@ -1798,21 +1838,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
         # fit the functions
         projAOOvlp = projAOOvlp[:, locId][:, idxToFit]
         # F_fitted, residuals, rank, s = numpy.linalg.lstsq(projPrimOvlp, projAOOvlp, rcond=None)
-        F_fitted = numpy.linalg.pinv(projPrimOvlp, rtol=rtol) @ projAOOvlp
-        # import pdb; pdb.set_trace()
-
-        ### check normalization of fitted AO and original AO
-        gridOnA = grids[gridIdx[atomI]]
-        AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
-        primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
-        fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
-        print(AOOnA.sum(axis=0)*dv)
-        print(fAOOnA.sum(axis=0)*dv)
-        print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
-        import pdb; pdb.set_trace()
-
-        # print(F_fitted[:, 0])
-        # import pdb; pdb.set_trace()
+        F_fitted = ppoinv @ projAOOvlp
 
         # update arrays
         F_Pmu = numpy.zeros((len(ACenteredId), len(locId)))
@@ -1869,7 +1895,7 @@ def obtainLocal2e(mol, pmol, Periodic):
             continue
 
         # calculate integrals
-        auxbasis = getAuxbasis(pmol)
+        # auxbasis = getAuxbasis(pmol)
         if Periodic :
             molAtom = buildPmolAtom(mol, pmol, atomI, pmol.cart)
             mydf = pyscf.pbc.df.RSDF(molAtom)
