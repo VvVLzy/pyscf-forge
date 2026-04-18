@@ -14,6 +14,7 @@ def smoothCell(mol, alpha0):
     env2Mod = smoothMol._env.copy()
     for shell in smoothMol._bas:
         nprim = shell[2]
+        nconc = shell[3]
 
         # locate sharp alphas
         alphaStart = shell[-3]
@@ -21,9 +22,9 @@ def smoothCell(mol, alpha0):
         sharpAlphaId = numpy.where(alphas > alpha0)[0]
 
         # set sharp contraction coeff to 0
-        coeffStart = shell[-2]
-        coeffs = smoothMol._env[coeffStart:coeffStart+nprim]
-        env2Mod[sharpAlphaId+coeffStart] = 0
+        coeffStart = [shell[-2] + nprim* i for i in range(nconc)]
+        for c in coeffStart:
+            env2Mod[sharpAlphaId+c] = 0
         # print(env2Mod)
     smoothMol._env = env2Mod
     return smoothMol
@@ -185,8 +186,8 @@ class PAWNumInt(NumInt):
         )
         logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec1)
         logger.info(self.mf, 'all nelec with atomic grids = %s', nelec2)
-        logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec3)
-        logger.info(self.mf, 'sharp nelec with uniform grids = %s', nelec2 - nelec3)
+        logger.info(self.mf, 'smooth nelec with atomic grids = %s', nelec3)
+        logger.info(self.mf, 'sharp nelec with atomic grids = %s', nelec2 - nelec3)
         nelec = nelec1 + nelec2 - nelec3
         exc = exc1 + exc2 - exc3
         vxc = vxc1 + vxc2 - vxc3
