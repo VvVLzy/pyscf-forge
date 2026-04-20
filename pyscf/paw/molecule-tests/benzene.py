@@ -2,7 +2,7 @@ from pyscf import gto, scf, dft, sgx
 from pyscf.pbc import gto as pgto
 import numpy as np
 import jax, pyscf
-from pyscf.paw import PAW
+from pyscf.paw import NewPAW as PAW
 
 
 jax.config.update("jax_enable_x64", True)
@@ -20,13 +20,13 @@ benzene = [[ 'C'  , ( 4.673795 ,   6.280948 , 0.00  ) ],
            [ 'H'  , ( 2.497289 ,   3.607068 , 0.00  ) ],
            [ 'H'  , ( 2.497289 ,   6.120281 , 0.00  ) ]]
 
-verbose = 5
+verbose = 3
 ke_cutoff = 50
 init_guess = '1e'
 
 cell = pgto.M(
     atom=benzene, 
-    basis='cc-pvtz', 
+    basis='cc-pvdz', 
     a=np.array([[20,0,0],[0,20,0],[0,0,15]]),
     verbose=verbose,
     ke_cutoff=ke_cutoff,)
@@ -34,11 +34,18 @@ cell = pgto.M(
 
 mol = gto.M(atom=cell.atom, basis=cell.basis, verbose=verbose)
 
+# exact calculation
+mf_mol_exact = scf.RKS(mol)
+mf_mol_exact.xc = ''
+mf_mol_exact.init_guess = init_guess
+mf_mol_exact.kernel()
+
 
 # paw calculation
-mf_mol_paw = scf.RHF(mol).density_fit()
+mf_mol_paw = scf.RKS(mol).density_fit()
+mf_mol_paw.xc = ''
 mf_mol_paw.init_guess = init_guess
 mydf = PAW.from_mf(mf_mol_paw, cell,
-                    PWAccuracy=1e-4).build()
+                    alpha0=None, augRadius=None).build()
 mf_mol_paw.with_df = mydf
 mf_mol_paw.kernel()

@@ -19,7 +19,7 @@ r0      = 1.    # N-N bond length
 atom    = f'He {r1} {r1} {r1}; He {r1+r0} {r1} {r1}'
 # rscales = numpy.linspace(0.7, 1.5, 15)
 # rscales = numpy.linspace(0.7, 2.3, 15)
-rscales = [0.7]
+rscales = [1.5]
 print(rscales)
 
 zeta = 'dz'

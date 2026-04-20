@@ -1,0 +1,2693 @@
+ DBCSR| CPU Multiplication driver                                           XSMM (U)
+ DBCSR| Multrec recursion limit                                              512 (U)
+ DBCSR| Multiplication stack size                                           1000 (D)
+ DBCSR| Maximum elements for images                                    UNLIMITED (U)
+ DBCSR| Multiplicative factor virtual images                                   1 (U)
+ DBCSR| Use multiplication densification                                       T (D)
+ DBCSR| Multiplication size stacks                                             3 (U)
+ DBCSR| Use memory pool for CPU allocation                                     F (U)
+ DBCSR| OMP: Current number of threads                                         8
+ DBCSR| OMP: Max number of threads                                             8
+ DBCSR| Split modifier for TAS multiplication algorithm                  1.0E+00 (U)
+
+
+  **** **** ******  **  PROGRAM STARTED AT               2026-04-16 15:54:30.730
+ ***** ** ***  *** **   PROGRAM STARTED ON                                 lebox
+ **    ****   ******    PROGRAM STARTED BY                                 lebox
+ ***** **    ** ** **   PROGRAM PROCESS ID                               1380211
+  **** **  *******  **  PROGRAM STARTED IN /home/lebox/Github/pyscf-forge/pyscf/
+                                           paw/unittests/elecNum/C_prim_dz
+
+ CP2K| version string:                 CP2K version 2026.1 (Development Version)
+ CP2K| source code revision number:                                   6b78964dbc
+ CP2K| cp2kflags: omp libint fftw3 libxc ace deepmd xsmm spglib libdftd4 mctc-li
+ CP2K|            b tblite libvori libbqb libtorch hdf5 trexio greenx
+ CP2K| is freely available from                            https://www.cp2k.org/
+ CP2K| Program compiled at                                   2026-03-04 17:49:57
+ CP2K| Program compiled on                                                 lebox
+ CP2K| Program compiled for                                               x86_64
+ CP2K| Data directory path           /home/lebox/sw/cp2k/install/share/cp2k/data
+ CP2K| Input file name                                                     C.inp
+
+ GLOBAL| Force Environment number                                              1
+ GLOBAL| Basis set file name                                              CCPVxZ
+ GLOBAL| Potential file name                                           POTENTIAL
+ GLOBAL| MM Potential file name                                     MM_POTENTIAL
+ GLOBAL| Coordinate file name                                              C.xyz
+ GLOBAL| Method name                                                        CP2K
+ GLOBAL| Project name                                                          C
+ GLOBAL| Run type                                                         ENERGY
+ GLOBAL| FFT library                                                       FFTW3
+ GLOBAL| Diagonalization library                                       ScaLAPACK
+ GLOBAL| Cholesky decomposition library                                ScaLAPACK
+ GLOBAL| DGEMM library                                                      BLAS
+ GLOBAL| Orthonormality check for eigenvectors                          DISABLED
+ GLOBAL| Matrix multiplication library                                 ScaLAPACK
+ GLOBAL| All-to-all communication in single precision                          F
+ GLOBAL| FFTs using library dependent lengths                                  F
+ GLOBAL| Grid backend                                                       AUTO
+ GLOBAL| Global print level                                               MEDIUM
+ GLOBAL| MPI I/O enabled                                                       T
+ GLOBAL| Total number of message passing processes                             1
+ GLOBAL| Number of distributed systems (nodes)                                 1
+ GLOBAL| Number of threads for this process                                    8
+ GLOBAL| This output is from process                                           0
+ GLOBAL| OpenMP stack size per thread (OMP_STACKSIZE)                       256M
+ GLOBAL| CPU model name                     AMD Ryzen 7 7800X3D 8-Core Processor
+ GLOBAL| CPUID                                                              1003
+
+ MEMORY| system memory details [Kb]
+ MEMORY|                        rank 0           min           max       average
+ MEMORY| MemTotal             31944188      31944188      31944188      31944188
+ MEMORY| MemFree               9755616       9755616       9755616       9755616
+ MEMORY| Buffers                 24732         24732         24732         24732
+ MEMORY| Cached                2019444       2019444       2019444       2019444
+ MEMORY| Slab                  1350084       1350084       1350084       1350084
+ MEMORY| SReclaimable           787804        787804        787804        787804
+ MEMORY| MemLikelyFree        12587596      12587596      12587596      12587596
+
+
+ *** Fundamental physical constants (SI units) ***
+
+ *** Literature: B. J. Mohr and B. N. Taylor,
+ ***             CODATA recommended values of the fundamental physical
+ ***             constants: 2006, Web Version 5.1
+ ***             http://physics.nist.gov/constants
+
+ Speed of light in vacuum [m/s]                             2.99792458000000E+08
+ Magnetic constant or permeability of vacuum [N/A**2]       1.25663706143592E-06
+ Electric constant or permittivity of vacuum [F/m]          8.85418781762039E-12
+ Planck constant (h) [J*s]                                  6.62606896000000E-34
+ Planck constant (h-bar) [J*s]                              1.05457162825177E-34
+ Elementary charge [C]                                      1.60217648700000E-19
+ Electron mass [kg]                                         9.10938215000000E-31
+ Electron g factor [ ]                                     -2.00231930436220E+00
+ Proton mass [kg]                                           1.67262163700000E-27
+ Fine-structure constant                                    7.29735253760000E-03
+ Rydberg constant [1/m]                                     1.09737315685270E+07
+ Avogadro constant [1/mol]                                  6.02214179000000E+23
+ Boltzmann constant [J/K]                                   1.38065040000000E-23
+ Atomic mass unit [kg]                                      1.66053878200000E-27
+ Bohr radius [m]                                            5.29177208590000E-11
+
+ *** Conversion factors ***
+
+ [u] -> [a.u.]                                              1.82288848426455E+03
+ [Angstrom] -> [Bohr] = [a.u.]                              1.88972613288564E+00
+ [a.u.] = [Bohr] -> [Angstrom]                              5.29177208590000E-01
+ [a.u.] -> [s]                                              2.41888432650478E-17
+ [a.u.] -> [fs]                                             2.41888432650478E-02
+ [a.u.] -> [J]                                              4.35974393937059E-18
+ [a.u.] -> [N]                                              8.23872205491840E-08
+ [a.u.] -> [K]                                              3.15774647902944E+05
+ [a.u.] -> [kJ/mol]                                         2.62549961709828E+03
+ [a.u.] -> [kcal/mol]                                       6.27509468713739E+02
+ [a.u.] -> [Pa]                                             2.94210107994716E+13
+ [a.u.] -> [bar]                                            2.94210107994716E+08
+ [a.u.] -> [atm]                                            2.90362800883016E+08
+ [a.u.] -> [eV]                                             2.72113838565563E+01
+ [a.u.] -> [Hz]                                             6.57968392072181E+15
+ [a.u.] -> [1/cm] (wave numbers)                            2.19474631370540E+05
+ [a.u./Bohr**2] -> [1/cm]                                   5.14048714338585E+03
+ 
+
+ CELL_TOP| Volume [angstrom^3]:                                        11.286588
+ CELL_TOP| Vector a [angstrom     2.181     0.000     1.259   |a| =     2.517827
+ CELL_TOP| Vector b [angstrom     0.727     2.056     1.259   |b| =     2.517827
+ CELL_TOP| Vector c [angstrom    -0.000     0.000     2.518   |c| =     2.517827
+ CELL_TOP| Angle (b,c), alpha [degree]:                                60.000000
+ CELL_TOP| Angle (a,c), beta  [degree]:                                60.000003
+ CELL_TOP| Angle (a,b), gamma [degree]:                                59.999999
+ CELL_TOP| Numerically orthorhombic:                                          NO
+ CELL_TOP| Periodicity                                                       XYZ
+
+ GENERATE|  Preliminary Number of Bonds generated:                             0
+ GENERATE|  Achieved consistency in connectivity generation.
+
+ CELL| Volume [angstrom^3]:                                            11.286588
+ CELL| Vector a [angstrom]:       2.181     0.000     1.259   |a| =     2.517827
+ CELL| Vector b [angstrom]:       0.727     2.056     1.259   |b| =     2.517827
+ CELL| Vector c [angstrom]:      -0.000     0.000     2.518   |c| =     2.517827
+ CELL| Angle (b,c), alpha [degree]:                                    60.000000
+ CELL| Angle (a,c), beta  [degree]:                                    60.000003
+ CELL| Angle (a,b), gamma [degree]:                                    59.999999
+ CELL| Numerically orthorhombic:                                              NO
+ CELL| Periodicity                                                           XYZ
+
+ CELL_REF| Volume [angstrom^3]:                                        11.286588
+ CELL_REF| Vector a [angstrom     2.181     0.000     1.259   |a| =     2.517827
+ CELL_REF| Vector b [angstrom     0.727     2.056     1.259   |b| =     2.517827
+ CELL_REF| Vector c [angstrom    -0.000     0.000     2.518   |c| =     2.517827
+ CELL_REF| Angle (b,c), alpha [degree]:                                60.000000
+ CELL_REF| Angle (a,c), beta  [degree]:                                60.000003
+ CELL_REF| Angle (a,b), gamma [degree]:                                59.999999
+ CELL_REF| Numerically orthorhombic:                                          NO
+ CELL_REF| Periodicity                                                       XYZ
+
+ *******************************************************************************
+ *******************************************************************************
+ **                                                                           **
+ **     #####                         ##              ##                      **
+ **    ##   ##            ##          ##              ##                      **
+ **   ##     ##                       ##            ######                    **
+ **   ##     ##  ##   ##  ##   #####  ##  ##   ####   ##    #####    #####    **
+ **   ##     ##  ##   ##  ##  ##      ## ##   ##      ##   ##   ##  ##   ##   **
+ **   ##  ## ##  ##   ##  ##  ##      ####     ###    ##   ######   ######    **
+ **    ##  ###   ##   ##  ##  ##      ## ##      ##   ##   ##       ##        **
+ **     #######   #####   ##   #####  ##  ##  ####    ##    #####   ##        **
+ **           ##                                                    ##        **
+ **                                                                           **
+ **                                                ... make the atoms dance   **
+ **                                                                           **
+ **            Copyright (C) by CP2K developers group (2000-2026)             **
+ **                      J. Chem. Phys. 152, 194103 (2020)                    **
+ **                                                                           **
+ *******************************************************************************
+
+ Projectors for the basis functions of CC-PVDZ_1c
+
+
+ Built projector for angular momentum quantum number l=  0
+ Number of isolated projectors =  5
+
+ Set     1
+
+   exp prj:     1698.248838     921.762548     500.307243     271.552948
+                 147.391438      80.000000      43.421790      23.568148
+                  12.792139
+
+   exp gto:     6665.000000
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00
+
+   exp gto:     1000.000000
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00
+
+   exp gto:      228.000000
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00
+
+   exp gto:       64.710000
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00
+
+   exp gto:       21.060000
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00
+
+   exp gto:        7.495000
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00   0.461739E+06  -0.353543E+06   0.825700E+05
+              -0.601017E+04
+
+   exp gto:        2.797000
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00  -0.214033E+07   0.172253E+07  -0.435247E+06
+               0.354680E+05
+
+   exp gto:        0.521500
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00   0.741355E+07  -0.612406E+07   0.162089E+07
+              -0.143007E+06
+
+ Set     2
+
+   exp prj:     1698.248838     921.762548     500.307243     271.552948
+                 147.391438      80.000000      43.421790      23.568148
+                  12.792139
+
+   exp gto:        0.159600
+   coeff.:     0.000000E+00   0.000000E+00   0.000000E+00   0.000000E+00
+               0.000000E+00  -0.572803E+07   0.475196E+07  -0.126777E+07
+               0.113527E+06
+
+
+ Built projector for angular momentum quantum number l=  1
+ Number of isolated projectors =  0
+
+ Set     3
+
+   exp prj:       80.000000      43.564578      23.723405      12.918752
+
+   exp gto:        9.439000
+   coeff.:     0.123013E+06   0.242687E+06  -0.100134E+06   0.903603E+04
+
+   exp gto:        2.002000
+   coeff.:    -0.199947E+06  -0.388701E+06   0.199279E+06  -0.231809E+05
+
+   exp gto:        0.545600
+   coeff.:     0.303505E+04   0.542815E+04  -0.599446E+04   0.143482E+04
+
+ Set     4
+
+   exp prj:       80.000000      43.564578      23.723405      12.918752
+
+   exp gto:        0.151700
+   coeff.:     0.108644E+06   0.210710E+06  -0.111392E+06   0.138846E+05
+
+
+ Built projector for angular momentum quantum number l=  2
+ Number of isolated projectors =  0
+
+ Set     5
+
+   exp prj:       13.045364
+
+   exp gto:        0.550000
+   coeff.:     0.557599E+04
+
+    *** Compensation density charges data set ***
+
+ - Rho0 exponent :                   12.5000000000
+ - Global max l :                     2
+ - Normalization constants for g0
+                   ang. mom.=  0      hard=         7.93670
+                   ang. mom.=  1      hard=       198.41761
+                   ang. mom.=  2      hard=      1653.48010
+
+ - rho0 max L and radii in angstrom for the atom kind  1
+                   => l max  :                            2
+                   => max radius of g0:                       0.6985376451
+
+ DFT| Spin restricted Kohn-Sham (RKS) calculation                            RKS
+ DFT| Multiplicity                                                             1
+ DFT| Number of spin states                                                    1
+ DFT| Charge                                                                   0
+ DFT| Self-interaction correction (SIC)                                       NO
+ DFT| Cutoffs: density                                              1.000000E-10
+ DFT|          gradient                                             1.000000E-10
+ DFT|          tau                                                  1.000000E-10
+ DFT|          cutoff_smoothing_range                               0.000000E+00
+ DFT| XC density smoothing                                                  NONE
+ DFT| XC derivatives                                                          PW
+
+ FUNCTIONAL| NO EXCHANGE-CORRELATION FUNCTIONAL USED.
+
+
+ QS| Method:                                                                GAPW
+ QS| Density plane wave grid type                        NON-SPHERICAL FULLSPACE
+ QS| Number of grid levels:                                                    1
+ QS| Density cutoff [a.u.]:                                                200.0
+ QS| Grid level progression factor:                                          3.0
+ QS| Relative density cutoff [a.u.]:                                        20.0
+ QS| Interaction thresholds: eps_pgf_orb:                                1.0E-08
+ QS|                         eps_filter_matrix:                          0.0E+00
+ QS|                         eps_core_charge:                            1.0E-12
+ QS|                         eps_rho_gspace:                             1.0E-10
+ QS|                         eps_rho_rspace:                             1.0E-10
+ QS|                         eps_gvg_rspace:                             1.0E-05
+ QS|                         eps_ppl:                                    1.0E-02
+ QS|                         eps_ppnl:                                   1.0E-07
+ QS| GAPW|      One center basis from orbital basis primitives
+ QS| GAPW|                   eps_fit:                                    1.0E-08
+ QS| GAPW|                   eps_iso:                                    1.0E-08
+ QS| GAPW|                   eps_svd:                                    1.0E-08
+ QS| GAPW|                   eps_cpc:                                    1.0E-10
+ QS| GAPW|   atom-r-grid: quadrature:                                     GC_LOG
+ QS| GAPW|      atom-s-grid:  max l :                                          4
+ QS| GAPW|      max_l_rho0 :                                                   2
+
+
+ ATOMIC KIND INFORMATION
+
+  1. Atomic kind: C                                     Number of atoms:       2
+
+     Orbital Basis Set                                                   CC-PVDZ
+
+       Number of orbital shell sets:                                           5
+       Number of orbital shells:                                               6
+       Number of primitive Cartesian functions:                               14
+       Number of Cartesian basis functions:                                   15
+       Number of spherical basis functions:                                   14
+       Norm type:                                                              2
+
+       Normalised Cartesian orbitals:
+
+                        Set   Shell   Orbital            Exponent    Coefficient
+
+                          1       1    1s             6665.000000       0.363584
+                                                      1000.000000       0.674986
+                                                       228.000000       1.131620
+                                                        64.710000       1.653009
+                                                        21.060000       1.923821
+                                                         7.495000       1.447278
+                                                         2.797000       0.439163
+                                                         0.521500       0.006646
+
+                          1       2    2s             6665.000000      -0.154180
+                                                      1000.000000      -0.293785
+                                                       228.000000      -0.480896
+                                                        64.710000      -0.761434
+                                                        21.060000      -0.900104
+                                                         7.495000      -0.972611
+                                                         2.797000      -0.394042
+                                                         0.521500       0.478394
+
+                          2       1    2s                0.159600       0.179964
+
+                          3       1    2px               9.439000       1.343737
+                                                         2.002000       1.063168
+                                                         0.545600       0.508232
+                          3       1    2py               9.439000       1.343737
+                                                         2.002000       1.063168
+                                                         0.545600       0.508232
+                          3       1    2pz               9.439000       1.343737
+                                                         2.002000       1.063168
+                                                         0.545600       0.508232
+
+                          4       1    2px               0.151700       0.134950
+                          4       1    2py               0.151700       0.134950
+                          4       1    2pz               0.151700       0.134950
+
+                          5       1    3dx2              0.550000       0.578155
+                          5       1    3dxy              0.550000       1.001394
+                          5       1    3dxz              0.550000       1.001394
+                          5       1    3dy2              0.550000       0.578155
+                          5       1    3dyz              0.550000       1.001394
+                          5       1    3dz2              0.550000       0.578155
+
+       Atomic covalent radius [Angstrom]:                                  0.770
+
+       Atomic van der Waals radius [Angstrom]:                             1.700
+
+     The atoms of this atomic kind are PAW atoms (GAPW):
+       Hard Gaussian function radius:                                      1.200
+       Rho0 radius:                                                        1.200
+       Maximum GTO radius used for PAW projector construction:            24.566
+
+     GAPW Soft Basis Set                                            CC-PVDZ_soft
+
+       Number of orbital shell sets:                                           5
+       Number of orbital shells:                                               6
+       Number of primitive Cartesian functions:                                9
+       Number of Cartesian basis functions:                                   15
+       Number of spherical basis functions:                                   14
+       Norm type:                                                              2
+
+       Normalised Cartesian orbitals:
+
+                        Set   Shell   Orbital            Exponent    Coefficient
+
+                          1       1    1s                7.495000       1.447278
+                                                         2.797000       0.439163
+                                                         0.521500       0.006646
+
+                          1       2    2s                7.495000      -0.972611
+                                                         2.797000      -0.394042
+                                                         0.521500       0.478394
+
+                          2       1    2s                0.159600       0.179964
+
+                          3       1    2px               9.439000       1.343737
+                                                         2.002000       1.063168
+                                                         0.545600       0.508232
+                          3       1    2py               9.439000       1.343737
+                                                         2.002000       1.063168
+                                                         0.545600       0.508232
+                          3       1    2pz               9.439000       1.343737
+                                                         2.002000       1.063168
+                                                         0.545600       0.508232
+
+                          4       1    2px               0.151700       0.134950
+                          4       1    2py               0.151700       0.134950
+                          4       1    2pz               0.151700       0.134950
+
+                          5       1    3dx2              0.550000       0.578155
+                          5       1    3dxy              0.550000       1.001394
+                          5       1    3dxz              0.550000       1.001394
+                          5       1    3dy2              0.550000       0.578155
+                          5       1    3dyz              0.550000       1.001394
+                          5       1    3dz2              0.550000       0.578155
+
+     AE Potential information for                                            ALL
+
+       Description:                                       All-electron potential
+                                          Krack, Parrinello, PCCP 2, 2105 (2000)
+
+       Gaussian exponent of the core charge distribution:               4.109048
+       Electronic configuration (s p d ...):                           4   2   0
+
+
+ MOLECULE KIND INFORMATION
+
+
+ All atoms are their own molecule, skipping detailed information
+
+
+ TOTAL NUMBERS AND MAXIMUM NUMBERS
+
+  Total number of            - Atomic kinds:                                   1
+                             - Atoms:                                          2
+                             - Shell sets:                                    10
+                             - Shells:                                        12
+                             - Primitive Cartesian functions:                 28
+                             - Cartesian basis functions:                     30
+                             - Spherical basis functions:                     28
+
+  Maximum angular momentum of the orbital basis functions:                     2
+
+
+ MODULE QUICKSTEP: ATOMIC COORDINATES IN ANGSTROM
+
+   Atom Kind Element         X             Y             Z       Z(eff)     Mass
+      1    1 C     6      2.543919      1.798822      4.406197   6.0000  12.0107
+      2    1 C     6      0.363417      0.256975      0.629457   6.0000  12.0107
+
+
+
+ SCF PARAMETERS         Density guess:                                      CORE
+                        --------------------------------------------------------
+                        max_scf:                                              50
+                        max_scf_history:                                       0
+                        max_diis:                                              4
+                        --------------------------------------------------------
+                        eps_scf:                                        1.00E-07
+                        eps_scf_history:                                0.00E+00
+                        eps_diis:                                       1.00E-01
+                        eps_eigval:                                     1.00E-05
+                        --------------------------------------------------------
+                        level_shift [a.u.]:                             0.000000
+                        --------------------------------------------------------
+                        Mixing method:                           DIRECT_P_MIXING
+                        --------------------------------------------------------
+                        No outer SCF
+
+ PW_GRID| Information for grid number                                          1
+ PW_GRID| Cutoff [a.u.]                                                    200.0
+ PW_GRID| spherical cutoff:                                                   NO
+ PW_GRID|   Bounds   1            -16      15                Points:          32
+ PW_GRID|   Bounds   2            -16      15                Points:          32
+ PW_GRID|   Bounds   3            -16      15                Points:          32
+ PW_GRID| Volume element (a.u.^3)  0.2324E-02     Volume (a.u.^3)        76.1657
+ PW_GRID| Grid span                                                    FULLSPACE
+
+ POISSON| Solver                                                        PERIODIC
+ POISSON| Periodicity                                                        XYZ
+
+ RS_GRID| Information for grid number                                          1
+ RS_GRID|   Bounds   1            -16      15                Points:          32
+ RS_GRID|   Bounds   2            -16      15                Points:          32
+ RS_GRID|   Bounds   3            -16      15                Points:          32
+
+
+ OVERLAP MATRIX
+
+                                1              2              3
+     1    1  C     1s        1.00001176    -0.21500526     0.26622398
+     2    1  C     2s       -0.21500526     1.03901556     1.33632673
+     3    1  C     2s        0.26622398     1.33632673     3.25061919
+     4    1  C     2py       0.00000000     0.00000000    -0.00000000
+     5    1  C     2pz      -0.00000000    -0.00000000     0.00000000
+     6    1  C     2px       0.00000000     0.00000000     0.00000000
+     7    1  C     2py       0.00000000     0.00000000    -0.00000000
+     8    1  C     2pz      -0.00000000     0.00000000    -0.00000000
+     9    1  C     2px       0.00000000     0.00000000     0.00000000
+    10    1  C     3d-2      0.00000000     0.00000001     0.00000001
+    11    1  C     3d-1     -0.00000000    -0.00000000     0.00000000
+    12    1  C     3d0       0.00000000     0.00000001     0.00000001
+    13    1  C     3d+1     -0.00000000    -0.00000000    -0.00000000
+    14    1  C     3d+2     -0.00000000    -0.00000003    -0.00000003
+
+    15    2  C     1s        0.00100846     0.03952253     0.23154730
+    16    2  C     2s        0.03952253     0.47657538     1.29213735
+    17    2  C     2s        0.23154730     1.29213735     3.24275660
+    18    2  C     2py       0.00000008     0.00000024     0.00000003
+    19    2  C     2pz       0.00000003     0.00000009     0.00000001
+    20    2  C     2px       0.00000002     0.00000002    -0.00000002
+    21    2  C     2py       0.00000003     0.00000004     0.00000001
+    22    2  C     2pz       0.00000001     0.00000001     0.00000000
+    23    2  C     2px      -0.00000001    -0.00000003    -0.00000001
+    24    2  C     3d-2     -0.00000006    -0.00000013    -0.00000002
+    25    2  C     3d-1     -0.00000009    -0.00000018    -0.00000003
+    26    2  C     3d0      -0.00000025    -0.00000054    -0.00000010
+    27    2  C     3d+1     -0.00000012    -0.00000025    -0.00000005
+    28    2  C     3d+2     -0.00000023    -0.00000044    -0.00000008
+
+                                4              5              6
+     1    1  C     1s        0.00000000    -0.00000000     0.00000000
+     2    1  C     2s        0.00000000    -0.00000000     0.00000000
+     3    1  C     2s       -0.00000000     0.00000000     0.00000000
+     4    1  C     2py       0.95375451     0.00000000    -0.00000001
+     5    1  C     2pz       0.00000000     0.95375451     0.00000000
+     6    1  C     2px      -0.00000001     0.00000000     0.95375454
+     7    1  C     2py       0.14039017     0.00000000    -0.00000002
+     8    1  C     2pz       0.00000000     0.14039020    -0.00000000
+     9    1  C     2px      -0.00000002    -0.00000000     0.14039025
+    10    1  C     3d-2      0.00000000     0.00000000    -0.00000000
+    11    1  C     3d-1     -0.00000000    -0.00000000     0.00000000
+    12    1  C     3d0       0.00000000    -0.00000000    -0.00000000
+    13    1  C     3d+1      0.00000000     0.00000000    -0.00000000
+    14    1  C     3d+2      0.00000000    -0.00000000     0.00000000
+
+    15    2  C     1s       -0.00000008    -0.00000003    -0.00000002
+    16    2  C     2s       -0.00000024    -0.00000009    -0.00000002
+    17    2  C     2s       -0.00000003    -0.00000001     0.00000002
+    18    2  C     2py      -0.17588832     0.00000018     0.00000012
+    19    2  C     2pz       0.00000018    -0.17588695     0.00000025
+    20    2  C     2px       0.00000012     0.00000025    -0.17588741
+    21    2  C     2py      -0.02015295     0.00000005     0.00000004
+    22    2  C     2pz       0.00000005    -0.02015260     0.00000007
+    23    2  C     2px       0.00000004     0.00000007    -0.02015273
+    24    2  C     3d-2      0.00000018    -0.00000022     0.38058491
+    25    2  C     3d-1      0.00000023     0.38058450    -0.00000022
+    26    2  C     3d0       0.32959551     0.00000003     0.46611812
+    27    2  C     3d+1     -0.00000022     0.53822695     0.00000007
+    28    2  C     3d+2      0.57087659    -0.00000008    -0.26911349
+
+                                7              8              9
+     1    1  C     1s        0.00000000    -0.00000000     0.00000000
+     2    1  C     2s        0.00000000     0.00000000     0.00000000
+     3    1  C     2s       -0.00000000    -0.00000000     0.00000000
+     4    1  C     2py       0.14039017     0.00000000    -0.00000002
+     5    1  C     2pz       0.00000000     0.14039020    -0.00000000
+     6    1  C     2px      -0.00000002    -0.00000000     0.14039025
+     7    1  C     2py       0.03063252    -0.00000000    -0.00000001
+     8    1  C     2pz      -0.00000000     0.03063254     0.00000000
+     9    1  C     2px      -0.00000001     0.00000000     0.03063256
+    10    1  C     3d-2     -0.00000000     0.00000000    -0.00000000
+    11    1  C     3d-1      0.00000000     0.00000000     0.00000000
+    12    1  C     3d0       0.00000000    -0.00000000     0.00000000
+    13    1  C     3d+1      0.00000000     0.00000000    -0.00000000
+    14    1  C     3d+2     -0.00000000    -0.00000000     0.00000000
+
+    15    2  C     1s       -0.00000003    -0.00000001     0.00000001
+    16    2  C     2s       -0.00000004    -0.00000001     0.00000003
+    17    2  C     2s       -0.00000001    -0.00000000     0.00000001
+    18    2  C     2py      -0.02015295     0.00000005     0.00000004
+    19    2  C     2pz       0.00000005    -0.02015260     0.00000007
+    20    2  C     2px       0.00000004     0.00000007    -0.02015273
+    21    2  C     2py      -0.00163763     0.00000001     0.00000001
+    22    2  C     2pz       0.00000001    -0.00163755     0.00000002
+    23    2  C     2px       0.00000001     0.00000002    -0.00163758
+    24    2  C     3d-2      0.00000000    -0.00000002     0.09558102
+    25    2  C     3d-1      0.00000002     0.09558095    -0.00000002
+    26    2  C     3d0       0.08277545     0.00000001     0.11706223
+    27    2  C     3d+1     -0.00000002     0.13517179     0.00000001
+    28    2  C     3d+2      0.14337135    -0.00000001    -0.06758594
+
+                               10             11             12
+     1    1  C     1s        0.00000000    -0.00000000     0.00000000
+     2    1  C     2s        0.00000001    -0.00000000     0.00000001
+     3    1  C     2s        0.00000001     0.00000000     0.00000001
+     4    1  C     2py       0.00000000    -0.00000000     0.00000000
+     5    1  C     2pz       0.00000000    -0.00000000    -0.00000000
+     6    1  C     2px      -0.00000000     0.00000000    -0.00000000
+     7    1  C     2py      -0.00000000     0.00000000     0.00000000
+     8    1  C     2pz       0.00000000     0.00000000    -0.00000000
+     9    1  C     2px      -0.00000000     0.00000000     0.00000000
+    10    1  C     3d-2      1.03240788     0.00000000     0.06161302
+    11    1  C     3d-1      0.00000000     1.03240784     0.00000000
+    12    1  C     3d0       0.06161302     0.00000000     1.09529138
+    13    1  C     3d+1     -0.00000000     0.07114459     0.00000000
+    14    1  C     3d+2     -0.03557233     0.00000000     0.02178345
+
+    15    2  C     1s       -0.00000006    -0.00000009    -0.00000025
+    16    2  C     2s       -0.00000013    -0.00000018    -0.00000054
+    17    2  C     2s       -0.00000002    -0.00000003    -0.00000010
+    18    2  C     2py      -0.00000018    -0.00000023    -0.32959551
+    19    2  C     2pz       0.00000022    -0.38058450    -0.00000003
+    20    2  C     2px      -0.38058491     0.00000022    -0.46611812
+    21    2  C     2py      -0.00000000    -0.00000002    -0.08277545
+    22    2  C     2pz       0.00000002    -0.09558095    -0.00000001
+    23    2  C     2px      -0.09558102     0.00000002    -0.11706223
+    24    2  C     3d-2     -0.47814982     0.00000016     0.37335758
+    25    2  C     3d-1      0.00000016    -0.47814950     0.00000030
+    26    2  C     3d0       0.37335758     0.00000030    -0.09709362
+    27    2  C     3d+1      0.00000023     0.43111644     0.00000042
+    28    2  C     3d+2     -0.21555782     0.00000006     0.13200122
+
+                               13             14             15
+     1    1  C     1s       -0.00000000    -0.00000000     0.00100846
+     2    1  C     2s       -0.00000000    -0.00000003     0.03952253
+     3    1  C     2s       -0.00000000    -0.00000003     0.23154730
+     4    1  C     2py       0.00000000     0.00000000    -0.00000008
+     5    1  C     2pz       0.00000000    -0.00000000    -0.00000003
+     6    1  C     2px      -0.00000000     0.00000000    -0.00000002
+     7    1  C     2py       0.00000000    -0.00000000    -0.00000003
+     8    1  C     2pz       0.00000000    -0.00000000    -0.00000001
+     9    1  C     2px      -0.00000000     0.00000000     0.00000001
+    10    1  C     3d-2     -0.00000000    -0.03557233    -0.00000006
+    11    1  C     3d-1      0.07114459     0.00000000    -0.00000009
+    12    1  C     3d0       0.00000000     0.02178345    -0.00000025
+    13    1  C     3d+1      1.08271451    -0.00000000    -0.00000012
+    14    1  C     3d+2     -0.00000000     1.12044467    -0.00000023
+
+    15    2  C     1s       -0.00000012    -0.00000023     1.00001176
+    16    2  C     2s       -0.00000025    -0.00000044    -0.21500526
+    17    2  C     2s       -0.00000005    -0.00000008     0.26622398
+    18    2  C     2py       0.00000022    -0.57087659     0.00000000
+    19    2  C     2pz      -0.53822695     0.00000008     0.00000000
+    20    2  C     2px      -0.00000007     0.26911349    -0.00000000
+    21    2  C     2py       0.00000002    -0.14337135     0.00000000
+    22    2  C     2pz      -0.13517179     0.00000001     0.00000000
+    23    2  C     2px      -0.00000001     0.06758594    -0.00000000
+    24    2  C     3d-2      0.00000023    -0.21555782     0.00000000
+    25    2  C     3d-1      0.43111644     0.00000006     0.00000000
+    26    2  C     3d0       0.00000042     0.13200122     0.00000000
+    27    2  C     3d+1     -0.17330390     0.00000008     0.00000000
+    28    2  C     3d+2      0.00000008     0.05532775    -0.00000000
+
+                               16             17             18
+     1    1  C     1s        0.03952253     0.23154730     0.00000008
+     2    1  C     2s        0.47657538     1.29213735     0.00000024
+     3    1  C     2s        1.29213735     3.24275660     0.00000003
+     4    1  C     2py      -0.00000024    -0.00000003    -0.17588832
+     5    1  C     2pz      -0.00000009    -0.00000001     0.00000018
+     6    1  C     2px      -0.00000002     0.00000002     0.00000012
+     7    1  C     2py      -0.00000004    -0.00000001    -0.02015295
+     8    1  C     2pz      -0.00000001    -0.00000000     0.00000005
+     9    1  C     2px       0.00000003     0.00000001     0.00000004
+    10    1  C     3d-2     -0.00000013    -0.00000002    -0.00000018
+    11    1  C     3d-1     -0.00000018    -0.00000003    -0.00000023
+    12    1  C     3d0      -0.00000054    -0.00000010    -0.32959551
+    13    1  C     3d+1     -0.00000025    -0.00000005     0.00000022
+    14    1  C     3d+2     -0.00000044    -0.00000008    -0.57087659
+
+    15    2  C     1s       -0.21500526     0.26622398     0.00000000
+    16    2  C     2s        1.03901556     1.33632673     0.00000000
+    17    2  C     2s        1.33632673     3.25061919     0.00000000
+    18    2  C     2py       0.00000000     0.00000000     0.95375451
+    19    2  C     2pz       0.00000000     0.00000000    -0.00000000
+    20    2  C     2px      -0.00000000    -0.00000000    -0.00000001
+    21    2  C     2py       0.00000000    -0.00000000     0.14039017
+    22    2  C     2pz       0.00000000     0.00000000     0.00000000
+    23    2  C     2px      -0.00000000     0.00000000    -0.00000002
+    24    2  C     3d-2      0.00000001     0.00000001    -0.00000000
+    25    2  C     3d-1      0.00000000     0.00000000     0.00000000
+    26    2  C     3d0       0.00000001     0.00000001    -0.00000000
+    27    2  C     3d+1      0.00000000     0.00000000     0.00000000
+    28    2  C     3d+2     -0.00000003    -0.00000003     0.00000000
+
+                               19             20             21
+     1    1  C     1s        0.00000003     0.00000002     0.00000003
+     2    1  C     2s        0.00000009     0.00000002     0.00000004
+     3    1  C     2s        0.00000001    -0.00000002     0.00000001
+     4    1  C     2py       0.00000018     0.00000012    -0.02015295
+     5    1  C     2pz      -0.17588695     0.00000025     0.00000005
+     6    1  C     2px       0.00000025    -0.17588741     0.00000004
+     7    1  C     2py       0.00000005     0.00000004    -0.00163763
+     8    1  C     2pz      -0.02015260     0.00000007     0.00000001
+     9    1  C     2px       0.00000007    -0.02015273     0.00000001
+    10    1  C     3d-2      0.00000022    -0.38058491    -0.00000000
+    11    1  C     3d-1     -0.38058450     0.00000022    -0.00000002
+    12    1  C     3d0      -0.00000003    -0.46611812    -0.08277545
+    13    1  C     3d+1     -0.53822695    -0.00000007     0.00000002
+    14    1  C     3d+2      0.00000008     0.26911349    -0.14337135
+
+    15    2  C     1s        0.00000000    -0.00000000     0.00000000
+    16    2  C     2s        0.00000000    -0.00000000     0.00000000
+    17    2  C     2s        0.00000000    -0.00000000    -0.00000000
+    18    2  C     2py      -0.00000000    -0.00000001     0.14039017
+    19    2  C     2pz       0.95375451    -0.00000000    -0.00000000
+    20    2  C     2px      -0.00000000     0.95375454    -0.00000002
+    21    2  C     2py      -0.00000000    -0.00000002     0.03063252
+    22    2  C     2pz       0.14039020    -0.00000000    -0.00000000
+    23    2  C     2px      -0.00000000     0.14039025    -0.00000001
+    24    2  C     3d-2      0.00000000    -0.00000000    -0.00000000
+    25    2  C     3d-1     -0.00000000     0.00000000     0.00000000
+    26    2  C     3d0       0.00000000    -0.00000000    -0.00000000
+    27    2  C     3d+1      0.00000000     0.00000000     0.00000000
+    28    2  C     3d+2      0.00000000     0.00000000    -0.00000000
+
+                               22             23             24
+     1    1  C     1s        0.00000001    -0.00000001    -0.00000006
+     2    1  C     2s        0.00000001    -0.00000003    -0.00000013
+     3    1  C     2s        0.00000000    -0.00000001    -0.00000002
+     4    1  C     2py       0.00000005     0.00000004     0.00000018
+     5    1  C     2pz      -0.02015260     0.00000007    -0.00000022
+     6    1  C     2px       0.00000007    -0.02015273     0.38058491
+     7    1  C     2py       0.00000001     0.00000001     0.00000000
+     8    1  C     2pz      -0.00163755     0.00000002    -0.00000002
+     9    1  C     2px       0.00000002    -0.00163758     0.09558102
+    10    1  C     3d-2      0.00000002    -0.09558102    -0.47814982
+    11    1  C     3d-1     -0.09558095     0.00000002     0.00000016
+    12    1  C     3d0      -0.00000001    -0.11706223     0.37335758
+    13    1  C     3d+1     -0.13517179    -0.00000001     0.00000023
+    14    1  C     3d+2      0.00000001     0.06758594    -0.21555782
+
+    15    2  C     1s        0.00000000    -0.00000000     0.00000000
+    16    2  C     2s        0.00000000    -0.00000000     0.00000001
+    17    2  C     2s        0.00000000     0.00000000     0.00000001
+    18    2  C     2py       0.00000000    -0.00000002    -0.00000000
+    19    2  C     2pz       0.14039020    -0.00000000     0.00000000
+    20    2  C     2px      -0.00000000     0.14039025    -0.00000000
+    21    2  C     2py      -0.00000000    -0.00000001    -0.00000000
+    22    2  C     2pz       0.03063254    -0.00000000     0.00000000
+    23    2  C     2px      -0.00000000     0.03063256     0.00000000
+    24    2  C     3d-2      0.00000000     0.00000000     1.03240788
+    25    2  C     3d-1     -0.00000000     0.00000000     0.00000000
+    26    2  C     3d0       0.00000000     0.00000000     0.06161302
+    27    2  C     3d+1     -0.00000000     0.00000000     0.00000000
+    28    2  C     3d+2     -0.00000000    -0.00000000    -0.03557233
+
+                               25             26             27
+     1    1  C     1s       -0.00000009    -0.00000025    -0.00000012
+     2    1  C     2s       -0.00000018    -0.00000054    -0.00000025
+     3    1  C     2s       -0.00000003    -0.00000010    -0.00000005
+     4    1  C     2py       0.00000023     0.32959551    -0.00000022
+     5    1  C     2pz       0.38058450     0.00000003     0.53822695
+     6    1  C     2px      -0.00000022     0.46611812     0.00000007
+     7    1  C     2py       0.00000002     0.08277545    -0.00000002
+     8    1  C     2pz       0.09558095     0.00000001     0.13517179
+     9    1  C     2px      -0.00000002     0.11706223     0.00000001
+    10    1  C     3d-2      0.00000016     0.37335758     0.00000023
+    11    1  C     3d-1     -0.47814950     0.00000030     0.43111644
+    12    1  C     3d0       0.00000030    -0.09709362     0.00000042
+    13    1  C     3d+1      0.43111644     0.00000042    -0.17330390
+    14    1  C     3d+2      0.00000006     0.13200122     0.00000008
+
+    15    2  C     1s        0.00000000     0.00000000     0.00000000
+    16    2  C     2s        0.00000000     0.00000001     0.00000000
+    17    2  C     2s        0.00000000     0.00000001     0.00000000
+    18    2  C     2py       0.00000000    -0.00000000     0.00000000
+    19    2  C     2pz      -0.00000000     0.00000000     0.00000000
+    20    2  C     2px       0.00000000    -0.00000000     0.00000000
+    21    2  C     2py       0.00000000    -0.00000000     0.00000000
+    22    2  C     2pz      -0.00000000     0.00000000    -0.00000000
+    23    2  C     2px       0.00000000     0.00000000     0.00000000
+    24    2  C     3d-2      0.00000000     0.06161302     0.00000000
+    25    2  C     3d-1      1.03240784    -0.00000000     0.07114459
+    26    2  C     3d0      -0.00000000     1.09529138    -0.00000000
+    27    2  C     3d+1      0.07114459    -0.00000000     1.08271451
+    28    2  C     3d+2     -0.00000000     0.02178345     0.00000000
+
+                               28
+     1    1  C     1s       -0.00000023
+     2    1  C     2s       -0.00000044
+     3    1  C     2s       -0.00000008
+     4    1  C     2py       0.57087659
+     5    1  C     2pz      -0.00000008
+     6    1  C     2px      -0.26911349
+     7    1  C     2py       0.14337135
+     8    1  C     2pz      -0.00000001
+     9    1  C     2px      -0.06758594
+    10    1  C     3d-2     -0.21555782
+    11    1  C     3d-1      0.00000006
+    12    1  C     3d0       0.13200122
+    13    1  C     3d+1      0.00000008
+    14    1  C     3d+2      0.05532775
+
+    15    2  C     1s       -0.00000000
+    16    2  C     2s       -0.00000003
+    17    2  C     2s       -0.00000003
+    18    2  C     2py       0.00000000
+    19    2  C     2pz       0.00000000
+    20    2  C     2px       0.00000000
+    21    2  C     2py      -0.00000000
+    22    2  C     2pz      -0.00000000
+    23    2  C     2px      -0.00000000
+    24    2  C     3d-2     -0.03557233
+    25    2  C     3d-1     -0.00000000
+    26    2  C     3d0       0.02178345
+    27    2  C     3d+1      0.00000000
+    28    2  C     3d+2      1.12044467
+
+
+
+ Extrapolation method: initial_guess
+
+ Number of electrons:                                                         12
+ Number of occupied orbitals:                                                  6
+ Number of molecular orbitals:                                                 6
+
+ Number of orbital functions:                                                 28
+ Number of independent orbital functions:                                     28
+
+
+ SCF WAVEFUNCTION OPTIMIZATION
+
+  Step     Update method      Time    Convergence         Total energy    Change
+  ------------------------------------------------------------------------------
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 0
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.978140    -7.974339     0.103211     0.724929
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.715654     0.720070     0.001688     0.000000
+ MO|    2     1  C  2s       -0.041218     0.042738     0.399377     0.000000
+ MO|    3     1  C  2s       -0.044933    -0.012812     0.095084     0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000     0.649278
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000    -0.070752
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000    -0.064435
+ MO|    7     1  C  2py       0.000001    -0.000000     0.000001    -0.403575
+ MO|    8     1  C  2pz       0.000000    -0.000000     0.000000     0.043978
+ MO|    9     1  C  2px       0.000000    -0.000000     0.000000     0.040051
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000    -0.006146
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000    -0.006748
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000     0.046105
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000    -0.009544
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000     0.097239
+ MO|
+ MO|   15     2  C  1s        0.715654     0.720070     0.001688     0.000000
+ MO|   16     2  C  2s        0.041218     0.042738     0.399377     0.000000
+ MO|   17     2  C  2s        0.044933    -0.012812     0.095084     0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000    -0.649278
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000     0.070752
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000     0.064435
+ MO|   21     2  C  2py       0.000001     0.000000    -0.000001     0.403575
+ MO|   22     2  C  2pz       0.000000     0.000000    -0.000000    -0.043978
+ MO|   23     2  C  2px       0.000000     0.000000    -0.000000    -0.040051
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000    -0.006146
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000    -0.006748
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000     0.046105
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000    -0.009544
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000     0.097239
+ MO|
+ MO|                             5            6
+ MO|                          0.724930     0.724931
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000     0.000000
+ MO|    4     1  C  2py       0.028747     0.091276
+ MO|    5     1  C  2pz      -0.277283     0.590617
+ MO|    6     1  C  2px       0.594144     0.271221
+ MO|    7     1  C  2py      -0.017869    -0.056735
+ MO|    8     1  C  2pz       0.172352    -0.367112
+ MO|    9     1  C  2px      -0.369305    -0.168584
+ MO|   10     1  C  3d-2      0.056670     0.025869
+ MO|   11     1  C  3d-1     -0.026448     0.056334
+ MO|   12     1  C  3d0       0.071781     0.039223
+ MO|   13     1  C  3d+1     -0.037402     0.079668
+ MO|   14     1  C  3d+2     -0.035959    -0.005233
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000     0.000000
+ MO|   18     2  C  2py      -0.028747    -0.091276
+ MO|   19     2  C  2pz       0.277283    -0.590617
+ MO|   20     2  C  2px      -0.594144    -0.271221
+ MO|   21     2  C  2py       0.017869     0.056735
+ MO|   22     2  C  2pz      -0.172352     0.367112
+ MO|   23     2  C  2px       0.369305     0.168584
+ MO|   24     2  C  3d-2      0.056670     0.025869
+ MO|   25     2  C  3d-1     -0.026448     0.056334
+ MO|   26     2  C  3d0       0.071781     0.039223
+ MO|   27     2  C  3d+1     -0.037402     0.079668
+ MO|   28     2  C  3d+2     -0.035959    -0.005233
+ MO|
+ MO| E(Fermi):            0.724931 a.u.         19.726368 eV
+
+     1 P_Mix/Diag. 0.40E+00    1.3    29.04983315       -61.0857268021 -6.11E+01
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 1
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.481920    -7.477632     0.206477     0.950656
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716109     0.721172    -0.056750     0.000000
+ MO|    2     1  C  2s       -0.044768     0.046966     0.261575     0.000000
+ MO|    3     1  C  2s       -0.053492    -0.013797     0.163121    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.570462
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.060456
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.069919
+ MO|    7     1  C  2py       0.000001    -0.000000     0.000000    -0.247961
+ MO|    8     1  C  2pz       0.000000    -0.000000     0.000000     0.026278
+ MO|    9     1  C  2px       0.000000    -0.000000     0.000000     0.030391
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.005480
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.004739
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.032011
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.006702
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.070946
+ MO|
+ MO|   15     2  C  1s        0.716109     0.721172    -0.056750     0.000000
+ MO|   16     2  C  2s        0.044768     0.046966     0.261575     0.000000
+ MO|   17     2  C  2s        0.053492    -0.013797     0.163121    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.570462
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.060456
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.069919
+ MO|   21     2  C  2py       0.000001     0.000000    -0.000000     0.247961
+ MO|   22     2  C  2pz       0.000000     0.000000    -0.000000    -0.026278
+ MO|   23     2  C  2px       0.000000     0.000000    -0.000000    -0.030391
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.005480
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.004739
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.032011
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.006702
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.070946
+ MO|
+ MO|                             5            6
+ MO|                          0.950656     0.950657
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.000000    -0.000000
+ MO|    2     1  C  2s       -0.000000     0.000000
+ MO|    3     1  C  2s        0.000000    -0.000000
+ MO|    4     1  C  2py      -0.039441    -0.083594
+ MO|    5     1  C  2pz       0.236137    -0.523980
+ MO|    6     1  C  2px      -0.525980    -0.228971
+ MO|    7     1  C  2py      -0.017144    -0.036336
+ MO|    8     1  C  2pz       0.102641    -0.227758
+ MO|    9     1  C  2px      -0.228627    -0.099527
+ MO|   10     1  C  3d-2     -0.041227    -0.017947
+ MO|   11     1  C  3d-1      0.018509    -0.041071
+ MO|   12     1  C  3d0      -0.053170    -0.027655
+ MO|   13     1  C  3d+1      0.026175    -0.058082
+ MO|   14     1  C  3d+2      0.024515     0.002862
+ MO|
+ MO|   15     2  C  1s       -0.000000    -0.000000
+ MO|   16     2  C  2s       -0.000000     0.000000
+ MO|   17     2  C  2s        0.000000    -0.000000
+ MO|   18     2  C  2py       0.039441     0.083594
+ MO|   19     2  C  2pz      -0.236137     0.523980
+ MO|   20     2  C  2px       0.525980     0.228971
+ MO|   21     2  C  2py       0.017144     0.036336
+ MO|   22     2  C  2pz      -0.102641     0.227758
+ MO|   23     2  C  2px       0.228627     0.099527
+ MO|   24     2  C  3d-2     -0.041227    -0.017947
+ MO|   25     2  C  3d-1      0.018509    -0.041071
+ MO|   26     2  C  3d0      -0.053170    -0.027655
+ MO|   27     2  C  3d+1      0.026175    -0.058082
+ MO|   28     2  C  3d+2      0.024515     0.002862
+ MO|
+ MO| E(Fermi):            0.950657 a.u.         25.868689 eV
+
+     2 P_Mix/Diag. 0.40E+00    2.3    17.23713792       -62.6543332351 -1.57E+00
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 2
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.253971    -7.249471     0.241583     1.055900
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.716216    -0.721630     0.088034    -0.000000
+ MO|    2     1  C  2s        0.046143    -0.048754    -0.184669    -0.000000
+ MO|    3     1  C  2s        0.058506     0.014205    -0.199565     0.000000
+ MO|    4     1  C  2py      -0.000000    -0.000000     0.000000     0.524656
+ MO|    5     1  C  2pz      -0.000000    -0.000000     0.000000    -0.054015
+ MO|    6     1  C  2px      -0.000000    -0.000000     0.000000    -0.075673
+ MO|    7     1  C  2py      -0.000001     0.000000    -0.000000     0.610128
+ MO|    8     1  C  2pz      -0.000000     0.000000    -0.000000    -0.062815
+ MO|    9     1  C  2px      -0.000000     0.000000    -0.000000    -0.088001
+ MO|   10     1  C  3d-2     -0.000000    -0.000000     0.000000    -0.005065
+ MO|   11     1  C  3d-1     -0.000000    -0.000000     0.000000    -0.003615
+ MO|   12     1  C  3d0      -0.000000    -0.000000     0.000000     0.024207
+ MO|   13     1  C  3d+1     -0.000000    -0.000000     0.000000    -0.005112
+ MO|   14     1  C  3d+2     -0.000000    -0.000000     0.000000     0.056252
+ MO|
+ MO|   15     2  C  1s       -0.716216    -0.721630     0.088034    -0.000000
+ MO|   16     2  C  2s       -0.046143    -0.048754    -0.184669    -0.000000
+ MO|   17     2  C  2s       -0.058506     0.014205    -0.199565     0.000000
+ MO|   18     2  C  2py      -0.000000     0.000000    -0.000000    -0.524656
+ MO|   19     2  C  2pz      -0.000000     0.000000    -0.000000     0.054015
+ MO|   20     2  C  2px      -0.000000     0.000000    -0.000000     0.075673
+ MO|   21     2  C  2py      -0.000001    -0.000000     0.000000    -0.610128
+ MO|   22     2  C  2pz      -0.000000    -0.000000     0.000000     0.062815
+ MO|   23     2  C  2px      -0.000000    -0.000000     0.000000     0.088001
+ MO|   24     2  C  3d-2      0.000000    -0.000000     0.000000    -0.005065
+ MO|   25     2  C  3d-1      0.000000    -0.000000     0.000000    -0.003615
+ MO|   26     2  C  3d0       0.000000    -0.000000     0.000000     0.024207
+ MO|   27     2  C  3d+1      0.000000    -0.000000     0.000000    -0.005112
+ MO|   28     2  C  3d+2      0.000000    -0.000000     0.000000     0.056252
+ MO|
+ MO|                             5            6
+ MO|                          1.055900     1.055901
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000    -0.000000
+ MO|    2     1  C  2s        0.000000    -0.000000
+ MO|    3     1  C  2s        0.000000     0.000000
+ MO|    4     1  C  2py       0.048163     0.079526
+ MO|    5     1  C  2pz      -0.213051     0.485386
+ MO|    6     1  C  2px       0.486002     0.204901
+ MO|    7     1  C  2py       0.056009     0.092482
+ MO|    8     1  C  2pz      -0.247760     0.564463
+ MO|    9     1  C  2px       0.565177     0.238282
+ MO|   10     1  C  3d-2      0.032527     0.013713
+ MO|   11     1  C  3d-1     -0.014259     0.032485
+ MO|   12     1  C  3d0       0.042628     0.021405
+ MO|   13     1  C  3d+1     -0.020165     0.045941
+ MO|   14     1  C  3d+2     -0.018165    -0.001713
+ MO|
+ MO|   15     2  C  1s        0.000000    -0.000000
+ MO|   16     2  C  2s        0.000000    -0.000000
+ MO|   17     2  C  2s        0.000000     0.000000
+ MO|   18     2  C  2py      -0.048163    -0.079526
+ MO|   19     2  C  2pz       0.213051    -0.485386
+ MO|   20     2  C  2px      -0.486002    -0.204901
+ MO|   21     2  C  2py      -0.056009    -0.092482
+ MO|   22     2  C  2pz       0.247760    -0.564463
+ MO|   23     2  C  2px      -0.565177    -0.238282
+ MO|   24     2  C  3d-2      0.032527     0.013713
+ MO|   25     2  C  3d-1     -0.014259     0.032485
+ MO|   26     2  C  3d0       0.042628     0.021405
+ MO|   27     2  C  3d+1     -0.020165     0.045941
+ MO|   28     2  C  3d+2     -0.018165    -0.001713
+ MO|
+ MO| E(Fermi):            1.055901 a.u.         28.732519 eV
+
+     3 P_Mix/Diag. 0.40E+00    2.3    10.97565944       -63.3289165893 -6.75E-01
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 3
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.156693    -7.152117     0.254144     1.104359
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716211     0.721785    -0.103016     0.000000
+ MO|    2     1  C  2s       -0.046558     0.049373     0.146874     0.000000
+ MO|    3     1  C  2s       -0.060964    -0.014342     0.217090    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.501763
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.050531
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.080032
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.787967
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.079354
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.125682
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004793
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.003026
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.020152
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.004279
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.048459
+ MO|
+ MO|   15     2  C  1s        0.716211     0.721785    -0.103016     0.000000
+ MO|   16     2  C  2s        0.046558     0.049373     0.146874     0.000000
+ MO|   17     2  C  2s        0.060964    -0.014342     0.217090    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.501763
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.050531
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.080032
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.787967
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.079354
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.125682
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004793
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.003026
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.020152
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.004279
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.048459
+ MO|
+ MO|                             5            6
+ MO|                          1.104359     1.104360
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.053980    -0.077748
+ MO|    5     1  C  2pz       0.201882    -0.466277
+ MO|    6     1  C  2px      -0.465890    -0.193042
+ MO|    7     1  C  2py      -0.084769    -0.122095
+ MO|    8     1  C  2pz       0.317036    -0.732243
+ MO|    9     1  C  2px      -0.731635    -0.303153
+ MO|   10     1  C  3d-2     -0.027899    -0.011560
+ MO|   11     1  C  3d-1      0.012089    -0.027922
+ MO|   12     1  C  3d0      -0.036968    -0.018190
+ MO|   13     1  C  3d+1      0.017097    -0.039488
+ MO|   14     1  C  3d+2      0.014879     0.001190
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.053980     0.077748
+ MO|   19     2  C  2pz      -0.201882     0.466277
+ MO|   20     2  C  2px       0.465890     0.193042
+ MO|   21     2  C  2py       0.084769     0.122095
+ MO|   22     2  C  2pz      -0.317036     0.732243
+ MO|   23     2  C  2px       0.731635     0.303153
+ MO|   24     2  C  3d-2     -0.027899    -0.011560
+ MO|   25     2  C  3d-1      0.012089    -0.027922
+ MO|   26     2  C  3d0      -0.036968    -0.018190
+ MO|   27     2  C  3d+1      0.017097    -0.039488
+ MO|   28     2  C  3d+2      0.014879     0.001190
+ MO|
+ MO| E(Fermi):            1.104360 a.u.         30.051163 eV
+
+     4 P_Mix/Diag. 0.40E+00    2.3     7.10347348       -63.6709244775 -3.42E-01
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 4
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.117520    -7.112923     0.259088     1.126797
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716181     0.721821    -0.109958     0.000000
+ MO|    2     1  C  2s       -0.046617     0.049521     0.129028     0.000000
+ MO|    3     1  C  2s       -0.062065    -0.014372     0.225279    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.491200
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.048806
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.082712
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.870516
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.086495
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.146584
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004616
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002724
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.018086
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003852
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.044382
+ MO|
+ MO|   15     2  C  1s        0.716181     0.721821    -0.109958     0.000000
+ MO|   16     2  C  2s        0.046617     0.049521     0.129028     0.000000
+ MO|   17     2  C  2s        0.062065    -0.014372     0.225279    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.491200
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.048806
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.082712
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.870516
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.086495
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.146584
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004616
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002724
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.018086
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003852
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.044382
+ MO|
+ MO|                             5            6
+ MO|                          1.126797     1.126798
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.057326    -0.077052
+ MO|    5     1  C  2pz       0.196834    -0.457575
+ MO|    6     1  C  2px      -0.456586    -0.187587
+ MO|    7     1  C  2py      -0.101594    -0.136554
+ MO|    8     1  C  2pz       0.348835    -0.810928
+ MO|    9     1  C  2px      -0.809174    -0.332446
+ MO|   10     1  C  3d-2     -0.025481    -0.010469
+ MO|   11     1  C  3d-1      0.010985    -0.025536
+ MO|   12     1  C  3d0      -0.033978    -0.016545
+ MO|   13     1  C  3d+1      0.015535    -0.036113
+ MO|   14     1  C  3d+2      0.013219     0.000952
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.057326     0.077052
+ MO|   19     2  C  2pz      -0.196834     0.457575
+ MO|   20     2  C  2px       0.456586     0.187587
+ MO|   21     2  C  2py       0.101594     0.136554
+ MO|   22     2  C  2pz      -0.348835     0.810928
+ MO|   23     2  C  2px       0.809174     0.332446
+ MO|   24     2  C  3d-2     -0.025481    -0.010469
+ MO|   25     2  C  3d-1      0.010985    -0.025536
+ MO|   26     2  C  3d0      -0.033978    -0.016545
+ MO|   27     2  C  3d+1      0.015535    -0.036113
+ MO|   28     2  C  3d+2      0.013219     0.000952
+ MO|
+ MO| E(Fermi):            1.126798 a.u.         30.661730 eV
+
+     5 P_Mix/Diag. 0.40E+00    2.3     4.54964755       -63.8616835671 -1.91E-01
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 5
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.102730    -7.098130     0.261195     1.137302
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716153     0.721817    -0.113158     0.000000
+ MO|    2     1  C  2s       -0.046570     0.049511     0.120664     0.000000
+ MO|    3     1  C  2s       -0.062532    -0.014367     0.229098    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.486531
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047991
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.084213
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.907995
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.089564
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.157163
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004507
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002568
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.017031
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003632
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.042246
+ MO|
+ MO|   15     2  C  1s        0.716153     0.721817    -0.113158     0.000000
+ MO|   16     2  C  2s        0.046570     0.049511     0.120664     0.000000
+ MO|   17     2  C  2s        0.062532    -0.014367     0.229098    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.486531
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047991
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.084213
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.907995
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.089564
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.157163
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004507
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002568
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.017031
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003632
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.042246
+ MO|
+ MO|                             5            6
+ MO|                          1.137302     1.137303
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.059121    -0.076809
+ MO|    5     1  C  2pz       0.194621    -0.453792
+ MO|    6     1  C  2px      -0.452476    -0.185151
+ MO|    7     1  C  2py      -0.110336    -0.143346
+ MO|    8     1  C  2pz       0.363215    -0.846898
+ MO|    9     1  C  2px      -0.844441    -0.345542
+ MO|   10     1  C  3d-2     -0.024217    -0.009909
+ MO|   11     1  C  3d-1      0.010416    -0.024287
+ MO|   12     1  C  3d0      -0.032400    -0.015697
+ MO|   13     1  C  3d+1      0.014731    -0.034347
+ MO|   14     1  C  3d+2      0.012378     0.000841
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.059121     0.076809
+ MO|   19     2  C  2pz      -0.194621     0.453792
+ MO|   20     2  C  2px       0.452476     0.185151
+ MO|   21     2  C  2py       0.110336     0.143346
+ MO|   22     2  C  2pz      -0.363215     0.846898
+ MO|   23     2  C  2px       0.844441     0.345542
+ MO|   24     2  C  3d-2     -0.024217    -0.009909
+ MO|   25     2  C  3d-1      0.010416    -0.024287
+ MO|   26     2  C  3d0      -0.032400    -0.015697
+ MO|   27     2  C  3d+1      0.014731    -0.034347
+ MO|   28     2  C  3d+2      0.012378     0.000841
+ MO|
+ MO| E(Fermi):            1.137303 a.u.         30.947582 eV
+
+     6 P_Mix/Diag. 0.40E+00    2.3     2.87060918       -63.9727273444 -1.11E-01
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 6
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097685    -7.093090     0.262143     1.142284
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716132     0.721803    -0.114638     0.000000
+ MO|    2     1  C  2s       -0.046507     0.049463     0.116727     0.000000
+ MO|    3     1  C  2s       -0.062723    -0.014354     0.230892    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.484521
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047613
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085023
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.924896
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.090888
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.162300
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004443
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002488
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.016485
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003518
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.041118
+ MO|
+ MO|   15     2  C  1s        0.716132     0.721803    -0.114638     0.000000
+ MO|   16     2  C  2s        0.046507     0.049463     0.116727     0.000000
+ MO|   17     2  C  2s        0.062723    -0.014354     0.230892    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.484521
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047613
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085023
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.924896
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.090888
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.162300
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004443
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002488
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.016485
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003518
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.041118
+ MO|
+ MO|                             5            6
+ MO|                          1.142285     1.142285
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.060060    -0.076739
+ MO|    5     1  C  2pz       0.193666    -0.452198
+ MO|    6     1  C  2px      -0.450714    -0.184078
+ MO|    7     1  C  2py      -0.114647    -0.146486
+ MO|    8     1  C  2pz       0.369687    -0.863198
+ MO|    9     1  C  2px      -0.860363    -0.351385
+ MO|   10     1  C  3d-2     -0.023551    -0.009619
+ MO|   11     1  C  3d-1      0.010120    -0.023629
+ MO|   12     1  C  3d0      -0.031562    -0.015253
+ MO|   13     1  C  3d+1      0.014311    -0.033416
+ MO|   14     1  C  3d+2      0.011946     0.000787
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.060060     0.076739
+ MO|   19     2  C  2pz      -0.193666     0.452198
+ MO|   20     2  C  2px       0.450714     0.184078
+ MO|   21     2  C  2py       0.114647     0.146486
+ MO|   22     2  C  2pz      -0.369687     0.863198
+ MO|   23     2  C  2px       0.860363     0.351385
+ MO|   24     2  C  3d-2     -0.023551    -0.009619
+ MO|   25     2  C  3d-1      0.010120    -0.023629
+ MO|   26     2  C  3d0      -0.031562    -0.015253
+ MO|   27     2  C  3d+1      0.014311    -0.033416
+ MO|   28     2  C  3d+2      0.011946     0.000787
+ MO|
+ MO| E(Fermi):            1.142285 a.u.         31.083157 eV
+
+     7 P_Mix/Diag. 0.40E+00    2.3     1.78808004       -64.0385056753 -6.58E-02
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 7
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.096310    -7.091719     0.262583     1.144681
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716118     0.721791    -0.115329     0.000000
+ MO|    2     1  C  2s       -0.046455     0.049416     0.114856     0.000000
+ MO|    3     1  C  2s       -0.062797    -0.014343     0.231743    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483672
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047440
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085455
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.932520
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091464
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.164758
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004405
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002446
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.016198
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003459
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.040517
+ MO|
+ MO|   15     2  C  1s        0.716118     0.721791    -0.115329     0.000000
+ MO|   16     2  C  2s        0.046455     0.049416     0.114856     0.000000
+ MO|   17     2  C  2s        0.062797    -0.014343     0.231743    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483672
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047440
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085455
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.932520
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091464
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.164758
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004405
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002446
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.016198
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003459
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.040517
+ MO|
+ MO|                             5            6
+ MO|                          1.144681     1.144682
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.060546    -0.076729
+ MO|    5     1  C  2pz       0.193258    -0.451545
+ MO|    6     1  C  2px      -0.449975    -0.183608
+ MO|    7     1  C  2py      -0.116734    -0.147933
+ MO|    8     1  C  2pz       0.372602    -0.870582
+ MO|    9     1  C  2px      -0.867553    -0.353998
+ MO|   10     1  C  3d-2     -0.023197    -0.009465
+ MO|   11     1  C  3d-1      0.009963    -0.023278
+ MO|   12     1  C  3d0      -0.031114    -0.015018
+ MO|   13     1  C  3d+1      0.014090    -0.032920
+ MO|   14     1  C  3d+2      0.011721     0.000760
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.060546     0.076729
+ MO|   19     2  C  2pz      -0.193258     0.451545
+ MO|   20     2  C  2px       0.449975     0.183608
+ MO|   21     2  C  2py       0.116734     0.147933
+ MO|   22     2  C  2pz      -0.372602     0.870582
+ MO|   23     2  C  2px       0.867553     0.353998
+ MO|   24     2  C  3d-2     -0.023197    -0.009465
+ MO|   25     2  C  3d-1      0.009963    -0.023278
+ MO|   26     2  C  3d0      -0.031114    -0.015018
+ MO|   27     2  C  3d+1      0.014090    -0.032920
+ MO|   28     2  C  3d+2      0.011721     0.000760
+ MO|
+ MO| E(Fermi):            1.144682 a.u.         31.148376 eV
+
+     8 P_Mix/Diag. 0.40E+00    2.3     1.10299006       -64.0777488638 -3.92E-02
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 8
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.096188    -7.091601     0.262793     1.145851
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716109     0.721782    -0.115655     0.000000
+ MO|    2     1  C  2s       -0.046419     0.049382     0.113955     0.000000
+ MO|    3     1  C  2s       -0.062823    -0.014334     0.232153    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483322
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047360
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085685
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.935976
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091715
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.165933
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004384
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002423
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.016047
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003427
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.040194
+ MO|
+ MO|   15     2  C  1s        0.716109     0.721782    -0.115655     0.000000
+ MO|   16     2  C  2s        0.046419     0.049382     0.113955     0.000000
+ MO|   17     2  C  2s        0.062823    -0.014334     0.232153    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483322
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047360
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085685
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.935976
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091715
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.165933
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004384
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002423
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.016047
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003427
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.040194
+ MO|
+ MO|                             5            6
+ MO|                          1.145852     1.145852
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.060799    -0.076735
+ MO|    5     1  C  2pz       0.193086    -0.451286
+ MO|    6     1  C  2px      -0.449673    -0.183403
+ MO|    7     1  C  2py      -0.117741    -0.148602
+ MO|    8     1  C  2pz       0.373921    -0.873941
+ MO|    9     1  C  2px      -0.870815    -0.355171
+ MO|   10     1  C  3d-2     -0.023007    -0.009384
+ MO|   11     1  C  3d-1      0.009879    -0.023090
+ MO|   12     1  C  3d0      -0.030872    -0.014893
+ MO|   13     1  C  3d+1      0.013971    -0.032654
+ MO|   14     1  C  3d+2      0.011603     0.000746
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.060799     0.076735
+ MO|   19     2  C  2pz      -0.193086     0.451286
+ MO|   20     2  C  2px       0.449673     0.183403
+ MO|   21     2  C  2py       0.117741     0.148602
+ MO|   22     2  C  2pz      -0.373921     0.873941
+ MO|   23     2  C  2px       0.870815     0.355171
+ MO|   24     2  C  3d-2     -0.023007    -0.009384
+ MO|   25     2  C  3d-1      0.009879    -0.023090
+ MO|   26     2  C  3d0      -0.030872    -0.014893
+ MO|   27     2  C  3d+1      0.013971    -0.032654
+ MO|   28     2  C  3d+2      0.011603     0.000746
+ MO|
+ MO| E(Fermi):            1.145852 a.u.         31.180228 eV
+
+     9 P_Mix/Diag. 0.40E+00    2.3     0.67557553       -64.1012322254 -2.35E-02
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 9
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.096409    -7.091824     0.262895     1.146432
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716103     0.721775    -0.115811     0.000000
+ MO|    2     1  C  2s       -0.046395     0.049358     0.113515     0.000000
+ MO|    3     1  C  2s       -0.062831    -0.014328     0.232354    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483180
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047323
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085806
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.937553
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091825
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.166497
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004372
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002411
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015965
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003410
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.040018
+ MO|
+ MO|   15     2  C  1s        0.716103     0.721775    -0.115811     0.000000
+ MO|   16     2  C  2s        0.046395     0.049358     0.113515     0.000000
+ MO|   17     2  C  2s        0.062831    -0.014328     0.232354    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483180
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047323
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085806
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.937553
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091825
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.166497
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004372
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002411
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015965
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003410
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.040018
+ MO|
+ MO|                             5            6
+ MO|                          1.146433     1.146433
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.060931    -0.076744
+ MO|    5     1  C  2pz       0.193014    -0.451189
+ MO|    6     1  C  2px      -0.449554    -0.183314
+ MO|    7     1  C  2py      -0.118229    -0.148914
+ MO|    8     1  C  2pz       0.374521    -0.875481
+ MO|    9     1  C  2px      -0.872306    -0.355700
+ MO|   10     1  C  3d-2     -0.022905    -0.009340
+ MO|   11     1  C  3d-1      0.009834    -0.022988
+ MO|   12     1  C  3d0      -0.030741    -0.014825
+ MO|   13     1  C  3d+1      0.013907    -0.032510
+ MO|   14     1  C  3d+2      0.011539     0.000739
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.060931     0.076744
+ MO|   19     2  C  2pz      -0.193014     0.451189
+ MO|   20     2  C  2px       0.449554     0.183314
+ MO|   21     2  C  2py       0.118229     0.148914
+ MO|   22     2  C  2pz      -0.374521     0.875481
+ MO|   23     2  C  2px       0.872306     0.355700
+ MO|   24     2  C  3d-2     -0.022905    -0.009340
+ MO|   25     2  C  3d-1      0.009834    -0.022988
+ MO|   26     2  C  3d0      -0.030741    -0.014825
+ MO|   27     2  C  3d+1      0.013907    -0.032510
+ MO|   28     2  C  3d+2      0.011539     0.000739
+ MO|
+ MO| E(Fermi):            1.146433 a.u.         31.196030 eV
+
+    10 P_Mix/Diag. 0.40E+00    2.4     0.41167129       -64.1153039134 -1.41E-02
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 10
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.096663    -7.092079     0.262946     1.146725
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716100     0.721771    -0.115886     0.000000
+ MO|    2     1  C  2s       -0.046380     0.049343     0.113297     0.000000
+ MO|    3     1  C  2s       -0.062832    -0.014324     0.232453    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483125
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047306
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085871
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938280
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091874
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.166771
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004365
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002405
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015921
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003401
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039922
+ MO|
+ MO|   15     2  C  1s        0.716100     0.721771    -0.115886     0.000000
+ MO|   16     2  C  2s        0.046380     0.049343     0.113297     0.000000
+ MO|   17     2  C  2s        0.062832    -0.014324     0.232453    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483125
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047306
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085871
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938280
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091874
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.166771
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004365
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002405
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015921
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003401
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039922
+ MO|
+ MO|                             5            6
+ MO|                          1.146725     1.146726
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061000    -0.076752
+ MO|    5     1  C  2pz       0.192984    -0.451155
+ MO|    6     1  C  2px      -0.449509    -0.183276
+ MO|    7     1  C  2py      -0.118468    -0.149060
+ MO|    8     1  C  2pz       0.374796    -0.876194
+ MO|    9     1  C  2px      -0.872994    -0.355941
+ MO|   10     1  C  3d-2     -0.022849    -0.009316
+ MO|   11     1  C  3d-1      0.009809    -0.022932
+ MO|   12     1  C  3d0      -0.030669    -0.014788
+ MO|   13     1  C  3d+1      0.013873    -0.032431
+ MO|   14     1  C  3d+2      0.011505     0.000735
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061000     0.076752
+ MO|   19     2  C  2pz      -0.192984     0.451155
+ MO|   20     2  C  2px       0.449509     0.183276
+ MO|   21     2  C  2py       0.118468     0.149060
+ MO|   22     2  C  2pz      -0.374796     0.876194
+ MO|   23     2  C  2px       0.872994     0.355941
+ MO|   24     2  C  3d-2     -0.022849    -0.009316
+ MO|   25     2  C  3d-1      0.009809    -0.022932
+ MO|   26     2  C  3d0      -0.030669    -0.014788
+ MO|   27     2  C  3d+1      0.013873    -0.032431
+ MO|   28     2  C  3d+2      0.011505     0.000735
+ MO|
+ MO| E(Fermi):            1.146726 a.u.         31.203994 eV
+
+    11 P_Mix/Diag. 0.40E+00    2.3     0.24993022       -64.1237413615 -8.44E-03
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 11
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.096864    -7.092281     0.262971     1.146874
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716098     0.721769    -0.115923     0.000000
+ MO|    2     1  C  2s       -0.046371     0.049334     0.113187     0.000000
+ MO|    3     1  C  2s       -0.062832    -0.014322     0.232503    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483105
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047298
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085906
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938619
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091896
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.166906
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004361
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002401
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015897
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003396
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039870
+ MO|
+ MO|   15     2  C  1s        0.716098     0.721769    -0.115923     0.000000
+ MO|   16     2  C  2s        0.046371     0.049334     0.113187     0.000000
+ MO|   17     2  C  2s        0.062832    -0.014322     0.232503    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483105
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047298
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085906
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938619
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091896
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.166906
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004361
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002401
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015897
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003396
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039870
+ MO|
+ MO|                             5            6
+ MO|                          1.146875     1.146875
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061036    -0.076757
+ MO|    5     1  C  2pz       0.192972    -0.451146
+ MO|    6     1  C  2px      -0.449493    -0.183259
+ MO|    7     1  C  2py      -0.118587    -0.149130
+ MO|    8     1  C  2pz       0.374923    -0.876528
+ MO|    9     1  C  2px      -0.873315    -0.356052
+ MO|   10     1  C  3d-2     -0.022818    -0.009303
+ MO|   11     1  C  3d-1      0.009796    -0.022902
+ MO|   12     1  C  3d0      -0.030629    -0.014768
+ MO|   13     1  C  3d+1      0.013854    -0.032388
+ MO|   14     1  C  3d+2      0.011487     0.000733
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061036     0.076757
+ MO|   19     2  C  2pz      -0.192972     0.451146
+ MO|   20     2  C  2px       0.449493     0.183259
+ MO|   21     2  C  2py       0.118587     0.149130
+ MO|   22     2  C  2pz      -0.374923     0.876528
+ MO|   23     2  C  2px       0.873315     0.356052
+ MO|   24     2  C  3d-2     -0.022818    -0.009303
+ MO|   25     2  C  3d-1      0.009796    -0.022902
+ MO|   26     2  C  3d0      -0.030629    -0.014768
+ MO|   27     2  C  3d+1      0.013854    -0.032388
+ MO|   28     2  C  3d+2      0.011487     0.000733
+ MO|
+ MO| E(Fermi):            1.146875 a.u.         31.208069 eV
+
+    12 P_Mix/Diag. 0.40E+00    2.3     0.15132790       -64.1288020982 -5.06E-03
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 12
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097003    -7.092421     0.262984     1.146952
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716097     0.721767    -0.115942     0.000000
+ MO|    2     1  C  2s       -0.046366     0.049328     0.113131     0.000000
+ MO|    3     1  C  2s       -0.062830    -0.014321     0.232528    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047295
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085925
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938779
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091905
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.166973
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004359
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002399
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015884
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003393
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039841
+ MO|
+ MO|   15     2  C  1s        0.716097     0.721767    -0.115942     0.000000
+ MO|   16     2  C  2s        0.046366     0.049328     0.113131     0.000000
+ MO|   17     2  C  2s        0.062830    -0.014321     0.232528    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047295
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085925
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938779
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091905
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.166973
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004359
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002399
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015884
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003393
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039841
+ MO|
+ MO|                             5            6
+ MO|                          1.146953     1.146953
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061056    -0.076760
+ MO|    5     1  C  2pz       0.192967    -0.451144
+ MO|    6     1  C  2px      -0.449489    -0.183252
+ MO|    7     1  C  2py      -0.118646    -0.149164
+ MO|    8     1  C  2pz       0.374983    -0.876686
+ MO|    9     1  C  2px      -0.873468    -0.356104
+ MO|   10     1  C  3d-2     -0.022801    -0.009296
+ MO|   11     1  C  3d-1      0.009788    -0.022885
+ MO|   12     1  C  3d0      -0.030607    -0.014757
+ MO|   13     1  C  3d+1      0.013843    -0.032364
+ MO|   14     1  C  3d+2      0.011477     0.000732
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061056     0.076760
+ MO|   19     2  C  2pz      -0.192967     0.451144
+ MO|   20     2  C  2px       0.449489     0.183252
+ MO|   21     2  C  2py       0.118646     0.149164
+ MO|   22     2  C  2pz      -0.374983     0.876686
+ MO|   23     2  C  2px       0.873468     0.356104
+ MO|   24     2  C  3d-2     -0.022801    -0.009296
+ MO|   25     2  C  3d-1      0.009788    -0.022885
+ MO|   26     2  C  3d0      -0.030607    -0.014757
+ MO|   27     2  C  3d+1      0.013843    -0.032364
+ MO|   28     2  C  3d+2      0.011477     0.000732
+ MO|
+ MO| E(Fermi):            1.146953 a.u.         31.210185 eV
+
+    13 P_Mix/Diag. 0.40E+00    2.3     0.09144626       -64.1318379918 -3.04E-03
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 13
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097230    -7.092649     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716095     0.721765    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113069     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938930
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091913
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716095     0.721765    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113069     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938930
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091913
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876838
+ MO|    9     1  C  2px      -0.873612    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022863
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876838
+ MO|   23     2  C  2px       0.873612     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022863
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212594 eV
+
+    14 DIIS/Diag.  0.11E-03    2.3     0.05548601       -64.1336593522 -1.82E-03
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 14
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716096     0.721765    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938932
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091914
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716095     0.721765    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938932
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091914
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873614    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022864
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873614     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022864
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212596 eV
+
+    15 DIIS/Diag.  0.17E-05    2.3     0.00000535       -64.1363911825 -2.73E-03
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 15
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716095     0.721766    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938931
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091913
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716096     0.721765    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938931
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091913
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873613    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022864
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873613     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022864
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212595 eV
+
+    16 DIIS/Diag.  0.65E-07    2.3     0.00000058       -64.1363911825 -5.40E-13
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 16
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716097     0.721764    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938931
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091914
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716094     0.721766    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938931
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091913
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873614    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022863
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873614     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022864
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212596 eV
+
+    17 DIIS/Diag.  0.91E-07    2.3     0.00000041       -64.1363911825  0.00E+00
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 17
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716094     0.721767    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938931
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091913
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716097     0.721764    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938931
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091914
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873614    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022864
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873614     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022863
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212595 eV
+
+    18 DIIS/Diag.  0.77E-07    2.3     0.00000022       -64.1363911825  1.42E-14
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 18
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716096     0.721764    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938931
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091914
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716095     0.721766    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938931
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091913
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873614    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022863
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873614     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022864
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212595 eV
+
+    19 DIIS/Diag.  0.95E-07    2.3     0.00000020       -64.1363911825 -5.68E-14
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 19
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716095     0.721766    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938931
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091914
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716096     0.721765    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938931
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091914
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873614    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022864
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873614     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022864
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212595 eV
+
+    20 DIIS/Diag.  0.67E-07    2.3     0.00000013       -64.1363911825  1.42E-14
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS AFTER SCF STEP 20
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716095     0.721766    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938931
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091914
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716096     0.721765    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938931
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091914
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873614    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022864
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873614     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022864
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212595 eV
+
+    21 DIIS/Diag.  0.23E-07    2.3     0.00000004       -64.1363911825  1.42E-14
+
+  *** SCF run converged in    21 steps ***
+
+
+  Electronic density on regular grids:        -10.0451438861        1.9548561139
+  Core density on regular grids:               12.0000000000        0.0000000000
+  Hard and soft densities (Lebedev):          -22.6547785409      -20.6999224758
+  Total Rho_soft + Rho1_hard - Rho1_soft      -11.9999999512
+  Total charge density (r-space):               0.0000000488
+  Total Rho_soft + Rho0_soft (g-space):         0.0000000415
+
+  Overlap energy of the core charge distribution:               0.00000017298089
+  Self energy of the core charge distribution:                -58.22549323810243
+  Core Hamiltonian energy:                                    -13.07096540929439
+  Hartree energy:                                              29.02276906835439
+  Exchange-correlation energy:                                  0.00000000000000
+
+  GAPW| Exc from hard and soft atomic rho1:                     0.00000000000000
+  GAPW| local Eh = 1 center integrals:                        -21.86270177642674
+
+  Total energy:                                               -64.13639118248828
+
+ MO| EIGENVALUES, OCCUPATION NUMBERS, AND SPHERICAL EIGENVECTORS
+ MO|
+ MO|                             1            2            3            4
+ MO|                         -7.097232    -7.092651     0.262998     1.147041
+ MO|
+ MO|                          2.000000     2.000000     2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s       -0.716095     0.721766    -0.115961     0.000000
+ MO|    2     1  C  2s       -0.046358     0.049320     0.113070     0.000000
+ MO|    3     1  C  2s       -0.062827    -0.014319     0.232556    -0.000000
+ MO|    4     1  C  2py       0.000000     0.000000    -0.000000    -0.483099
+ MO|    5     1  C  2pz       0.000000     0.000000    -0.000000     0.047291
+ MO|    6     1  C  2px       0.000000     0.000000    -0.000000     0.085947
+ MO|    7     1  C  2py       0.000001    -0.000000    -0.000000    -0.938931
+ MO|    8     1  C  2pz       0.000000    -0.000000    -0.000000     0.091914
+ MO|    9     1  C  2px       0.000000    -0.000000    -0.000000     0.167043
+ MO|   10     1  C  3d-2      0.000000     0.000000    -0.000000     0.004356
+ MO|   11     1  C  3d-1      0.000000     0.000000    -0.000000     0.002397
+ MO|   12     1  C  3d0       0.000000     0.000000    -0.000000    -0.015868
+ MO|   13     1  C  3d+1      0.000000     0.000000    -0.000000     0.003389
+ MO|   14     1  C  3d+2      0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|   15     2  C  1s        0.716096     0.721765    -0.115961     0.000000
+ MO|   16     2  C  2s        0.046358     0.049320     0.113070     0.000000
+ MO|   17     2  C  2s        0.062827    -0.014319     0.232556    -0.000000
+ MO|   18     2  C  2py       0.000000    -0.000000     0.000000     0.483099
+ MO|   19     2  C  2pz       0.000000    -0.000000     0.000000    -0.047291
+ MO|   20     2  C  2px       0.000000    -0.000000     0.000000    -0.085947
+ MO|   21     2  C  2py       0.000001     0.000000     0.000000     0.938931
+ MO|   22     2  C  2pz       0.000000     0.000000     0.000000    -0.091914
+ MO|   23     2  C  2px       0.000000     0.000000     0.000000    -0.167043
+ MO|   24     2  C  3d-2     -0.000000     0.000000    -0.000000     0.004356
+ MO|   25     2  C  3d-1     -0.000000     0.000000    -0.000000     0.002397
+ MO|   26     2  C  3d0      -0.000000     0.000000    -0.000000    -0.015868
+ MO|   27     2  C  3d+1     -0.000000     0.000000    -0.000000     0.003389
+ MO|   28     2  C  3d+2     -0.000000     0.000000    -0.000000    -0.039804
+ MO|
+ MO|                             5            6
+ MO|                          1.147041     1.147042
+ MO|
+ MO|                          2.000000     2.000000
+ MO|
+ MO|    1     1  C  1s        0.000000     0.000000
+ MO|    2     1  C  2s        0.000000     0.000000
+ MO|    3     1  C  2s       -0.000000    -0.000000
+ MO|    4     1  C  2py      -0.061078    -0.076765
+ MO|    5     1  C  2pz       0.192965    -0.451150
+ MO|    6     1  C  2px      -0.449491    -0.183246
+ MO|    7     1  C  2py      -0.118709    -0.149197
+ MO|    8     1  C  2pz       0.375039    -0.876839
+ MO|    9     1  C  2px      -0.873614    -0.356150
+ MO|   10     1  C  3d-2     -0.022779    -0.009287
+ MO|   11     1  C  3d-1      0.009779    -0.022864
+ MO|   12     1  C  3d0      -0.030580    -0.014743
+ MO|   13     1  C  3d+1      0.013830    -0.032334
+ MO|   14     1  C  3d+2      0.011464     0.000731
+ MO|
+ MO|   15     2  C  1s        0.000000     0.000000
+ MO|   16     2  C  2s        0.000000     0.000000
+ MO|   17     2  C  2s       -0.000000    -0.000000
+ MO|   18     2  C  2py       0.061078     0.076765
+ MO|   19     2  C  2pz      -0.192965     0.451150
+ MO|   20     2  C  2px       0.449491     0.183246
+ MO|   21     2  C  2py       0.118709     0.149197
+ MO|   22     2  C  2pz      -0.375039     0.876839
+ MO|   23     2  C  2px       0.873614     0.356150
+ MO|   24     2  C  3d-2     -0.022779    -0.009287
+ MO|   25     2  C  3d-1      0.009779    -0.022864
+ MO|   26     2  C  3d0      -0.030580    -0.014743
+ MO|   27     2  C  3d+1      0.013830    -0.032334
+ MO|   28     2  C  3d+2      0.011464     0.000731
+ MO|
+ MO| E(Fermi):            1.147042 a.u.         31.212595 eV
+
+
+ !-----------------------------------------------------------------------------!
+                     Mulliken Population Analysis
+
+ #  Atom  Element  Kind  Atomic population                           Net charge
+       1     C        1          6.000000                              0.000000
+       2     C        1          6.000000                             -0.000000
+ # Total charge                             12.000000                 -0.000000
+
+ !-----------------------------------------------------------------------------!
+
+ !-----------------------------------------------------------------------------!
+                           Hirshfeld Charges
+
+  #Atom  Element  Kind  Ref Charge     Population                    Net charge
+      1       C      1       6.000          6.000                         0.000
+      2       C      1       6.000          6.000                        -0.000
+
+  Total Charge                                                            0.000
+ !-----------------------------------------------------------------------------!
+
+ ENERGY| Total FORCE_EVAL ( QS ) energy [hartree]            -64.136391182488282
+
+ -------------------------------------------------------------------------------
+ -                                                                             -
+ -                                DBCSR STATISTICS                             -
+ -                                                                             -
+ -------------------------------------------------------------------------------
+ COUNTER                                    TOTAL       BLAS       SMM       ACC
+ flops    14 x    14 x     6               155232       0.0%    100.0%      0.0%     
+ flops inhomo. stacks                           0       0.0%      0.0%      0.0%
+ flops total                       155.232000E+03       0.0%    100.0%      0.0%
+ flops max/rank                    155.232000E+03       0.0%    100.0%      0.0%
+ matmuls inhomo. stacks                         0       0.0%      0.0%      0.0%
+ matmuls total                                 66       0.0%    100.0%      0.0%
+ number of processed stacks                    44       0.0%    100.0%      0.0%
+ average stack size                                     0.0       1.5       0.0
+ marketing flops                   206.976000E+03
+ -------------------------------------------------------------------------------
+ # multiplications                             22
+ max memory usage/rank               4.331213E+09
+ # max total images/rank                        1
+ # max 3D layers                                1
+ # MPI messages exchanged                       0
+ -------------------------------------------------------------------------------
+
+ -------------------------------------------------------------------------------
+ -                                                                             -
+ -                                GRID STATISTICS                              -
+ -                                                                             -
+ -------------------------------------------------------------------------------
+ LP    KERNEL             BACKEND                              COUNT     PERCENT
+ 1     collocate general  CPU                                 159984      20.85%
+ 1     integrate general  CPU                                 152712      19.90%
+ 2     collocate general  CPU                                 122978      16.02%
+ 2     integrate general  CPU                                 117390      15.30%
+ 0     collocate general  CPU                                  67058       8.74%
+ 0     integrate general  CPU                                  64010       8.34%
+ 3     collocate general  CPU                                  38720       5.05%
+ 3     integrate general  CPU                                  36960       4.82%
+ 4     collocate general  CPU                                   3916       0.51%
+ 4     integrate general  CPU                                   3738       0.49%
+ -------------------------------------------------------------------------------
+
+ -------------------------------------------------------------------------------
+ -                                                                             -
+ -                          OFFLOAD MEMPOOL STATISTICS                         -
+ -                                                                             -
+ -------------------------------------------------------------------------------
+ Memory consumption                Number of allocations  Used [MiB]  Size [MiB]
+ Device                                                4           1           1
+ Host                                                  4           1           1
+ -------------------------------------------------------------------------------
+
+ MEMORY| Estimated peak process memory [MiB]                                 243
+
+ -------------------------------------------------------------------------------
+ ----                             MULTIGRID INFO                            ----
+ -------------------------------------------------------------------------------
+ total grid count     :         26563              cutoff [a.u.]          200.00
+
+ -------------------------------------------------------------------------------
+ -                                                                             -
+ -                           R E F E R E N C E S                               -
+ -                                                                             -
+ -------------------------------------------------------------------------------
+ 
+ CP2K version 2026.1 (Development Version), the CP2K developers group (2026).
+ CP2K is freely available from https://www.cp2k.org/ .
+ 
+ T. D. Kuehne, M. Iannuzzi, M. Del Ben, V. V. Rybkin, P. Seewald, F. Stein, T. 
+ Laino, R. Z. Khaliullin, O. Schuett, F. Schiffmann, D. Golze, J. Wilhelm, S. 
+ Chulkov, M. H. Bani-Hashemian, V. Weber, U. Borstnik, M. Taillefumier, A. S. 
+ Jakobovits, A. Lazzaro, H. Pabst, T. Mueller, R. Schade, M. Guidon, S. 
+ Andermatt, N. Holmberg, G. K. Schenter, A. Hehn, A. Bussy, F. Belleflamme, G. 
+ Tabacchi, A. Gloess, M. Lass, I. Bethune, C. J. Mundy, C. Plessl, M. Watkins, 
+ J. VandeVondele, M. Krack, J. Hutter.
+ J. Chem. Phys. 152, 194103 (2020).
+ CP2K: An electronic structure and molecular dynamics software package - 
+ Quickstep: Efficient and accurate electronic structure calculations.
+ https://doi.org/10.1063/5.0007045
+
+ O. Schuett, P. Messmer, J. Hutter, J. VandeVondele.
+ Electronic Structure Calculations on Graphics Processing Units, 173-190 (2016).
+ GPU-Accelerated Sparse Matrix-Matrix Multiplication for Linear Scaling Density 
+ Functional Theory.
+ https://doi.org/10.1002/9781118670712.ch8
+
+ A. Heinecke, G. Henry, M. Hutchinson, H. Pabst.
+ Proceedings of Intl. Supercomputing Conference, 981-991 (2016).
+ LIBXSMM: Accelerating Small Matrix Multiplications by Runtime Code Generation.
+ https://doi.org/10.1109/SC.2016.83
+
+ J. Hutter, M. Iannuzzi, F. Schiffmann, J. VandeVondele.
+ WIREs Comput Mol Sci. 4, 15-25 (2014).
+ CP2K: atomistic simulations of condensed matter systems.
+ https://doi.org/10.1002/wcms.1159
+
+ U. Borstnik, J. VandeVondele, V. Weber, J. Hutter.
+ Parallel Comput. 40, 47-58 (2014).
+ Sparse matrix multiplication: The distributed block-compressed sparse row 
+ library.
+ https://doi.org/10.1016/j.parco.2014.03.012
+
+ M. Frigo, S. G. Johnson.
+ Proc. IEEE 93, 216-231 (2005).
+ The design and implementation of FFTW3.
+ https://doi.org/10.1109/JPROC.2004.840301
+
+ M. Krack, M. Parrinello.
+ Phys. Chem. Chem. Phys. 2, 2105-2112 (2000).
+ All-electron ab-initio molecular dynamics.
+ https://doi.org/10.1039/b001167n
+
+ G. Lippert, J. Hutter, M. Parrinello.
+ Theor. Chem. Acc. 103, 124-140 (1999).
+ The Gaussian and augmented-plane-wave density functional method for ab initio 
+ molecular dynamics simulations.
+ https://doi.org/10.1007/s002140050523
+
+
+ -------------------------------------------------------------------------------
+ -                                                                             -
+ -                                T I M I N G                                  -
+ -                                                                             -
+ -------------------------------------------------------------------------------
+ SUBROUTINE                       CALLS  ASD         SELF TIME        TOTAL TIME
+                                MAXIMUM       AVERAGE  MAXIMUM  AVERAGE  MAXIMUM
+ CP2K                                 1  1.0    0.003    0.003   49.470   49.470
+ qs_energies                          1  2.0    0.000    0.000   49.450   49.450
+ scf_env_do_scf                       1  3.0    0.000    0.000   48.327   48.327
+ scf_env_do_scf_inner_loop           21  4.0    0.001    0.001   48.327   48.327
+ qs_ks_update_qs_env                 21  5.0    0.000    0.000   26.514   26.514
+ rebuild_ks_matrix                   21  6.0    0.000    0.000   26.514   26.514
+ qs_ks_build_kohn_sham_matrix        21  7.0    0.001    0.001   26.513   26.513
+ sum_up_and_integrate                21  8.0    0.000    0.000   25.186   25.186
+ integrate_v_rspace                  21  9.0    0.000    0.000   25.186   25.186
+ grid_integrate_task_list            21 10.0   25.184   25.184   25.184   25.184
+ qs_rho_update_rho_low               22  5.0    0.000    0.000   22.867   22.867
+ calculate_rho_elec                  22  6.0    0.003    0.003   22.201   22.201
+ grid_collocate_task_list            22  7.0   22.194   22.194   22.194   22.194
+ update_ks_atom                      21  8.0    1.287    1.287    1.287    1.287
+ init_scf_run                         1  3.0    0.000    0.000    1.077    1.077
+ scf_env_initial_rho_setup            1  4.0    0.000    0.000    1.077    1.077
+ -------------------------------------------------------------------------------
+
+ The number of warnings for this run is : 0
+ 
+ -------------------------------------------------------------------------------
+  **** **** ******  **  PROGRAM ENDED AT                 2026-04-16 15:55:20.327
+ ***** ** ***  *** **   PROGRAM RAN ON                                     lebox
+ **    ****   ******    PROGRAM RAN BY                                     lebox
+ ***** **    ** ** **   PROGRAM PROCESS ID                               1380211
+  **** **  *******  **  PROGRAM STOPPED IN /home/lebox/Github/pyscf-forge/pyscf/
+                                           paw/unittests/elecNum/C_prim_dz

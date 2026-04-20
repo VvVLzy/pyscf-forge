@@ -18,7 +18,7 @@ import time
 
 
 def getPAWdataNew(mol,
-                  gaussgrid,
+               gaussgrid,
                PAWorbitalCutOff=1.e-5,
                PWAccuracy=1e-5,
                printLevel = 1,
@@ -53,6 +53,8 @@ def getPAWdataNew(mol,
     gaussgrid.setup_isdf(gmol=gmol)
     Rgrid=gaussgrid.get_sparse_grid()
     mesh = (Rgrid.shape[0],)
+    # mf.grids.build()
+    # print(f'DFT grid size: {mf.grids.coords.shape[0]}')
 
     # if alpha0 is None:
     #     rc = PAWutils.makeAugmentationRadius(mol)
@@ -69,14 +71,14 @@ def getPAWdataNew(mol,
     alpha0_wf = alpha0 # must be this!
 
     # PAWData
+    M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = PAWutils.mergeCompensatingCharge(
+        pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
-        pmol, mol, ctr_coeff, Rgrid, alpha0, r=2, epsilon=PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic, rtol=1e-8)
-    # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
-    #     pmol, mol, ctr_coeff, mf.grids, 6.373938, r=2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-8)
+        pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rb=numpy.max(Rs), Periodic = Periodic, rtol=1e-8)
+    # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNew(
+    #     pmol, mol, ctr_coeff, Rgrid, 12, r=2, epsilon=PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic, rtol=1e-8)
     # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
     #     pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
-    M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.mergeCompensatingCharge(
-        pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
 
     # Evaluate AOs on uniform grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
@@ -156,9 +158,8 @@ def getPAWdata(mol,
     return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
-    if mydf.scf_iter == 0:
-        dm = numpy.asarray(dm)
     if getattr(dm, 'mo_coeff', None) is None:
+        dm = numpy.asarray(dm)
         dm = PAWutils.make_natural_orbitals(cell, kpts,
                                             dm.reshape(-1, nk, nao, nao))
     else:
@@ -631,7 +632,7 @@ class NewPAW(FFTDF):
             gaussgrid,
             kpts=None,
             printLevel=1,
-            PAWorbitalCutOff=1e-5,
+            PAWorbitalCutOff=1e-8,
             PWAccuracy=1e-5,
             Periodic=False,
             alpha0=None,

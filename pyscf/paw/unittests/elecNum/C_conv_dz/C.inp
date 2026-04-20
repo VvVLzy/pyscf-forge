@@ -11,10 +11,8 @@
   &END PRINT
   &SUBSYS
     &CELL
-      A	2.18050236	0.0	1.25891346
-      B	0.72683412	2.05579703	1.25891346
-      C	-0.0	0.0	2.51782692
-      PERIODIC XYZ
+      ABC 3.56074511 3.56074511 3.56074511
+      PERIODIC XYZ             # Re-affirm periodic calculation for the cell
     &END CELL
     &TOPOLOGY
       COORD_FILE_NAME C.xyz
@@ -22,7 +20,7 @@
     &END TOPOLOGY
     &KIND C
       POTENTIAL ALL
-      BASIS_SET CC-PVTZ
+      BASIS_SET CC-PVDZ
       HARD_EXP_RADIUS 1.2
     &END KIND
   &END SUBSYS
@@ -40,6 +38,7 @@
       EPSFIT 1.0E-8
       EPS_CPC 1.0E-10
       EPS_ISO 1.0E-8
+      EPS_PGF_ORB 1.0E-8
       ALPHA0_HARD 12.5 # might have factor of 2 difference with ours, No! just use high pw cutoff this is grid artifact
       !MAX_RAD_LOCAL 1.5
       !LMAXN0 4
@@ -49,9 +48,9 @@
       &END XC_FUNCTIONAL
     &END XC
     &SCF
-      IGNORE_CONVERGENCE_FAILURE TRUE
       EPS_SCF 1e-07
       MAX_SCF 50
+      IGNORE_CONVERGENCE_FAILURE T
       SCF_GUESS CORE
       &DIAGONALIZATION ON
         ALGORITHM STANDARD
@@ -71,8 +70,14 @@
       &AO_MATRICES ON
         OCE_HARD T
         OCE_SOFT T
-        DENSITY T
+        DENSITY F
+        OVERLAP T
+        NDIGITS 8
       &END AO_MATRICES
+      &MO_MOLDEN ON
+        NDIGITS 8
+        FILENAME =C-MO.molden
+      &END MO_MOLDEN
     &END PRINT
   &END DFT
 &END FORCE_EVAL
