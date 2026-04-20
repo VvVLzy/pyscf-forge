@@ -1,6 +1,7 @@
 import itertools
 import numpy
 import scipy, time
+import numpy as np
 
 import jax
 jax.config.update("jax_enable_x64",True)
@@ -91,6 +92,7 @@ def prepareMolForPAW(mol):
 
 
     displacement = mol.lattice_vectors().diagonal()/2. - center
+    displacement=np.zeros([3])
 
     atomPos = [(atom[0], [(atom[1][0]+displacement[0])*pyscf.data.nist.BOHR, 
                           (atom[1][1]+displacement[1])*pyscf.data.nist.BOHR, 
@@ -1845,10 +1847,10 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
         AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
         primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
         fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
-        print(AOOnA.sum(axis=0)*dv)
-        print(fAOOnA.sum(axis=0)*dv)
-        if len(idxToFit)>0:
-            print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
+        #print(AOOnA.sum(axis=0)*dv)
+        #print(fAOOnA.sum(axis=0)*dv)
+        #if len(idxToFit)>0:
+        #    print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
         #import pdb; pdb.set_trace()
 
         # print(F_fitted[:, 0])
