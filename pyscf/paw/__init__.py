@@ -142,8 +142,9 @@ def getPAWdata(mol,
     return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
-    if getattr(dm, 'mo_coeff', None) is None:
+    if mydf.scf_iter == 0:
         dm = numpy.asarray(dm)
+    if getattr(dm, 'mo_coeff', None) is None:
         dm = PAWutils.make_natural_orbitals(cell, kpts,
                                             dm.reshape(-1, nk, nao, nao))
     else:
