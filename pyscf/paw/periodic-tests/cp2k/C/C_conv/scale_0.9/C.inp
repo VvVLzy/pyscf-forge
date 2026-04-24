@@ -1,0 +1,62 @@
+&GLOBAL
+  PRINT_LEVEL MEDIUM
+  PROJECT_NAME C
+  RUN_TYPE ENERGY
+&END GLOBAL
+&FORCE_EVAL
+  METHOD Quickstep
+  &PRINT
+    &TOTAL_NUMBERS ON
+    &END TOTAL_NUMBERS
+  &END PRINT
+  &SUBSYS
+    &CELL
+      ABC 3.204670599 3.204670599 3.204670599
+      PERIODIC XYZ             # Re-affirm periodic calculation for the cell
+    &END CELL
+    &TOPOLOGY
+      COORD_FILE_NAME C.xyz
+      COORD_FILE_FORMAT XYZ
+    &END TOPOLOGY
+    &KIND C
+      POTENTIAL ALL
+      BASIS_SET CC-PVQZ
+      HARD_EXP_RADIUS 1.5
+    &END KIND
+  &END SUBSYS
+  &DFT
+    POTENTIAL_FILE_NAME POTENTIAL
+    BASIS_SET_FILE_NAME CCPVxZ
+    &MGRID
+      NGRIDS 1
+      CUTOFF 400
+    &END MGRID
+    &QS
+      METHOD GAPW
+      EPS_DEFAULT 1.0E-10
+      EPSFIT 1.0E-8
+      EPS_PGF_ORB 1.0E-8
+      ALPHA0_HARD 10 # might have factor of 2 difference with ours, No! just use high pw cutoff this is grid artifact
+      !LMAXN0 4
+    &END QS
+    &XC
+      &XC_FUNCTIONAL LDA
+      &END XC_FUNCTIONAL
+    &END XC
+    &SCF
+      IGNORE_CONVERGENCE_FAILURE TRUE
+      EPS_SCF 1e-07
+      MAX_SCF 50
+      SCF_GUESS CORE
+      &DIAGONALIZATION ON
+        ALGORITHM STANDARD
+      &END DIAGONALIZATION
+    &END SCF
+    &PRINT
+      &GAPW
+        &RHO0_INFORMATION HIGH
+        &END RHO0_INFORMATION
+      &END GAPW
+    &END PRINT
+  &END DFT
+&END FORCE_EVAL

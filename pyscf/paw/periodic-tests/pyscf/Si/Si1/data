@@ -1,3 +1,0 @@
-#!/bin/bash
-
-grep -P "a[0-7]:" *.out | awk -F'[ ;]' '{print $3}'

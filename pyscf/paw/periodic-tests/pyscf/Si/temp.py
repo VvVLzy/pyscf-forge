@@ -57,7 +57,7 @@ def single_point_paw_manual(alpha0=None, Rb=None):
     mf_per_rks_paw.max_cycle = 1
     mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
     mf_per_rks_paw.with_df = mydf
-    pawnumint = PAWNumInt(mydf)
+    pawnumint = PAWNumInt(mydf, mf_per_rks_paw)
     mf_per_rks_paw._numint = pawnumint
     mf_per_rks_paw.kernel()
 

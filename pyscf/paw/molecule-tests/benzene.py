@@ -21,12 +21,12 @@ benzene = [[ 'C'  , ( 4.673795 ,   6.280948 , 0.00  ) ],
            [ 'H'  , ( 2.497289 ,   6.120281 , 0.00  ) ]]
 
 verbose = 3
-ke_cutoff = 50
+ke_cutoff = 40
 init_guess = '1e'
 
 cell = pgto.M(
     atom=benzene, 
-    basis='cc-pvdz', 
+    basis='cc-pvqz', 
     a=np.array([[20,0,0],[0,20,0],[0,0,15]]),
     verbose=verbose,
     ke_cutoff=ke_cutoff,)

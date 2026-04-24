@@ -57,3 +57,19 @@ for i in {1..8}; do
 	cd ..
 done
 echo
+
+echo "vxc time"
+for i in {1..8}; do
+	cd ${prefix}${i}
+	grep "vxc" *out | tail -n 1 | awk '{print $(NF-1)}'
+	cd ..
+done
+echo
+
+echo "cycle 1 time"
+for i in {1..8}; do
+	cd ${prefix}${i}
+	grep "cycle= 1" *out | tail -n 1 | awk '{print $(NF-1)}'
+	cd ..
+done
+echo

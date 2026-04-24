@@ -1,0 +1,632 @@
+#INFO: **** input file is /home/lebox/Github/pyscf-forge/pyscf/paw/periodic-tests/pyscf/C/C_prim/C_prim.py ****
+import numpy
+from pyscf.pbc import gto as pgto
+from pyscf.pbc import scf as pscf
+from pyscf.paw import NewPAW as PAW
+from pyscf.paw.vxc import PAWNumInt
+
+a = numpy.array([[ 2.18050236,  0.,          1.25891346],
+                 [ 0.72683412,  2.05579703,  1.25891346],
+                 [-0.,          0.,          2.51782692]])
+
+atom = '''
+C 2.543919 1.798822 4.406197
+C 0.363417 0.256975 0.629457
+'''
+
+basis = "ccpvdz"
+verbose = 4
+ke_cutoff = 200
+precision = 1e-8
+
+cell = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = verbose,
+    a           = a,
+    ke_cutoff   = ke_cutoff,
+    precision   = precision
+)
+
+cell_fftdf = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = 3,
+    a           = a,
+    ke_cutoff   = 2000,
+    precision   = precision
+)
+
+# TODO: the default minao guess usually give mo that is not (cell.nao, cell.nao)
+# and thus will give an error
+init_guess = '1e'
+xc = 'pbe'
+
+def single_point_paw_manual(alpha0=None, Rb=None):
+    mf_per_rks_paw = pscf.RKS(cell)
+    mf_per_rks_paw.init_guess = init_guess
+    mf_per_rks_paw.xc = xc
+    mf_per_rks_paw.max_cycle = 50
+    mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+    mf_per_rks_paw.with_df = mydf
+    pawnumint = PAWNumInt(mydf)
+    mf_per_rks_paw._numint = pawnumint
+    mf_per_rks_paw.kernel()
+
+def main():
+    single_point_paw_manual(alpha0=10, Rb=1.5)
+
+if __name__ == '__main__':
+    main()
+#INFO: ******************** input file end ********************
+
+
+System: uname_result(system='Linux', node='lebox', release='6.17.0-20-generic', version='#20~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Mar 19 01:28:37 UTC 2', machine='x86_64')  Threads 8
+Python 3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:16:10) [GCC 11.2.0]
+numpy 2.3.5  scipy 1.16.3  h5py 3.15.1
+Date: Mon Apr 20 16:58:35 2026
+PySCF version 2.11.0
+PySCF path  /home/lebox/Github/pyscf
+GIT HEAD (branch master) 2a157a1f44be7883fbe9076673e077b25075dc21
+
+[ENV] PYSCF_EXT_PATH /home/lebox/Github/pyscf-forge:/home/lebox/Github/pyscf-dispersion
+[CONFIG] conf_file /home/lebox/.pyscf_conf.py
+[INPUT] verbose = 4
+[INPUT] num. atoms = 2
+[INPUT] num. electrons = 12
+[INPUT] charge = 0
+[INPUT] spin (= nelec alpha-beta = 2S) = 0
+[INPUT] symmetry False subgroup None
+[INPUT] Mole.unit = angstrom
+[INPUT] Symbol           X                Y                Z      unit          X                Y                Z       unit  Magmom
+[INPUT]  1 C      2.543919000000   1.798822000000   4.406197000000 AA    4.807310193077   3.399280926842   8.326505580880 Bohr   0.0
+[INPUT]  2 C      0.363417000000   0.256975000000   0.629457000000 AA    0.686758599011   0.485612370860   1.189501337190 Bohr   0.0
+
+nuclear repulsion = -28.819964470465
+number of shells = 10
+number of NR pGTOs = 52
+number of NR cGTOs = 28
+basis = ccpvdz
+ecp = {}
+CPU time:         5.60
+lattice vectors  a1 [4.120552274, 0.000000000, 2.379001654]
+                 a2 [1.373517425, 3.884893354, 2.379001654]
+                 a3 [-0.000000000, 0.000000000, 4.758003308]
+dimension = 3
+low_dim_ft_type = None
+Cell volume = 76.1657
+rcut = 19.635739477185215 (nimgs = [6 6 6])
+lattice sum = 1229 cells
+precision = 1e-08
+pseudo = None
+ke_cutoff = 200
+    = [33 33 33] mesh (35937 PWs)
+Recommended alpha0 for the given PW cutoff 33.55715789473684
+Making augmentation sphere for uniform grid:
+L max is :4
+The max augmentation radius is: 1.5 Bohr
+Building projectors...
+Atom 0:
+L=0: projExp [2095.8641202  1047.9320601   523.96603005  261.98301503  130.99150751
+   65.49575376   32.74787688   16.37393844    8.18696922]
+L=1: projExp [66.93740747 33.46870374 16.73435187  8.36717593]
+L=2: projExp [8.54738265]
+Atom 1:
+L=0: projExp [2095.8641202  1047.9320601   523.96603005  261.98301503  130.99150751
+   65.49575376   32.74787688   16.37393844    8.18696922]
+L=1: projExp [66.93740747 33.46870374 16.73435187  8.36717593]
+L=2: projExp [8.54738265]
+
+WARN: Even tempered Gaussians are generated as DF auxbasis for  C
+
+alpha0      : 10.00     
+alpha0_wf      : 10.00     
+Nelection   : 12        
+Ngrid points: 35937     
+delta-a     : 0.13      
+
+WARN: FFTDF integrals are found in all-electron calculation.  It often causes huge error.
+Recommended methods are DF or MDF. In SCF calculation, they can be initialized as
+        mf = mf.density_fit()
+or
+        mf = mf.mix_density_fit()
+
+
+WARN: ke_cutoff/mesh (200 / [33 33 33]) is not enough for FFTDF to get integral accuracy 1e-08.
+Coulomb integral error is ~ 0.58 Eh.
+Recommended ke_cutoff/mesh are 353629 / [1275 1275 1275].
+
+#INFO: **** input file is /home/lebox/Github/pyscf-forge/pyscf/paw/periodic-tests/pyscf/C/C_prim/C_prim.py ****
+import numpy
+from pyscf.pbc import gto as pgto
+from pyscf.pbc import scf as pscf
+from pyscf.paw import NewPAW as PAW
+from pyscf.paw.vxc import PAWNumInt
+
+a = numpy.array([[ 2.18050236,  0.,          1.25891346],
+                 [ 0.72683412,  2.05579703,  1.25891346],
+                 [-0.,          0.,          2.51782692]])
+
+atom = '''
+C 2.543919 1.798822 4.406197
+C 0.363417 0.256975 0.629457
+'''
+
+basis = "ccpvdz"
+verbose = 4
+ke_cutoff = 200
+precision = 1e-8
+
+cell = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = verbose,
+    a           = a,
+    ke_cutoff   = ke_cutoff,
+    precision   = precision
+)
+
+cell_fftdf = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = 3,
+    a           = a,
+    ke_cutoff   = 2000,
+    precision   = precision
+)
+
+# TODO: the default minao guess usually give mo that is not (cell.nao, cell.nao)
+# and thus will give an error
+init_guess = '1e'
+xc = 'pbe'
+
+def single_point_paw_manual(alpha0=None, Rb=None):
+    mf_per_rks_paw = pscf.RKS(cell)
+    mf_per_rks_paw.init_guess = init_guess
+    mf_per_rks_paw.xc = xc
+    mf_per_rks_paw.max_cycle = 50
+    mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+    mf_per_rks_paw.with_df = mydf
+    pawnumint = PAWNumInt(mydf, mf_per_rks_paw)
+    mf_per_rks_paw._numint = pawnumint
+    mf_per_rks_paw.kernel()
+
+def main():
+    single_point_paw_manual(alpha0=10, Rb=1.5)
+
+if __name__ == '__main__':
+    main()
+#INFO: ******************** input file end ********************
+
+
+System: uname_result(system='Linux', node='lebox', release='6.17.0-20-generic', version='#20~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Mar 19 01:28:37 UTC 2', machine='x86_64')  Threads 8
+Python 3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:16:10) [GCC 11.2.0]
+numpy 2.3.5  scipy 1.16.3  h5py 3.15.1
+Date: Mon Apr 20 16:59:10 2026
+PySCF version 2.11.0
+PySCF path  /home/lebox/Github/pyscf
+GIT HEAD (branch master) 2a157a1f44be7883fbe9076673e077b25075dc21
+
+[ENV] PYSCF_EXT_PATH /home/lebox/Github/pyscf-forge:/home/lebox/Github/pyscf-dispersion
+[CONFIG] conf_file /home/lebox/.pyscf_conf.py
+[INPUT] verbose = 4
+[INPUT] num. atoms = 2
+[INPUT] num. electrons = 12
+[INPUT] charge = 0
+[INPUT] spin (= nelec alpha-beta = 2S) = 0
+[INPUT] symmetry False subgroup None
+[INPUT] Mole.unit = angstrom
+[INPUT] Symbol           X                Y                Z      unit          X                Y                Z       unit  Magmom
+[INPUT]  1 C      2.543919000000   1.798822000000   4.406197000000 AA    4.807310193077   3.399280926842   8.326505580880 Bohr   0.0
+[INPUT]  2 C      0.363417000000   0.256975000000   0.629457000000 AA    0.686758599011   0.485612370860   1.189501337190 Bohr   0.0
+
+nuclear repulsion = -28.819964470465
+number of shells = 10
+number of NR pGTOs = 52
+number of NR cGTOs = 28
+basis = ccpvdz
+ecp = {}
+CPU time:         5.58
+lattice vectors  a1 [4.120552274, 0.000000000, 2.379001654]
+                 a2 [1.373517425, 3.884893354, 2.379001654]
+                 a3 [-0.000000000, 0.000000000, 4.758003308]
+dimension = 3
+low_dim_ft_type = None
+Cell volume = 76.1657
+rcut = 19.635739477185215 (nimgs = [6 6 6])
+lattice sum = 1229 cells
+precision = 1e-08
+pseudo = None
+ke_cutoff = 200
+    = [33 33 33] mesh (35937 PWs)
+Recommended alpha0 for the given PW cutoff 33.55715789473684
+Making augmentation sphere for uniform grid:
+L max is :4
+The max augmentation radius is: 1.5 Bohr
+Building projectors...
+Atom 0:
+L=0: projExp [2095.8641202  1047.9320601   523.96603005  261.98301503  130.99150751
+   65.49575376   32.74787688   16.37393844    8.18696922]
+L=1: projExp [66.93740747 33.46870374 16.73435187  8.36717593]
+L=2: projExp [8.54738265]
+Atom 1:
+L=0: projExp [2095.8641202  1047.9320601   523.96603005  261.98301503  130.99150751
+   65.49575376   32.74787688   16.37393844    8.18696922]
+L=1: projExp [66.93740747 33.46870374 16.73435187  8.36717593]
+L=2: projExp [8.54738265]
+
+WARN: Even tempered Gaussians are generated as DF auxbasis for  C
+
+alpha0      : 10.00     
+alpha0_wf      : 10.00     
+Nelection   : 12        
+Ngrid points: 35937     
+delta-a     : 0.13      
+
+WARN: FFTDF integrals are found in all-electron calculation.  It often causes huge error.
+Recommended methods are DF or MDF. In SCF calculation, they can be initialized as
+        mf = mf.density_fit()
+or
+        mf = mf.mix_density_fit()
+
+
+WARN: ke_cutoff/mesh (200 / [33 33 33]) is not enough for FFTDF to get integral accuracy 1e-08.
+Coulomb integral error is ~ 0.58 Eh.
+Recommended ke_cutoff/mesh are 353629 / [1275 1275 1275].
+
+
+
+******** <class 'pyscf.pbc.dft.rks.RKS'> ********
+method = RKS
+initial guess = 1e
+damping factor = 0
+level_shift factor = 0
+DIIS = <class 'pyscf.scf.diis.CDIIS'>
+diis_start_cycle = 1
+diis_space = 8
+diis_damp = 0
+SCF conv_tol = 1e-07
+SCF conv_tol_grad = None
+SCF max_cycles = 50
+direct_scf = True
+direct_scf_tol = 1e-13
+chkfile to save SCF result = /tmp/tmpn_p7tn37
+max_memory 4000 MB (current use 1001 MB)
+******** PBC SCF flags ********
+kpt = [0. 0. 0.]
+Exchange divergence treatment (exxdiv) = ewald
+    madelung (= occupied orbital energy shift) = 0.6813755128494058
+    Total energy shift due to Ewald probe charge = -1/2 * Nelec*madelung = -4.0882530771
+DF object = <pyscf.paw.NewPAW object at 0x73be316ee7b0>
+XC functionals = pbe
+small_rho_cutoff = 1e-07
+Uniform grid, mesh = [33 33 33]
+Set gradient conv threshold to 0.000316228
+Initial guess from hcore.
+  HOMO = 0.0570623441062473  LUMO = 0.249472032349219
+smooth nelec with uniform grids = 9.962640999299108
+all nelec with atomic grids = 13.693825683401927
+smooth nelec with atomic grids = 11.656466663649436
+sharp nelec with atomic grids = 2.0373590197524916
+nelec by numeric integration = 12.000000019051601
+    CPU time for vxc      5.97 sec, wall time      0.61 sec
+    CPU time for vj PW      0.12 sec, wall time      0.01 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.32 sec, wall time      0.02 sec
+    CPU time for veff      0.32 sec, wall time      0.02 sec
+init E= -73.6582842268666
+    CPU time for initialize scf      6.60 sec, wall time      0.67 sec
+  HOMO = 0.728963225386571  LUMO = 0.885537410274824
+smooth nelec with uniform grids = 10.012063086256607
+all nelec with atomic grids = 15.542392604664371
+smooth nelec with atomic grids = 13.554455683916192
+sharp nelec with atomic grids = 1.9879369207481794
+nelec by numeric integration = 12.000000007004786
+    CPU time for vxc      4.06 sec, wall time      0.30 sec
+    CPU time for vj PW      0.08 sec, wall time      0.00 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.12 sec, wall time      0.01 sec
+    CPU time for veff      0.12 sec, wall time      0.01 sec
+cycle= 1 E= -74.989332299223  delta_E= -1.33  |g|= 0.499  |ddm|= 36.3
+    CPU time for cycle= 1      4.21 sec, wall time      0.31 sec
+  HOMO = 0.543734382668132  LUMO = 0.744556634915765
+smooth nelec with uniform grids = 10.00187136718925
+all nelec with atomic grids = 15.24872882628027
+smooth nelec with atomic grids = 13.250600183596632
+sharp nelec with atomic grids = 1.998128642683639
+nelec by numeric integration = 12.000000009872888
+    CPU time for vxc      4.20 sec, wall time      0.31 sec
+    CPU time for vj PW      0.10 sec, wall time      0.01 sec
+    CPU time for vj atom      0.03 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.14 sec, wall time      0.01 sec
+    CPU time for veff      0.14 sec, wall time      0.01 sec
+cycle= 2 E= -75.0365653154645  delta_E= -0.0472  |g|= 0.103  |ddm|= 5.51
+    CPU time for cycle= 2      4.52 sec, wall time      0.33 sec
+  HOMO = 0.578343193762206  LUMO = 0.770870787331012
+smooth nelec with uniform grids = 10.00344160043802
+all nelec with atomic grids = 15.299100737792582
+smooth nelec with atomic grids = 13.302542328828107
+sharp nelec with atomic grids = 1.996558408964475
+nelec by numeric integration = 12.000000009402495
+    CPU time for vxc      4.35 sec, wall time      0.31 sec
+    CPU time for vj PW      0.12 sec, wall time      0.01 sec
+    CPU time for vj atom      0.06 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.18 sec, wall time      0.01 sec
+    CPU time for veff      0.18 sec, wall time      0.01 sec
+cycle= 3 E= -75.03871470248  delta_E= -0.00215  |g|= 0.000665  |ddm|= 0.762
+    CPU time for cycle= 3      4.58 sec, wall time      0.33 sec
+  HOMO = 0.578357770227919  LUMO = 0.770800150172594
+smooth nelec with uniform grids = 10.003447840467654
+all nelec with atomic grids = 15.299351555100749
+smooth nelec with atomic grids = 13.30279938617041
+sharp nelec with atomic grids = 1.9965521689303394
+nelec by numeric integration = 12.000000009397993
+    CPU time for vxc      5.13 sec, wall time      0.38 sec
+    CPU time for vj PW      0.13 sec, wall time      0.01 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.17 sec, wall time      0.01 sec
+    CPU time for veff      0.17 sec, wall time      0.01 sec
+cycle= 4 E= -75.0387147938817  delta_E= -9.14e-08  |g|= 0.000143  |ddm|= 0.00503
+    CPU time for cycle= 4      5.69 sec, wall time      0.42 sec
+  HOMO = 0.578349060090212  LUMO = 0.770794929382512
+smooth nelec with uniform grids = 10.00344776277424
+all nelec with atomic grids = 15.299340855843761
+smooth nelec with atomic grids = 13.302788609219837
+sharp nelec with atomic grids = 1.9965522466239243
+nelec by numeric integration = 12.000000009398166
+    CPU time for vxc      5.67 sec, wall time      0.41 sec
+    CPU time for vj PW      0.17 sec, wall time      0.01 sec
+    CPU time for vj atom      0.05 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.21 sec, wall time      0.01 sec
+    CPU time for veff      0.21 sec, wall time      0.01 sec
+Extra cycle  E= -75.0387147977559  delta_E= -3.87e-09  |g|= 9.75e-05  |ddm|= 0.000703
+    CPU time for scf_cycle     31.52 sec, wall time      2.48 sec
+    CPU time for SCF     31.60 sec, wall time      2.52 sec
+converged SCF energy = -75.0387147977559
+#INFO: **** input file is /home/lebox/Github/pyscf-forge/pyscf/paw/periodic-tests/pyscf/C/C_prim/C_prim.py ****
+import numpy
+from pyscf.pbc import gto as pgto
+from pyscf.pbc import scf as pscf
+from pyscf.paw import NewPAW as PAW
+from pyscf.paw.vxc import PAWNumInt
+
+a = numpy.array([[ 2.18050236,  0.,          1.25891346],
+                 [ 0.72683412,  2.05579703,  1.25891346],
+                 [-0.,          0.,          2.51782692]])
+
+atom = '''
+C 2.543919 1.798822 4.406197
+C 0.363417 0.256975 0.629457
+'''
+
+basis = "ccpvdz"
+verbose = 4
+ke_cutoff = 200
+precision = 1e-8
+
+cell = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = verbose,
+    a           = a,
+    ke_cutoff   = ke_cutoff,
+    precision   = precision
+)
+
+cell_fftdf = pgto.M(
+    atom        = atom,
+    basis       = basis,
+    verbose     = 3,
+    a           = a,
+    ke_cutoff   = 2000,
+    precision   = precision
+)
+
+# TODO: the default minao guess usually give mo that is not (cell.nao, cell.nao)
+# and thus will give an error
+init_guess = '1e'
+xc = 'pbe'
+
+def single_point_paw_manual(alpha0=None, Rb=None):
+    mf_per_rks_paw = pscf.RKS(cell)
+    mf_per_rks_paw.init_guess = init_guess
+    mf_per_rks_paw.xc = xc
+    mf_per_rks_paw.max_cycle = 50
+    mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+    mf_per_rks_paw.with_df = mydf
+    pawnumint = PAWNumInt(mydf, mf_per_rks_paw)
+    mf_per_rks_paw._numint = pawnumint
+    mf_per_rks_paw.kernel()
+
+def main():
+    single_point_paw_manual(alpha0=10, Rb=1.5)
+
+if __name__ == '__main__':
+    main()
+#INFO: ******************** input file end ********************
+
+
+System: uname_result(system='Linux', node='lebox', release='6.17.0-20-generic', version='#20~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Mar 19 01:28:37 UTC 2', machine='x86_64')  Threads 1
+Python 3.13.9 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 19:16:10) [GCC 11.2.0]
+numpy 2.3.5  scipy 1.16.3  h5py 3.15.1
+Date: Mon Apr 20 17:00:37 2026
+PySCF version 2.11.0
+PySCF path  /home/lebox/Github/pyscf
+GIT HEAD (branch master) 2a157a1f44be7883fbe9076673e077b25075dc21
+
+[ENV] PYSCF_EXT_PATH /home/lebox/Github/pyscf-forge:/home/lebox/Github/pyscf-dispersion
+[CONFIG] conf_file /home/lebox/.pyscf_conf.py
+[INPUT] verbose = 4
+[INPUT] num. atoms = 2
+[INPUT] num. electrons = 12
+[INPUT] charge = 0
+[INPUT] spin (= nelec alpha-beta = 2S) = 0
+[INPUT] symmetry False subgroup None
+[INPUT] Mole.unit = angstrom
+[INPUT] Symbol           X                Y                Z      unit          X                Y                Z       unit  Magmom
+[INPUT]  1 C      2.543919000000   1.798822000000   4.406197000000 AA    4.807310193077   3.399280926842   8.326505580880 Bohr   0.0
+[INPUT]  2 C      0.363417000000   0.256975000000   0.629457000000 AA    0.686758599011   0.485612370860   1.189501337190 Bohr   0.0
+
+nuclear repulsion = -28.819964470465
+number of shells = 10
+number of NR pGTOs = 52
+number of NR cGTOs = 28
+basis = ccpvdz
+ecp = {}
+CPU time:         5.65
+lattice vectors  a1 [4.120552274, 0.000000000, 2.379001654]
+                 a2 [1.373517425, 3.884893354, 2.379001654]
+                 a3 [-0.000000000, 0.000000000, 4.758003308]
+dimension = 3
+low_dim_ft_type = None
+Cell volume = 76.1657
+rcut = 19.635739477185215 (nimgs = [6 6 6])
+lattice sum = 1229 cells
+precision = 1e-08
+pseudo = None
+ke_cutoff = 200
+    = [33 33 33] mesh (35937 PWs)
+Recommended alpha0 for the given PW cutoff 33.55715789473684
+Making augmentation sphere for uniform grid:
+L max is :4
+The max augmentation radius is: 1.5 Bohr
+Building projectors...
+Atom 0:
+L=0: projExp [2095.8641202  1047.9320601   523.96603005  261.98301503  130.99150751
+   65.49575376   32.74787688   16.37393844    8.18696922]
+L=1: projExp [66.93740747 33.46870374 16.73435187  8.36717593]
+L=2: projExp [8.54738265]
+Atom 1:
+L=0: projExp [2095.8641202  1047.9320601   523.96603005  261.98301503  130.99150751
+   65.49575376   32.74787688   16.37393844    8.18696922]
+L=1: projExp [66.93740747 33.46870374 16.73435187  8.36717593]
+L=2: projExp [8.54738265]
+
+WARN: Even tempered Gaussians are generated as DF auxbasis for  C
+
+alpha0      : 10.00     
+alpha0_wf      : 10.00     
+Nelection   : 12        
+Ngrid points: 35937     
+delta-a     : 0.13      
+
+WARN: FFTDF integrals are found in all-electron calculation.  It often causes huge error.
+Recommended methods are DF or MDF. In SCF calculation, they can be initialized as
+        mf = mf.density_fit()
+or
+        mf = mf.mix_density_fit()
+
+
+WARN: ke_cutoff/mesh (200 / [33 33 33]) is not enough for FFTDF to get integral accuracy 1e-08.
+Coulomb integral error is ~ 0.58 Eh.
+Recommended ke_cutoff/mesh are 353629 / [1275 1275 1275].
+
+
+
+******** <class 'pyscf.pbc.dft.rks.RKS'> ********
+method = RKS
+initial guess = 1e
+damping factor = 0
+level_shift factor = 0
+DIIS = <class 'pyscf.scf.diis.CDIIS'>
+diis_start_cycle = 1
+diis_space = 8
+diis_damp = 0
+SCF conv_tol = 1e-07
+SCF conv_tol_grad = None
+SCF max_cycles = 50
+direct_scf = True
+direct_scf_tol = 1e-13
+chkfile to save SCF result = /tmp/tmpn4k4c944
+max_memory 4000 MB (current use 988 MB)
+******** PBC SCF flags ********
+kpt = [0. 0. 0.]
+Exchange divergence treatment (exxdiv) = ewald
+    madelung (= occupied orbital energy shift) = 0.6813755128494058
+    Total energy shift due to Ewald probe charge = -1/2 * Nelec*madelung = -4.0882530771
+DF object = <pyscf.paw.NewPAW object at 0x73e9988f27b0>
+XC functionals = pbe
+small_rho_cutoff = 1e-07
+Uniform grid, mesh = [33 33 33]
+Set gradient conv threshold to 0.000316228
+Initial guess from hcore.
+  HOMO = 0.0570623441066443  LUMO = 0.249472032348447
+smooth nelec with uniform grids = 9.962640999299104
+all nelec with atomic grids = 13.693825683401318
+smooth nelec with atomic grids = 11.656466663648827
+sharp nelec with atomic grids = 2.0373590197524916
+nelec by numeric integration = 12.000000019051596
+    CPU time for vxc      5.26 sec, wall time      1.71 sec
+    CPU time for vj PW      0.07 sec, wall time      0.00 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.31 sec, wall time      0.02 sec
+    CPU time for veff      0.31 sec, wall time      0.02 sec
+init E= -73.6582842268672
+    CPU time for initialize scf      5.71 sec, wall time      1.80 sec
+  HOMO = 0.728963225386525  LUMO = 0.885537410274765
+smooth nelec with uniform grids = 10.0120630862566
+all nelec with atomic grids = 15.542392604663672
+smooth nelec with atomic grids = 13.554455683915489
+sharp nelec with atomic grids = 1.987936920748183
+nelec by numeric integration = 12.000000007004783
+    CPU time for vxc      5.28 sec, wall time      0.99 sec
+    CPU time for vj PW      0.07 sec, wall time      0.00 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.11 sec, wall time      0.01 sec
+    CPU time for veff      0.11 sec, wall time      0.01 sec
+cycle= 1 E= -74.9893322992232  delta_E= -1.33  |g|= 0.499  |ddm|= 36.3
+    CPU time for cycle= 1      5.43 sec, wall time      1.00 sec
+  HOMO = 0.543734382668177  LUMO = 0.744556634915724
+smooth nelec with uniform grids = 10.001871367189246
+all nelec with atomic grids = 15.24872882627955
+smooth nelec with atomic grids = 13.250600183595907
+sharp nelec with atomic grids = 1.9981286426836427
+nelec by numeric integration = 12.000000009872888
+    CPU time for vxc      5.36 sec, wall time      0.98 sec
+    CPU time for vj PW      0.07 sec, wall time      0.00 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.12 sec, wall time      0.01 sec
+    CPU time for veff      0.12 sec, wall time      0.01 sec
+cycle= 2 E= -75.036565315465  delta_E= -0.0472  |g|= 0.103  |ddm|= 5.51
+    CPU time for cycle= 2      5.51 sec, wall time      0.99 sec
+  HOMO = 0.578343193762011  LUMO = 0.770870787331106
+smooth nelec with uniform grids = 10.003441600438002
+all nelec with atomic grids = 15.299100737791838
+smooth nelec with atomic grids = 13.30254232882736
+sharp nelec with atomic grids = 1.9965584089644768
+nelec by numeric integration = 12.00000000940248
+    CPU time for vxc      5.38 sec, wall time      0.99 sec
+    CPU time for vj PW      0.08 sec, wall time      0.01 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.12 sec, wall time      0.01 sec
+    CPU time for veff      0.12 sec, wall time      0.01 sec
+cycle= 3 E= -75.0387147024797  delta_E= -0.00215  |g|= 0.000665  |ddm|= 0.762
+    CPU time for cycle= 3      5.53 sec, wall time      1.00 sec
+  HOMO = 0.578357770228278  LUMO = 0.770800150172717
+smooth nelec with uniform grids = 10.003447840467654
+all nelec with atomic grids = 15.299351555099246
+smooth nelec with atomic grids = 13.302799386168903
+sharp nelec with atomic grids = 1.996552168930343
+nelec by numeric integration = 12.000000009397997
+    CPU time for vxc      5.37 sec, wall time      0.99 sec
+    CPU time for vj PW      0.07 sec, wall time      0.00 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.12 sec, wall time      0.01 sec
+    CPU time for veff      0.12 sec, wall time      0.01 sec
+cycle= 4 E= -75.0387147938816  delta_E= -9.14e-08  |g|= 0.000143  |ddm|= 0.00503
+    CPU time for cycle= 4      5.51 sec, wall time      1.00 sec
+  HOMO = 0.578349060090066  LUMO = 0.770794929382681
+smooth nelec with uniform grids = 10.00344776277424
+all nelec with atomic grids = 15.299340855842777
+smooth nelec with atomic grids = 13.30278860921885
+sharp nelec with atomic grids = 1.9965522466239278
+nelec by numeric integration = 12.000000009398166
+    CPU time for vxc      5.36 sec, wall time      0.99 sec
+    CPU time for vj PW      0.07 sec, wall time      0.00 sec
+    CPU time for vj atom      0.04 sec, wall time      0.00 sec
+    CPU time for vj and vk      0.12 sec, wall time      0.01 sec
+    CPU time for veff      0.12 sec, wall time      0.01 sec
+Extra cycle  E= -75.0387147977561  delta_E= -3.87e-09  |g|= 9.75e-05  |ddm|= 0.000703
+    CPU time for scf_cycle     33.19 sec, wall time      6.78 sec
+    CPU time for SCF     33.23 sec, wall time      6.82 sec
+converged SCF energy = -75.0387147977561
