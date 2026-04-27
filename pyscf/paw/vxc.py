@@ -4,7 +4,7 @@ from pyscf.pbc.dft.numint import NumInt, KNumInt, nr_rks
 from pyscf.pbc.dft.gen_grid import BeckeGrids
 from pyscf.dft.gen_grid import Grids
 from pyscf.lib import logger
-from .PAWutils import buildPmolAtom
+from .PAWutils import buildPmolAtom, makeWignerSeitz
 
 from functools import partial
 smart_einsum = partial(numpy.einsum, optimize='optimal')
@@ -30,22 +30,43 @@ def smoothCell(mol, alpha0):
     return smoothMol
 
 class PAWNumInt(NumInt):
-    def __init__(self, mydf, mf):
+    def __init__(self, mydf, mf, uniform=True):
         self.mf = mf
         self.cell = mydf.cell
         self.smoothCell = smoothCell(self.cell, mydf.alpha0)
         self.pcell = mydf.pcell
         # self.smoothPcell = smoothCell(self.pcell, mydf.alpha0)
-        self.uniform_grid = mydf.grids # this should be a uniform grid
-
-        # atomic data
-        self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = self.prepareAtomicData(mydf.alpha0)
+        if uniform:
+            self.uniform_grid = mydf.grids # this should be a uniform grid
+            self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = self.prepareAtomicData(mydf.alpha0, getattr(mydf, 'augRadius', None))
+        else:
+            self.uniform_grid = BeckeGrids(self.pcell).build()
+            self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = [], [], []
         self.localIdx = mydf.PAWdata[0]
         self.F_PmuArr = mydf.PAWdata[1]
         self.Ftilde_PmuArr = mydf.PAWdata[2]
         super().__init__()
 
-    def prepareAtomicData(self, alpha0):
+    # def prepareAtomicData(self, alpha0, augRadius):
+    #     pcellAtoms = []
+    #     smoothPcellAtoms = []
+    #     grids = []
+
+    #     for atomI in range(self.cell._atm.shape[0]):
+    #         pcellAtom = buildPmolAtom(self.cell, self.pcell, atomI, self.pcell.cart)
+    #         smoothpcellAtom = smoothCell(pcellAtom, alpha0)
+    #         grid = BeckeGrids(pcellAtom)
+    #         # grid = Grids(pcellAtom)
+    #         grid.build()
+    #         # grid.level = 5 # doesn't affect much
+
+    #         pcellAtoms.append(pcellAtom)
+    #         smoothPcellAtoms.append(smoothpcellAtom)
+    #         grids.append(grid)
+
+    #     return pcellAtoms, smoothPcellAtoms, grids
+    
+    def prepareAtomicData(self, alpha0, augRadius):
         pcellAtoms = []
         smoothPcellAtoms = []
         grids = []
@@ -53,14 +74,30 @@ class PAWNumInt(NumInt):
         for atomI in range(self.cell._atm.shape[0]):
             pcellAtom = buildPmolAtom(self.cell, self.pcell, atomI, self.pcell.cart)
             smoothpcellAtom = smoothCell(pcellAtom, alpha0)
-            grid = BeckeGrids(pcellAtom)
-            # grid = Grids(pcellAtom)
-            grid.build()
-            # grid.level = 5 # doesn't affect much
+
+            # filter the grid
+            atomGrid = BeckeGrids(pcellAtom)
+            atomGrid.build()
+            
+            if augRadius is not None:
+                radius = augRadius
+                if isinstance(augRadius, (list, numpy.ndarray)):
+                    radius = augRadius[atomI]
+                
+                atomGridDist = makeWignerSeitz(atomGrid.coords, pcellAtom, Periodic=self.mf.with_df.Periodic)[1]
+                allIdx = numpy.where(atomGridDist[0, :] < radius)[0]
+                atomGrid.coords = atomGrid.coords[allIdx]
+                atomGrid.weights = atomGrid.weights[allIdx]
+                
+                # IMPORTANT: rebuild non0tab after filtering to ensure consistency
+                # and performance in block_loop
+                atomGrid.non0tab = atomGrid.make_mask(pcellAtom, atomGrid.coords)
+            
+            logger.info(self.mf, 'Atom %d atomic grid size: %d', atomI, atomGrid.coords.shape[0])
 
             pcellAtoms.append(pcellAtom)
             smoothPcellAtoms.append(smoothpcellAtom)
-            grids.append(grid)
+            grids.append(atomGrid)
 
         return pcellAtoms, smoothPcellAtoms, grids
 
@@ -94,6 +131,9 @@ class PAWNumInt(NumInt):
         for atomI in range(self.cell._atm.shape[0]):
             pcellAtom = self.pcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
+            if grids.coords.size == 0:
+                continue
+
             dm_loc = dms[l[atomI]][:, l[atomI]]
             dm = smart_einsum('mn,Pm,Qn->PQ', dm_loc, f[atomI], f[atomI])
 
@@ -133,6 +173,9 @@ class PAWNumInt(NumInt):
         for atomI in range(self.cell._atm.shape[0]):
             pcellAtom = self.smoothPcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
+            if grids.coords.size == 0:
+                continue
+
             dm_loc = dms[l[atomI]][:, l[atomI]]
             dm = smart_einsum('mn,Pm,Qn->PQ', dm_loc, f[atomI], f[atomI])
 
@@ -161,9 +204,26 @@ class PAWNumInt(NumInt):
 
         return nelec3, exc3, vxc3
     
+    def get_rho(self, cell, dm, grids, kpts=None, max_memory=2000):
+        if kpts is not None and not isinstance(kpts, (numpy.ndarray, list)):
+            max_memory = kpts
+            kpts = None
+
+        if not getattr(cell, 'a', None):
+            cell = self.cell
+
+        return super().get_rho(cell, dm, grids, kpts, max_memory)
+
     @lib.with_doc(nr_rks.__doc__)
     def nr_rks(self, cell, grids, xc_code, dms, relativity=0, hermi=1,
                kpt=numpy.zeros(3), kpts_band=None, max_memory=2000, verbose=None):
+        if not isinstance(kpt, (numpy.ndarray, list)):
+            # Molecular call: nr_rks(mol, grids, xc_code, dms, relativity, hermi, max_memory, verbose)
+            verbose = kpts_band
+            max_memory = kpt
+            kpt = numpy.zeros(3)
+            kpts_band = None
+
         if kpts_band is not None:
             # To compute Vxc on kpts_band, convert the NumInt object to KNumInt object.
             ni = self.view(KNumInt)
@@ -174,16 +234,20 @@ class PAWNumInt(NumInt):
         spin = 0
         
         # uniform grid
+        cpu0 = (logger.process_clock(), logger.perf_counter())
         nelec1, exc1, vxc1 = self.nr_rks_uniform_smooth(
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
         )
+        logger.timer(self.mf.with_df, 'vxc uniform', *cpu0)
         # atomic grid
+        cpu0 = (logger.process_clock(), logger.perf_counter())
         nelec2, exc2, vxc2 = self.nr_rks_atomic_sharp(
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
         )
         nelec3, exc3, vxc3 = self.nr_rks_atomic_smooth(
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
         )
+        logger.timer(self.mf.with_df, 'vxc atomic', *cpu0)
         logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec1)
         logger.info(self.mf, 'all nelec with atomic grids = %s', nelec2)
         logger.info(self.mf, 'smooth nelec with atomic grids = %s', nelec3)

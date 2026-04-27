@@ -81,7 +81,7 @@ def getPAWdataNew(mol,
         # print ("Rb          : {0:<10.2f}".format(Rb))
         print ("alpha0      : {0:<10.2f}".format(alpha0))
         print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids, alpha0
+    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids, alpha0, Rs
 
 def getPAWdata(mol,
                PAWorbitalCutOff=1.e-5,
@@ -660,7 +660,7 @@ class NewPAW(FFTDF):
 
     def initPAW(self, cell, alpha0):
         t0 = time.time()
-        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid, alpha0 = getPAWdataNew(
+        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid, alpha0, Rs = getPAWdataNew(
             cell,
             printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
@@ -669,6 +669,8 @@ class NewPAW(FFTDF):
             alpha0=alpha0,
             augRadius=self.augRadius
         )
+
+        self.augRadius = Rs
 
         
         self.Times_["PAWinit"] += time.time()-t0
