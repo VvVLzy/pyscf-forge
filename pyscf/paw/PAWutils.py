@@ -1263,6 +1263,73 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 
     return numpy.asarray(K*2)
 
+def getkSmoothISDF(cell, dm, gaussgrid, aoOnR_tilde, mesh, PAWdata, S, Periodic=False):
+    # RHF dm handling
+    dm_half = dm[0, 0, :, :] / 2
+    K = gaussgrid.compute_paw_exchange(dm_half, PAWdata)
+    return K * 2
+
+def getkSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+    dm_full = dm[0, 0, :, :]
+    dm_half = dm_full / 2
+    K = numpy.zeros((cell.nao, cell.nao))
+    for atomI in range(cell._atm.shape[0]):
+        fpmu = F_Pmu[atomI]
+        localidx = localIdx[atomI]
+        vpqrs = VPQRSarray[atomI]
+        
+        DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:,localidx])
+        
+        # sharp-sharp
+        Katom = smart_einsum('Pm,PQ,Qn->mn', fpmu, smart_einsum('PQRS, QR->PS', vpqrs, DPQ), fpmu)
+        
+        numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
+    
+    # Debug print for energy contribution
+    e2 = -0.5 * numpy.einsum('ij,ji', dm_full, K)
+    print(f"    [ISDF-K] E_Sharp_Local: {e2:.6f}")
+
+    return K * 2
+
+def getkSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+    dm_full = dm[0, 0, :, :]
+    dm_half = dm_full / 2
+    K = numpy.zeros((cell.nao, cell.nao))
+    for atomI in range(cell._atm.shape[0]):
+        fpmu = F_Pmu[atomI]
+        ftildepmu = Ftilde_Pmu[atomI]
+        localidx = localIdx[atomI]
+        vpqrs = VPQRSarray[atomI]
+        vpql = V_PQLarr[atomI]
+        mpql = M_PQLarr[atomI]
+        vlm = V_LMarr[atomI]
+        
+        DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:,localidx])
+        DPQtilde = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm_half[localidx][:,localidx])
+        
+        B = smart_einsum('PQg, RSg->PQRS', vpql, mpql)
+        PQRS_diffuse = vpqrs - B - B.transpose(2, 3, 0, 1) + smart_einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        
+        Katom = -smart_einsum('Pm,PQ,Qn->mn', ftildepmu, smart_einsum('PQRS, QR->PS', PQRS_diffuse, DPQtilde), ftildepmu)
+        
+        DPQmixed = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm_half[localidx][:,localidx])
+        PQRS_mixed = B - smart_einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Ktemp = smart_einsum('Pm,PQ,Qn->mn', ftildepmu, smart_einsum('PQRS, QR->PS', PQRS_mixed, DPQmixed), fpmu)
+        Katom -= Ktemp + Ktemp.T
+        
+        PQRS_comp = smart_einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
+        Katom -= smart_einsum('Pm,PQ,Qn->mn', fpmu, smart_einsum('PQRS, QR->PS', PQRS_comp, DPQ), fpmu)
+        
+        numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
+
+    # Debug print for energy contribution
+    e3 = -0.5 * numpy.einsum('ij,ji', dm_full, K)
+    print(f"    [ISDF-K] E_Smooth_Local: {e3:.6f}")
+
+    return K * 2
+
 # test function for fft only
 def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     print("entering exchange")

@@ -294,12 +294,27 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         logger.timer(mydf, 'vj atom', *cpu0)
         vj = vj1 + vj2 + vj3
     if with_k:
-        vk = PAWutils.getk_PAW_loop(cell, dm,
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        vk1 = PAWutils.getkSmoothISDF(cell, dm, mydf.gaussgrid,
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
                                     mydf.PAWdata,
                                     mydf.S,
                                     Periodic=mydf.Periodic)
+        logger.timer(mydf, 'vk smooth', *cpu0)
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        vk2 = PAWutils.getkSharpLocal(cell, dm, 
+                                    mydf.aoOnR_tilde,
+                                    mydf.mesh,
+                                    mydf.PAWdata,
+                                    Periodic=mydf.Periodic)
+        vk3 = PAWutils.getkSmoothLocal(cell, dm, 
+                                    mydf.aoOnR_tilde,
+                                    mydf.mesh,
+                                    mydf.PAWdata,
+                                    Periodic=mydf.Periodic)
+        logger.timer(mydf, 'vk atom', *cpu0)
+        vk = vk1 + vk2 + vk3
     return vj, vk
 
 class PAW(FFTDF):
