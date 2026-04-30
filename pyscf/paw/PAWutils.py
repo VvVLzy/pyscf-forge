@@ -90,20 +90,26 @@ def prepareMolForPAW(mol):
     atomPos = numpy.asarray([mol._atom[i][1] for i in range(len(mol._atom))])
     center = numpy.sum(atomPos, axis=0)/atomPos.shape[0]    
 
-
     displacement = mol.lattice_vectors().diagonal()/2. - center
     displacement=np.zeros([3])
 
-    atomPos = [(atom[0], [(atom[1][0]+displacement[0])*pyscf.data.nist.BOHR, 
-                          (atom[1][1]+displacement[1])*pyscf.data.nist.BOHR, 
-                          (atom[1][2]+displacement[2])*pyscf.data.nist.BOHR]) for atom in mol._atom]
+    if mol.unit[:1].upper() == 'A':
+        factor = pyscf.data.nist.BOHR
+        new_unit = 'A'
+    else:
+        factor = 1.0
+        new_unit = 'B'
+
+    atomPos = [(atom[0], [(atom[1][0]+displacement[0])*factor, 
+                          (atom[1][1]+displacement[1])*factor, 
+                          (atom[1][2]+displacement[2])*factor]) for atom in mol._atom]
 
     if mol.unit[0].capitalize()=='A':
         k=mol.a
     else:
-        k=pyscf.data.nist.BOHR*mol.a
+        k=mol.a
 
-    return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff,unit='A')
+    return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff, unit=new_unit)
 
 def addSharpGTO2Atom(mol):
     mol = mol.copy()
