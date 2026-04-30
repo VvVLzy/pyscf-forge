@@ -5,6 +5,9 @@ from pyscf.pbc.dft.gen_grid import BeckeGrids
 from pyscf.dft.gen_grid import Grids
 from pyscf.lib import logger
 from .PAWutils import buildPmolAtom, makeWignerSeitz
+# Use the multigrid_pair version as requested
+from pyscf.pbc.dft.multigrid.multigrid_pair import MultiGridNumInt as MultiGridNumInt2
+from pyscf.pbc.dft.multigrid import MultiGridNumInt
 
 from functools import partial
 smart_einsum = partial(numpy.einsum, optimize='optimal')
@@ -30,14 +33,34 @@ def smoothCell(mol, alpha0):
     return smoothMol
 
 class PAWNumInt(NumInt):
-    def __init__(self, mydf, mf, uniform=True):
+    def __init__(self, mydf, mf, uniform=True, with_multigrid=0):
         self.mf = mf
         self.cell = mydf.cell
         self.smoothCell = smoothCell(self.cell, mydf.alpha0)
         self.pcell = mydf.pcell
-        # self.smoothPcell = smoothCell(self.pcell, mydf.alpha0)
+        self.with_multigrid = with_multigrid
+        
+        if self.with_multigrid == 1:
+            # Initialize Multigrid (pair version) for the smooth component
+            self.mg_ni = MultiGridNumInt(self.smoothCell)
+            self.mg_ni.mesh = mydf.grids.mesh
+            self.mg_ni.xc_with_j = False
+            self.mg_ni.build()
+        elif self.with_multigrid == 2:
+            # Initialize Multigrid (pair version) for the smooth component
+            # Ensure smoothCell has enough precision for multigrid_pair (version 2)
+            # which lacks the internal EXPDROP safeguard present in version 1.
+            self.smoothCell.precision = min(self.cell.precision, 1e-10)
+            self.mg_ni = MultiGridNumInt2(self.smoothCell)
+            self.mg_ni.mesh = mydf.grids.mesh
+            self.mg_ni.xc_with_j = False
+            self.mg_ni.ntasks = 1
+            self.mg_ni.build()
+        else:
+            self.mg_ni = None
+
         if uniform:
-            self.uniform_grid = mydf.grids # this should be a uniform grid
+            self.uniform_grid = mydf.grids 
             self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = self.prepareAtomicData(mydf.alpha0, getattr(mydf, 'augRadius', None))
         else:
             self.uniform_grid = BeckeGrids(self.pcell).build()
@@ -47,25 +70,6 @@ class PAWNumInt(NumInt):
         self.Ftilde_PmuArr = mydf.PAWdata[2]
         super().__init__()
 
-    # def prepareAtomicData(self, alpha0, augRadius):
-    #     pcellAtoms = []
-    #     smoothPcellAtoms = []
-    #     grids = []
-
-    #     for atomI in range(self.cell._atm.shape[0]):
-    #         pcellAtom = buildPmolAtom(self.cell, self.pcell, atomI, self.pcell.cart)
-    #         smoothpcellAtom = smoothCell(pcellAtom, alpha0)
-    #         grid = BeckeGrids(pcellAtom)
-    #         # grid = Grids(pcellAtom)
-    #         grid.build()
-    #         # grid.level = 5 # doesn't affect much
-
-    #         pcellAtoms.append(pcellAtom)
-    #         smoothPcellAtoms.append(smoothpcellAtom)
-    #         grids.append(grid)
-
-    #     return pcellAtoms, smoothPcellAtoms, grids
-    
     def prepareAtomicData(self, alpha0, augRadius):
         pcellAtoms = []
         smoothPcellAtoms = []
@@ -101,30 +105,121 @@ class PAWNumInt(NumInt):
 
         return pcellAtoms, smoothPcellAtoms, grids
 
+    def nr_rks_profiled(self, cell, grids, xc_code, dms, relativity=0, hermi=1,
+                        kpts=None, kpts_band=None, max_memory=2000, verbose=None):
+        if kpts is None:
+            kpts = numpy.zeros((1,3))
+        kpts = kpts.reshape(-1,3)
+
+        xctype = self._xc_type(xc_code)
+        if xctype == 'LDA':
+            ao_deriv = 0
+        elif xctype == 'GGA':
+            ao_deriv = 1
+        elif xctype == 'MGGA':
+            ao_deriv = 1
+        elif xctype == 'HF':
+            ao_deriv = 0
+        
+        make_rho, nset, nao = self._gen_rho_evaluator(cell, dms, hermi, False)
+        
+        nelec = numpy.zeros(nset)
+        excsum = numpy.zeros(nset)
+        shls_slice = (0, cell.nbas)
+        ao_loc = cell.ao_loc
+        deriv = 1
+        vmat = [0]*nset
+        v_hermi = 1
+        
+        # Sub-timers (Wall time)
+        t_ao = 0.0
+        t_rho = 0.0
+        t_xc = 0.0
+        t_vmat = 0.0
+        
+        loop = self.block_loop(cell, grids, nao, ao_deriv, kpts, kpts_band, max_memory)
+        
+        while True:
+            t0 = logger.perf_counter()
+            try:
+                ao_k1, ao_k2, mask, weight, coords = next(loop)
+            except StopIteration:
+                break
+            t_ao += logger.perf_counter() - t0
+            
+            for i in range(nset):
+                t0 = logger.perf_counter()
+                rho = make_rho(i, ao_k2, mask, xctype).real
+                t_rho += logger.perf_counter() - t0
+                
+                t0 = logger.perf_counter()
+                exc, vxc = self.eval_xc_eff(xc_code, rho, deriv, xctype=xctype, spin=0)[:2]
+                t_xc += logger.perf_counter() - t0
+                
+                if xctype == 'LDA':
+                    den = rho*weight
+                else:
+                    den = rho[0]*weight
+                nelec[i] += den.sum()
+                excsum[i] += den.dot(exc)
+                
+                t0 = logger.perf_counter()
+                wv = weight * vxc
+                vmat[i] += self._vxc_mat(cell, ao_k1, wv, mask, xctype,
+                                       shls_slice, ao_loc, v_hermi)
+                t_vmat += logger.perf_counter() - t0
+
+        vmat = numpy.stack(vmat)
+        vmat = vmat + vmat.conj().swapaxes(-2,-1)
+        if nset == 1:
+            nelec = nelec[0]
+            excsum = excsum[0]
+            vmat = vmat[0]
+            
+        logger.info(self.mf, 'Uniform Grid Wall-Time Profiling (nset=%d):', nset)
+        logger.info(self.mf, '  - AO Eval:        %10.4f s', t_ao)
+        logger.info(self.mf, '  - Density Build:  %10.4f s', t_rho)
+        logger.info(self.mf, '  - XC Evaluation:  %10.4f s', t_xc)
+        logger.info(self.mf, '  - Vxc Matrix:     %10.4f s', t_vmat)
+        
+        return nelec, excsum, vmat
+
     def nr_rks_uniform_smooth(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
-        cell = self.smoothCell
-        grids = self.uniform_grid
-        if self._xc_type(xc_code) == 'HF':
-            temp = xc_code
-            xc_code = 'lda' # still want to check electron density
-            nelec1, exc1, vxc1 = nr_rks(
-                self, cell, grids, xc_code, dms, spin, relativity,
-                hermi, kpt, kpts_band, max_memory, verbose
-            )
-            exc1 = 0
-            vxc1 = numpy.zeros_like(vxc1)
-            xc_code = temp
-        else:
-            nelec1, exc1, vxc1 = nr_rks(
-                self, cell, grids, xc_code, dms, spin, relativity,
-                hermi, kpt, kpts_band, max_memory, verbose
-            )
-        return nelec1, exc1, vxc1
+        # Switch between Multigrid and Profiled standard integration
+        if self.with_multigrid and self._xc_type(xc_code) != 'HF':
+            dm_multigrid = dms
+            if dm_multigrid.ndim == 2:
+                dm_multigrid = dm_multigrid[numpy.newaxis, ...]
+            
+            # multigrid_pair.nr_rks returns (nelec, excsum, vmat) 
+            # This matches standard PySCF order.
+            nelec1, exc1, vxc1 = self.mg_ni.nr_rks(self.smoothCell, self.uniform_grid, xc_code, dm_multigrid, 
+                                                   relativity=relativity, hermi=hermi, 
+                                                   kpts=kpt, kpts_band=kpts_band)
+            
+            if isinstance(vxc1, numpy.ndarray) and vxc1.ndim == 3 and vxc1.shape[0] == 1:
+                vxc1 = vxc1[0]
+            
+            return nelec1, exc1, vxc1
+
+        # Profiled standard path
+        if self._xc_type(xc_code) != 'HF':
+             return self.nr_rks_profiled(self.smoothCell, self.uniform_grid, xc_code, dms, 
+                                         relativity, hermi, kpt, kpts_band, max_memory, verbose)
+
+        # Fallback for HF
+        nelec1, exc1, vxc1 = self.nr_rks_profiled(
+            self, self.smoothCell, self.uniform_grid, 'lda', dms, spin, relativity,
+            hermi, kpt, kpts_band, max_memory, verbose
+        )
+        return nelec1, 0, numpy.zeros_like(vxc1)
     
     def nr_rks_atomic_sharp(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
         nelec2 = 0
         exc2 = 0
         vxc2 = numpy.zeros((self.cell.nao, self.cell.nao))
+        if self.smoothPcellAtoms == []:
+            return nelec2, exc2, vxc2
 
         f = self.F_PmuArr
         l = self.localIdx
@@ -167,6 +262,8 @@ class PAWNumInt(NumInt):
         nelec3 = 0
         exc3 = 0
         vxc3 = numpy.zeros((self.cell.nao, self.cell.nao))
+        if self.smoothPcellAtoms == []:
+            return nelec3, exc3, vxc3
 
         f = self.Ftilde_PmuArr
         l = self.localIdx

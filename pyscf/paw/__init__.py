@@ -65,7 +65,9 @@ def getPAWdataNew(mol,
     #     pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
 
     # Evaluate AOs on uniform grid
+    start = time.time()
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+    print(f'AO eval on all grids take {time.time() - start: .2e} seconds')
     gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
 
     # Prepare PAW data
