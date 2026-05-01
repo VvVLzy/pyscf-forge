@@ -32,11 +32,55 @@ def smoothCell(mol, alpha0):
     smoothMol._env = env2Mod
     return smoothMol
 
+def smoothCell2(mol, alpha0):
+    smoothMol = mol.copy()
+    new_bas = smoothMol._bas.copy()
+    
+    # Identify the start of basis data in env to keep coordinates and constants
+    # Basis pointers (exponents and coefficients) are in columns 5 and 6
+    bas_pointers = numpy.concatenate([mol._bas[:, 5], mol._bas[:, 6]])
+    split_ptr = int(numpy.min(bas_pointers)) # all exp and conc coeff start from this index
+    
+    new_env = list(mol._env[:split_ptr])
+    
+    for i in range(len(new_bas)):
+        nprim = new_bas[i, 2]
+        nconc = new_bas[i, 3]
+        ptr_exp = new_bas[i, 5]
+        ptr_coeff = new_bas[i, 6]
+        
+        exps = mol._env[ptr_exp : ptr_exp + nprim]
+        coeffs = mol._env[ptr_coeff : ptr_coeff + nprim * nconc].reshape(nconc, nprim)
+        
+        mask = exps <= alpha0
+        new_nprim = numpy.count_nonzero(mask)
+        
+        if new_nprim > 0:
+            filtered_exps = exps[mask]
+            filtered_coeffs = coeffs[:, mask]
+        else:
+            # Keep one dummy primitive with zero coefficient to maintain nao consistency
+            # and avoid nprim=0 which might cause issues in some PySCF routines.
+            new_nprim = 1
+            filtered_exps = numpy.array([alpha0])
+            filtered_coeffs = numpy.zeros((nconc, 1))
+            
+        # Update env and pointers
+        new_bas[i, 5] = len(new_env)
+        new_env.extend(filtered_exps)
+        new_bas[i, 6] = len(new_env)
+        new_env.extend(filtered_coeffs.ravel())
+        new_bas[i, 2] = new_nprim
+        
+    smoothMol._env = numpy.array(new_env)
+    smoothMol._bas = new_bas
+    return smoothMol
+
 class PAWNumInt(NumInt):
     def __init__(self, mydf, mf, uniform=True, with_multigrid=0):
         self.mf = mf
         self.cell = mydf.cell
-        self.smoothCell = smoothCell(self.cell, mydf.alpha0)
+        self.smoothCell = smoothCell2(self.cell, mydf.alpha0)
         self.pcell = mydf.pcell
         self.with_multigrid = with_multigrid
         
@@ -77,7 +121,7 @@ class PAWNumInt(NumInt):
 
         for atomI in range(self.cell._atm.shape[0]):
             pcellAtom = buildPmolAtom(self.cell, self.pcell, atomI, self.pcell.cart)
-            smoothpcellAtom = smoothCell(pcellAtom, alpha0)
+            smoothpcellAtom = smoothCell2(pcellAtom, alpha0)
 
             # filter the grid
             atomGrid = BeckeGrids(pcellAtom)

@@ -13,6 +13,7 @@ import jax.scipy as jsp
 import pyscf
 from pyscf import gto, lib
 from pyscf.pbc import gto as pgto
+from pyscf.pbc.dft.multigrid import multigrid_pair
 from pyscf.pbc.df.rsdf_builder import _RSNucBuilder
 from pyscf.pbc.lib.kpts_helper import unique
 from pyscf.pbc.df import GDF, incore
@@ -904,7 +905,7 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     ###
 
     Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
+    dv = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
     moOnR = smart_einsum('ra,am->rm', aoOnR_tilde, occMo)
     density = smart_einsum('rm,rm->r', moOnR.conj(), moOnR)
@@ -917,13 +918,64 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         numpy.add.at(density, gridIdx[atomI], smart_einsum('L,rL->r', zg, gOnR[atomI]))
     potential = numpy.fft.ifftn( FF * numpy.fft.fftn(density.reshape(mesh))).real.flatten()
 
-    J = smart_einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)*f
+    J = smart_einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)*dv
     assert(J.shape[0] == cell.nao)
     assert(J.shape[1] == cell.nao)
 
     for atomI in range(cell._atm.shape[0]):
         # el+comp-compOnA
-        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*f
+        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*dv
+        GL  = smart_einsum('L,RSL->RS', zg2, M_PQLarr[atomI])
+        numpy.add.at(
+            J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
+             smart_einsum('RS,Rm,Sn->mn', GL, F_Pmu[atomI], F_Pmu[atomI])\
+            -smart_einsum('RS,Rm,Sn->mn', GL, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])
+        )
+    
+    return J*2
+
+def getjSmoothPW1(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+
+    # Use alpha-DM to match getjSmoothPW logic (which returns J*2)
+    dm_alpha = dm / 2
+    dm_val = dm_alpha[0, 0, :, :]
+
+    # Pass 1: AO -> Grid (Smooth Density)
+    # Use multigrid for efficient collocation on the smooth basis
+    rhoG = multigrid_pair._eval_rhoG(mg_ni, dm_alpha, hermi=1, kpts=numpy.zeros((1,3)), deriv=0)
+    
+    Ng = numpy.prod(mesh)
+    dv = cell.vol / Ng
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    # Transform back to the fine grid for adding local compensating charges
+    # rhoG from _eval_rhoG is already scaled by weight (Vol/Ng)
+    rhoR = numpy.fft.ifftn(rhoG.reshape(mesh)).real.flatten() * (1./dv)
+    
+    for atomI in range(cell._atm.shape[0]):
+        submat = dm_val[localIdx[atomI]][:, localIdx[atomI]]
+        DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
+        DPQtilde = smart_einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
+        zg = smart_einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
+        numpy.add.at(rhoR, gridIdx[atomI], smart_einsum('L,rL->r', zg, gOnR[atomI]))
+
+    # Poisson in G-space
+    # Standard FFT (unscaled)
+    rhoG_total = numpy.fft.fftn(rhoR.reshape(mesh))
+    vG = rhoG_total * FF
+    
+    # Pass 2: Grid -> Matrix (Smooth Potential Integration)
+    # Note: _get_j_pass2 expects vG * weight
+    wv_freq = vG * dv
+    J = multigrid_pair._get_j_pass2(mg_ni, wv_freq, kpts=numpy.zeros((1,3)), hermi=1)
+    while J.ndim > 2:
+        J = J[0]
+    
+    # Local Matrix Corrections (zg2 terms)
+    potential = numpy.fft.ifftn(vG).real.flatten()
+    for atomI in range(cell._atm.shape[0]):
+        # el+comp-compOnA
+        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*dv
         GL  = smart_einsum('L,RSL->RS', zg2, M_PQLarr[atomI])
         numpy.add.at(
             J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
@@ -1652,10 +1704,14 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
     alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
 
-    dv = mol.vol/grids.shape[0]
+    if hasattr(grids, 'coords'):
+        coords = grids.coords
+    else:
+        coords = grids
+    dv = mol.vol/coords.shape[0]
     
     print('Making augmentation sphere for uniform grid:')
-    WignerSeitzData = makeWignerSeitz(grids, mol, Periodic=True)
+    WignerSeitzData = makeWignerSeitz(coords, mol, Periodic=True)
     gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
 
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
@@ -1711,14 +1767,13 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
         Ftilde_Pmu[:, idxToFit] = F_fitted
 
         ### check normalization of fitted AO and original AO
-        gridOnA = grids[gridIdx[atomI]]
+        gridOnA = coords[gridIdx[atomI]]
         AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
         primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
         fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
         print(AOOnA.sum(axis=0)*dv)
         print(fAOOnA.sum(axis=0)*dv)
         print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
-        import pdb; pdb.set_trace()
 
         # set local, a-centered function directly as contraction coefficient (no fitting)
         diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
@@ -2149,14 +2204,15 @@ def getAuxbasis(pmol):
     return auxbas
 
 # PAW nuclear
-def getnuc_PAW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    nuc1 = getNucPAWSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
-    nuc2 = getNucPAWSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
-    nuc3 = getNucPAWSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
+def getnuc_PAW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, mg_ni, Periodic=False):
+    # cell, self.mesh, self.aoOnR_tilde, self.PAWdata, self.PAWNucdata, self.Periodic
+    # nuc1 = getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic=Periodic)
+                            #  cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic
+    nuc1 = getNucPAWSmoothPW1(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic)
+    nuc2 = getNucPAWSharpLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic=Periodic)
+    nuc3 = getNucPAWSmoothLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic=Periodic)
 
     return nuc1+nuc2+nuc3
-    # return nuc2
-    # return nuc1, nuc3
 
 
 def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
@@ -2166,6 +2222,7 @@ def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic
     VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
 
     Ng = numpy.prod(mesh)
+    import pdb; pdb.set_trace()
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
     density = numpy.zeros((Ng,))
@@ -2191,11 +2248,49 @@ def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic
     
     return numpy.array([nuc])
 
+def getNucPAWSmoothPW1(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic):
+    # TODO: generalize to multiple k-points
+    
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWElecdata
+    VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
+
+    Ng = numpy.prod(mesh)
+    dv = (cell.vol/Ng)
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    rhoR = numpy.zeros((Ng,))
+
+    for atomI in range(cell._atm.shape[0]):
+        update = smart_einsum('g,rg->r', M_PQLarrNuc[atomI], gOnR[atomI])*ZNucArr[atomI]
+        numpy.add.at(rhoR, gridIdx[atomI], update)
+
+    rhoG_total = numpy.fft.fftn(rhoR.reshape(mesh))
+    vG = rhoG_total * FF
+    
+    # Pass 2: Grid -> Matrix (Smooth Potential Integration)
+    # Note: _get_j_pass2 expects vG * weight
+    wv_freq = vG * dv
+    nuc = multigrid_pair._get_j_pass2(mg_ni, wv_freq, kpts=numpy.zeros((1,3)), hermi=1)
+    while nuc.ndim > 2:
+        nuc = nuc[0]
+
+    potential = numpy.fft.ifftn(vG).real.flatten()
+    for atomI in range(cell._atm.shape[0]):
+        # compnuc-compOnA
+        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*dv
+        GL  = smart_einsum('L,RSL->RS', zg2, M_PQLarr[atomI])
+        numpy.add.at(
+            nuc, numpy.ix_(localIdx[atomI], localIdx[atomI]),
+             smart_einsum('RS,Rm,Sn->mn', GL, F_Pmu[atomI], F_Pmu[atomI])\
+            -smart_einsum('RS,Rm,Sn->mn', GL, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])
+        )
+    
+    return numpy.array([nuc])
+
 def getNucPAWSharpLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWElecdata
     VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
 
-    nao = aoOnR_tilde.shape[1]
+    nao = cell.nao
     nuc = numpy.zeros((nao, nao))
 
     for atomI in range(cell._atm.shape[0]):
@@ -2210,7 +2305,7 @@ def getNucPAWSmoothLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Perio
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWElecdata
     VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
 
-    nao = aoOnR_tilde.shape[1]
+    nao = cell.nao
     nuc = numpy.zeros((nao, nao))
 
     for atomI in range(cell._atm.shape[0]):

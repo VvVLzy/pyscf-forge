@@ -25,7 +25,7 @@ basis = "ccpvdz"
 verbose = 4
 a = numpy.eye(3) * L
 ke_cutoff = 200
-precision = 1e-8
+precision = 1e-5
 
 cell = pgto.M(
     atom        = atom,
@@ -54,10 +54,10 @@ def single_point_paw_manual(alpha0=None, Rb=None):
     mf_per_rks_paw = pscf.RKS(cell)
     mf_per_rks_paw.init_guess = init_guess
     mf_per_rks_paw.xc = xc
-    mf_per_rks_paw.max_cycle = 1
+    mf_per_rks_paw.max_cycle = 2
     mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
     mf_per_rks_paw.with_df = mydf
-    pawnumint = PAWNumInt(mydf, mf_per_rks_paw)
+    pawnumint = PAWNumInt(mydf, mf_per_rks_paw, with_multigrid=2)
     mf_per_rks_paw._numint = pawnumint
     mf_per_rks_paw.kernel()
 

@@ -8,6 +8,9 @@ from pyscf.pbc.df.gdf_builder import _CCNucBuilder
 from pyscf.pbc.df.rsdf_builder import _RSNucBuilder
 from pyscf.lib import logger
 
+from .vxc import smoothCell2
+from pyscf.pbc.dft.multigrid.multigrid_pair import MultiGridNumInt as MultiGridNumInt2
+
 import pyscf
 import numpy
 
@@ -66,7 +69,8 @@ def getPAWdataNew(mol,
 
     # Evaluate AOs on uniform grid
     start = time.time()
-    aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+    # aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+    aoOnR, aoOnR_tilde = 0, 0
     print(f'AO eval on all grids take {time.time() - start: .2e} seconds')
     gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
 
@@ -186,11 +190,16 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
             #                             mydf.PAWdata,
             #                             Periodic=mydf.Periodic)
             cpu0 = (logger.process_clock(), logger.perf_counter())
-            vj1 = PAWutils.getjSmoothPW(cell, dm, 
-                                        mydf.aoOnR_tilde,
+            vj1 = PAWutils.getjSmoothPW1(cell, dm,
+                                        mydf.mg_ni,
                                         mydf.mesh,
                                         mydf.PAWdata,
                                         Periodic=mydf.Periodic)
+            # vj1 = PAWutils.getjSmoothPW(cell, dm, 
+            #                             mydf.aoOnR_tilde,
+            #                             mydf.mesh,
+            #                             mydf.PAWdata,
+            #                             Periodic=mydf.Periodic)
             logger.timer(mydf, 'vj PW', *cpu0)
             cpu0 = (logger.process_clock(), logger.perf_counter())
             vj2 = PAWutils.getjSharpLocal(cell, dm, 
@@ -651,6 +660,14 @@ class NewPAW(FFTDF):
 
         self.initPAW(cell, alpha0)
 
+        # temporary for testing, tidy up required
+        self.smoothCell = smoothCell2(self.cell, self.alpha0)
+        self.smoothCell.precision = min(self.cell.precision, 1e-10)
+        self.mg_ni = MultiGridNumInt2(self.smoothCell)
+        self.mg_ni.mesh = self.grids.mesh
+        self.mg_ni.xc_with_j = False
+        self.mg_ni.ntasks = 1
+        self.mg_ni.build()
         
 
         # update get_jk
@@ -719,7 +736,7 @@ class NewPAW(FFTDF):
             nuc = dfbuilder.get_nuc()
         else:
             nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                      self.PAWNucdata, self.Periodic)
+                                      self.PAWNucdata, self.mg_ni, self.Periodic)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
