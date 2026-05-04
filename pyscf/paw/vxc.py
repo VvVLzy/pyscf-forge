@@ -4,7 +4,7 @@ from pyscf.pbc.dft.numint import NumInt, KNumInt, nr_rks
 from pyscf.pbc.dft.gen_grid import BeckeGrids
 from pyscf.dft.gen_grid import Grids
 from pyscf.lib import logger
-from .PAWutils import buildPmolAtom, makeWignerSeitz
+from .PAWutils import buildPmolAtom, makeWignerSeitz, get_vxc_and_j_smooth
 # Use the multigrid_pair version as requested
 from pyscf.pbc.dft.multigrid.multigrid_pair import MultiGridNumInt as MultiGridNumInt2
 from pyscf.pbc.dft.multigrid import MultiGridNumInt
@@ -77,20 +77,28 @@ def smoothCell2(mol, alpha0):
     return smoothMol
 
 class PAWNumInt(NumInt):
-    def __init__(self, mydf, mf, uniform=True, with_multigrid=0):
+    def __init__(self, mydf, mf, uniform=True, with_multigrid=0, use_merged_multigrid=False):
         self.mf = mf
         self.cell = mydf.cell
         self.smoothCell = smoothCell2(self.cell, mydf.alpha0)
         self.pcell = mydf.pcell
+
         self.with_multigrid = with_multigrid
+        self.use_merged_multigrid = use_merged_multigrid
         
-        if self.with_multigrid == 1:
+        # Prefer reusing mg_ni from the density fitting object (mydf)
+        if getattr(mydf, 'mg_ni', None) is not None:
+            self.mg_ni = mydf.mg_ni
+            self.smoothCell = getattr(mydf, 'smoothCell', self.smoothCell)
+            self.with_multigrid = mydf.with_multigrid
+            self.use_merged_multigrid = mydf.use_merged_multigrid
+        elif with_multigrid == 1:
             # Initialize Multigrid (pair version) for the smooth component
             self.mg_ni = MultiGridNumInt(self.smoothCell)
             self.mg_ni.mesh = mydf.grids.mesh
             self.mg_ni.xc_with_j = False
             self.mg_ni.build()
-        elif self.with_multigrid == 2:
+        elif with_multigrid == 2:
             # Initialize Multigrid (pair version) for the smooth component
             # Ensure smoothCell has enough precision for multigrid_pair (version 2)
             # which lacks the internal EXPDROP safeguard present in version 1.
@@ -98,7 +106,7 @@ class PAWNumInt(NumInt):
             self.mg_ni = MultiGridNumInt2(self.smoothCell)
             self.mg_ni.mesh = mydf.grids.mesh
             self.mg_ni.xc_with_j = False
-            self.mg_ni.ntasks = 1
+            self.mg_ni.ntasks = 5
             self.mg_ni.build()
         else:
             self.mg_ni = None
@@ -230,32 +238,52 @@ class PAWNumInt(NumInt):
 
     def nr_rks_uniform_smooth(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
         # Switch between Multigrid and Profiled standard integration
-        if self.with_multigrid and self._xc_type(xc_code) != 'HF':
-            dm_multigrid = dms
-            if dm_multigrid.ndim == 2:
-                dm_multigrid = dm_multigrid[numpy.newaxis, ...]
-            
-            # multigrid_pair.nr_rks returns (nelec, excsum, vmat) 
-            # This matches standard PySCF order.
-            nelec1, exc1, vxc1 = self.mg_ni.nr_rks(self.smoothCell, self.uniform_grid, xc_code, dm_multigrid, 
-                                                   relativity=relativity, hermi=hermi, 
-                                                   kpts=kpt, kpts_band=kpts_band)
-            
-            if isinstance(vxc1, numpy.ndarray) and vxc1.ndim == 3 and vxc1.shape[0] == 1:
-                vxc1 = vxc1[0]
-            
-            return nelec1, exc1, vxc1
+        if self.with_multigrid:
+            if self.use_merged_multigrid:
+                dm_multigrid = dms
+                if dm_multigrid.ndim == 2:
+                    dm_multigrid = dm_multigrid[numpy.newaxis, ...]
+                if dm_multigrid.ndim == 3: # (nkpts, nao, nao)
+                    dm_multigrid = dm_multigrid[numpy.newaxis, ...]
+
+                # Call combined Hartree and XC multigrid pass
+                nelec1, exc1, ecoul1, vxc1, vj1 = get_vxc_and_j_smooth(
+                    self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata, 
+                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt
+                )
+                
+                # Cache vj1 for NewPAW.get_jk
+                self.mf.with_df._cached_vj1 = vj1
+                self.mf.with_df._cached_vj1_dm = dms
+                
+                vxc1 = lib.tag_array(vxc1, ecoul=ecoul1, exc=exc1, vj=vj1, vk=None)
+                
+                return nelec1, exc1, vxc1
+            else:
+                # vj1 will be computed separately in get_jk
+                dm_multigrid = dms
+                if dm_multigrid.ndim == 2:
+                    dm_multigrid = dm_multigrid[numpy.newaxis, ...]
+                
+                # multigrid_pair.nr_rks returns (nelec, excsum, vmat) 
+                # This matches standard PySCF order.
+                nelec1, exc1, vxc1 = self.mg_ni.nr_rks(self.smoothCell, self.uniform_grid, xc_code, dm_multigrid, 
+                                                    relativity=relativity, hermi=hermi, 
+                                                    kpts=kpt, kpts_band=kpts_band)
+                
+                if isinstance(vxc1, numpy.ndarray) and vxc1.ndim == 3 and vxc1.shape[0] == 1:
+                    vxc1 = vxc1[0]
+                
+                return nelec1, exc1, vxc1
 
         # Profiled standard path
         if self._xc_type(xc_code) != 'HF':
              return self.nr_rks_profiled(self.smoothCell, self.uniform_grid, xc_code, dms, 
                                          relativity, hermi, kpt, kpts_band, max_memory, verbose)
 
-        # Fallback for HF
-        nelec1, exc1, vxc1 = self.nr_rks_profiled(
-            self, self.smoothCell, self.uniform_grid, 'lda', dms, spin, relativity,
-            hermi, kpt, kpts_band, max_memory, verbose
-        )
+        # Fallback for HF (still want to count electrons)
+        nelec1, exc1, vxc1 = self.nr_rks_profiled(self.smoothCell, self.uniform_grid, 'lda', dms, 
+                                                  relativity, hermi, kpt, kpts_band, max_memory, verbose)
         return nelec1, 0, numpy.zeros_like(vxc1)
     
     def nr_rks_atomic_sharp(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
