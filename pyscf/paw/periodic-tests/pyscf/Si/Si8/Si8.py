@@ -55,9 +55,9 @@ def single_point_paw_manual(alpha0=None, Rb=None):
     mf_per_rks_paw.init_guess = init_guess
     mf_per_rks_paw.xc = xc
     mf_per_rks_paw.max_cycle = 2
-    mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+    mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb, with_multigrid=2).build()
     mf_per_rks_paw.with_df = mydf
-    pawnumint = PAWNumInt(mydf, mf_per_rks_paw, with_multigrid=2)
+    pawnumint = PAWNumInt(mydf, mf_per_rks_paw)
     mf_per_rks_paw._numint = pawnumint
     mf_per_rks_paw.kernel()
 
