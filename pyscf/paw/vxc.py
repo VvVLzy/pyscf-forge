@@ -140,7 +140,7 @@ class PAWNumInt(NumInt):
                 if isinstance(augRadius, (list, numpy.ndarray)):
                     radius = augRadius[atomI]
                 
-                atomGridDist = makeWignerSeitz(atomGrid.coords, pcellAtom, Periodic=self.mf.with_df.Periodic)[1]
+                atomGridDist = makeWignerSeitz(atomGrid.coords, pcellAtom, Periodic=True)[1]
                 allIdx = numpy.where(atomGridDist[0, :] < radius)[0]
                 atomGrid.coords = atomGrid.coords[allIdx]
                 atomGrid.weights = atomGrid.weights[allIdx]
@@ -280,6 +280,10 @@ class PAWNumInt(NumInt):
         if self._xc_type(xc_code) != 'HF':
              return self.nr_rks_profiled(self.smoothCell, self.uniform_grid, xc_code, dms, 
                                          relativity, hermi, kpt, kpts_band, max_memory, verbose)
+            #  return nr_rks(
+            #     self, self.smoothCell, self.uniform_grid, xc_code, dms, spin, relativity,
+            #     hermi, kpt, kpts_band, max_memory, verbose
+            # )
 
         # Fallback for HF (still want to count electrons)
         nelec1, exc1, vxc1 = self.nr_rks_profiled(self.smoothCell, self.uniform_grid, 'lda', dms, 

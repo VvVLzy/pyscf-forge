@@ -48,7 +48,7 @@ xc = 'pbe'
 mf_per_rks_paw = pscf.RKS(cell)
 mf_per_rks_paw.init_guess = init_guess
 mf_per_rks_paw.xc = xc
-mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=10, augRadius=1.5).build()
+mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=10, augRadius=1.5, with_multigrid=0).build()
 mf_per_rks_paw.with_df = mydf
 
 def testmakeWignerSeitz():
@@ -361,7 +361,7 @@ def testMultiGridJ():
     from pyscf import lib
     from pyscf.paw.vxc import PAWNumInt
     from PAWutilsNumpy import getjSmoothPW as old
-    from PAWutilsNumpy import getjSmoothPW1 as new
+    from PAWutilsNumpy import getjSmoothPW2 as new
 
     nk, nao = 1, cell.nao
     mo_coeff = numpy.random.random((1, nk, nao, nao))
@@ -379,10 +379,10 @@ def testMultiGridJ():
     ni.mg_ni.build()
 
     start = time.time()
-    result = old(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=True)
+    result = old(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False)
     print(f'Incore AO takes {time.time() - start}')
     start = time.time()
-    result1 = new(cell, dm, ni.mg_ni, mesh, PAWdata, Periodic=True)
+    result1 = new(cell, dm, ni.mg_ni, mesh, PAWdata, Periodic=False)
     print(f'MG on the fly takes {time.time() - start}')
 
     print(numpy.max(numpy.abs((result - result1))))

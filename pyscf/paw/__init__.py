@@ -275,10 +275,10 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                 vj1 = mydf._cached_vj1
             else:
                 vj1 = PAWutils.getjSmoothPW2(cell, dm,
-                                                mydf.mg_ni,
-                                            mydf.mesh,
-                                            mydf.PAWdata,
-                                            Periodic=mydf.Periodic)
+                                             mydf.mg_ni,
+                                             mydf.mesh,
+                                             mydf.PAWdata,
+                                             Periodic=mydf.Periodic)
         else:
             assert(mydf.with_multigrid == 0)
 
@@ -749,6 +749,7 @@ class NewPAW(FFTDF):
         self.PAWdata = PAWdata
         self.PAWNucdata = PAWNucdata
         self.Rgrid = Rgrid
+        self.cell = mol
         self.pcell = pmol
         self.gcell = gmol
         self.ctr_coeff = ctr_coeff
