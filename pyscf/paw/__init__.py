@@ -1,6 +1,7 @@
 from pyscf.pbc.df.fft import FFTDF
 from pyscf.pbc.df.aft import _check_kpts
 from pyscf.pbc.tools.k2gamma import kpts_to_kmesh
+from pyscf.pbc import gto as pgto
 from pyscf import lib
 from pyscf import __config__
 from pyscf.df import df_jk
@@ -27,8 +28,8 @@ def getPAWdataNew(mol,
                Periodic = False,
                alpha0=None,
                augRadius=None,
-               with_multigrid=2):
-
+               with_multigrid=2,
+               alpha0_lowmem=True):
     mol.build()
     if (not Periodic):
         mol                          = PAWutils.prepareMolForPAW(mol)
@@ -51,11 +52,31 @@ def getPAWdataNew(mol,
     #     alpha0_wf = alpha0/2
 
     # get alpha0
-    if alpha0 is None:
-        alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+    if alpha0_lowmem:
+        # Mini-cell implementation: Use a small box with same resolution (ke_cutoff)
+        test_cell = pgto.M(
+            atom='He 5 5 5',
+            basis=pmol.basis,
+            a=numpy.eye(3) * 10.0,
+            unit='B',
+            ke_cutoff=pmol.ke_cutoff,
+            verbose=0
+        )
+        t_pmol, _ = test_cell.decontract_basis()
+        t_pmol._basis = PAWutils.modifyMolBasis(t_pmol._basis)
+        t_mesh = t_pmol.mesh
+        t_Rgrid = t_pmol.get_uniform_grids(mesh=t_mesh)
+        if alpha0 is None:
+            alpha0, alpha0_wf = PAWutils.getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
+        else:
+            _, _ = PAWutils.getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
+            alpha0_wf = alpha0/2
     else:
-        _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
-        alpha0_wf = alpha0/2
+        if alpha0 is None:
+            alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+        else:
+            _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+            alpha0_wf = alpha0/2
 
     alpha0_wf = alpha0 # must be this!
 
@@ -76,7 +97,7 @@ def getPAWdataNew(mol,
     else:
         aoOnR, aoOnR_tilde = 0, 0
     print(f'AO eval on all grids take {time.time() - start: .2e} seconds')
-    gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
+    gOnRAll = None
 
     # Prepare PAW data
     result = PAWutils.separateNuclearElectron(
@@ -134,7 +155,7 @@ def getPAWdata(mol,
 
     # Evaluate AOs on uniform grid
     aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
-    gOnRAll = gmol.pbc_eval_gto('GTOval', Rgrid)
+    gOnRAll = None
 
     # Prepare PAW data
     result = PAWutils.separateNuclearElectron(
@@ -639,13 +660,14 @@ class NewPAW(FFTDF):
             kpts=None,
             printLevel=1,
             PAWorbitalCutOff=1e-8,
-            PWAccuracy=1e-5,
+            PWAccuracy=1e-8,
             Periodic=False,
             alpha0=None,
             augRadius=None,
             gdfNuc=False,
             with_multigrid=2,
-            use_merged_multigrid=True
+            use_merged_multigrid=True,
+            alpha0_lowmem=True
     ):
         
         self.scf_iter = 0
@@ -674,6 +696,7 @@ class NewPAW(FFTDF):
         self.gdfNuc = gdfNuc
         self.with_multigrid = with_multigrid
         self.use_merged_multigrid = use_merged_multigrid
+        self.alpha0_lowmem = alpha0_lowmem
         self.Times_ = {
             "Diagonalize":0.,
             "Exchange"   :0.,
@@ -700,7 +723,7 @@ class NewPAW(FFTDF):
                 self.mg_ni = MultiGridNumInt2(self.smoothCell)
                 self.mg_ni.mesh = self.grids.mesh
                 self.mg_ni.xc_with_j = False
-                self.mg_ni.ntasks = 1 # consider making this a user input
+                self.mg_ni.ntasks = 5 # consider making this a user input
                 self.mg_ni.build()
         else:
             self.mg_ni = None
@@ -722,7 +745,8 @@ class NewPAW(FFTDF):
             Periodic=self.Periodic,
             alpha0=alpha0,
             augRadius=self.augRadius,
-            with_multigrid=self.with_multigrid
+            with_multigrid=self.with_multigrid,
+            alpha0_lowmem=self.alpha0_lowmem
         )
 
         self.augRadius = Rs

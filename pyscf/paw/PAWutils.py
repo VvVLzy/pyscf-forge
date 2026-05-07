@@ -134,7 +134,7 @@ def addSharpGTO2Atom(mol):
 
     return mol
 
-def makeWignerSeitz(Rgrid, mol, Periodic=False):
+def makeWignerSeitz1(Rgrid, mol, Periodic=False):
     def makeWignerSeitz4Grid(grid):
         grid = numpy.array(grid) # (N, 3)
         atomPos = numpy.asarray([mol._atom[i][1] for i in range(len(mol._atom))]) # [A, 3]
@@ -157,6 +157,43 @@ def makeWignerSeitz(Rgrid, mol, Periodic=False):
             atomGridDistances.append(makeWignerSeitz4Grid(Rgrid_shifted))
 
         atomGridDistance = numpy.min(atomGridDistances, axis=0) # (Na, Ng)
+    else:
+        atomGridDistance = makeWignerSeitz4Grid(Rgrid)
+
+    closestAtomToGrid = numpy.argmin(atomGridDistance, axis=0)
+
+    return closestAtomToGrid, atomGridDistance, Rgrid
+
+def makeWignerSeitz(Rgrid, mol, Periodic=False):
+    '''
+    low memory version
+    '''
+    def makeWignerSeitz4Grid(grid):
+        grid = numpy.array(grid) # (N, 3)
+        atomPos = numpy.asarray([mol._atom[i][1] for i in range(len(mol._atom))]) # [A, 3]
+        # Optimized: Calculate distances one atom at a time to avoid (A, N, 3) intermediate
+        atomGridDistance = numpy.empty((len(atomPos), len(grid)))
+        for i, pos in enumerate(atomPos):
+            atomGridDistance[i] = numpy.sqrt(numpy.sum((grid - pos)**2, axis=-1))
+        return atomGridDistance
+
+    if Periodic:
+        nx = (-1, 0, 1)
+        ny = (-1, 0, 1)
+        nz = (-1, 0, 1)
+        prod = list(itertools.product(nx, ny, nz))
+        L = mol.lattice_vectors()
+
+        atomGridDistance = None
+        for coeff in prod:
+            shift = numpy.dot(coeff, L)
+            Rgrid_shifted = Rgrid + shift
+            dist = makeWignerSeitz4Grid(Rgrid_shifted)
+            if atomGridDistance is None:
+                atomGridDistance = dist
+            else:
+                # Optimized: Keep running minimum to avoid storing 27 full distance arrays
+                numpy.minimum(atomGridDistance, dist, out=atomGridDistance)
     else:
         atomGridDistance = makeWignerSeitz4Grid(Rgrid)
 
@@ -1599,6 +1636,18 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
 ########
 
 
+def get_gaussian_radius(alpha, l, eps):
+    # Find r where N * r^l * exp(-alpha * r^2) = eps
+    # Using a 1D search for simplicity and accuracy
+    r = numpy.linspace(0, 30, 3000) 
+    # Normalization factor for spherical GTO
+    from scipy.special import factorial2
+    norm = (2*alpha)**(l/2.+0.75) * numpy.sqrt(2**l / factorial2(2*l+1) / numpy.sqrt(numpy.pi))
+    val = norm * (r**l) * numpy.exp(-alpha * (r**2))
+    idx = numpy.where(val > eps)[0]
+    if len(idx) == 0: return 0.0
+    return r[idx[-1]]
+
 def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e-5):
     ##this is useful for finding points that are close to atom
     ##while taking into account the periodic images
@@ -1606,21 +1655,16 @@ def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e
     use highest L to find the radius of sphere, include all points within the radius, return both overlapped and not overlapped
     '''
     grid2Atom, atomGridDist, Rgrid = WignerSeitzData
-    Sharpbas = {}
-    for atomI in range(mol._atm.shape[0]):
-        elem = mol._atom[atomI][0]
-        Sharpbas[elem] = [ [L.max(), [alpha0, 1.]] ]
+    
     print(f'L max is :{L.max()}')
-
-    sharpMol = pgto.M(atom=mol.atom, basis=Sharpbas, a = mol.a, unit=mol.unit) 
-    sharpAOonR = sharpMol.pbc_eval_gto('GTOval_sph', Rgrid,
-                                       Ls=numpy.zeros((1,3))) # don't include periodic image here
-    Sharpalpha, Sharpatoms, SharpL, _ = getAlphaAtomsL(sharpMol._bas, sharpMol._env)
 
     gridIdx, masked_gridIdx, masks, Rs = [], [], [], []
     for atomI in range(mol._atm.shape[0]):
-        idx = numpy.where(numpy.max(numpy.abs(sharpAOonR[:, Sharpatoms==atomI]), axis=1) > epsilon)[0]
-        maxR = numpy.max(atomGridDist[atomI, idx]) if Rb==None else Rb
+        if Rb is None:
+            maxR = get_gaussian_radius(alpha0, L.max(), epsilon)
+        else:
+            maxR = Rb
+        
         # print(f'The augmentation radius is: {maxR}')
         allIdx = numpy.where(atomGridDist[atomI, :] < maxR)[0]
         mask = grid2Atom[allIdx] == atomI
