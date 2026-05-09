@@ -173,28 +173,16 @@ def getPAWdata(mol,
     return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
-    # Check if we already tagged this specific DM object
-    _last_dm = getattr(mydf, '_last_tag_dm_input', None)
-    if _last_dm is not None and dm is _last_dm:
-        return mydf._last_tag_dm_output
-
     if mydf.scf_iter == 0:
-        dm_in = numpy.asarray(dm)
+        dm = numpy.asarray(dm)
+    if getattr(dm, 'mo_coeff', None) is None:
+        dm = PAWutils.make_natural_orbitals(cell, kpts,
+                                            dm.reshape(-1, nk, nao, nao))
     else:
-        dm_in = dm
-
-    if getattr(dm_in, 'mo_coeff', None) is None:
-        tagged_dm = PAWutils.make_natural_orbitals(cell, kpts,
-                                            dm_in.reshape(-1, nk, nao, nao))
-    else:
-        mo_coeff = numpy.asarray(dm_in.mo_coeff).reshape(-1, nk, nao, nao)
-        mo_occ = numpy.asarray(dm_in.mo_occ).reshape(-1, nk, nao)
-        tagged_dm = lib.tag_array(dm_in.reshape(-1, nk, nao, nao), mo_coeff=mo_coeff, mo_occ=mo_occ)
-    
-    # Store for next time
-    mydf._last_tag_dm_input = dm
-    mydf._last_tag_dm_output = tagged_dm
-    return tagged_dm
+        mo_coeff = numpy.asarray(dm.mo_coeff).reshape(-1, nk, nao, nao)
+        mo_occ = numpy.asarray(dm.mo_occ).reshape(-1, nk, nao)
+        dm = lib.tag_array(dm.reshape(-1, nk, nao, nao), mo_coeff=mo_coeff, mo_occ=mo_occ)
+    return dm
 
 def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
                     with_j=True, with_k=True, omega=None, exxdiv=None):
@@ -222,18 +210,10 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
         vj = vk = None
         if with_j:
             cpu0 = (logger.process_clock(), logger.perf_counter())
-            if getattr(mydf, 'with_multigrid', 0) > 0:
+            if mydf.with_multigrid > 0:
                 # Check if vj1 is already cached from the XC pass
                 cached_dm = getattr(mydf, '_cached_vj1_dm', None)
-                cache_hit = False
-                if cached_dm is not None:
-                    if dm is cached_dm:
-                        cache_hit = True
-                    elif dm.shape == cached_dm.shape and numpy.allclose(dm, cached_dm, atol=1e-13, rtol=0):
-                        cache_hit = True
-                
-                if cache_hit:
-                    # print("DEBUG: J-cache HIT (periodic)")
+                if cached_dm is not None and numpy.allclose(dm, cached_dm):
                     vj1 = mydf._cached_vj1
                 else:
                     vj1 = PAWutils.getjSmoothPW2(cell, dm,
@@ -242,6 +222,8 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
                                                 mydf.PAWdata,
                                                 Periodic=mydf.Periodic)
             else:
+                assert(mydf.with_multigrid == 0)
+
                 vj1 = PAWutils.getjSmoothPW(cell, dm, 
                                             mydf.aoOnR_tilde,
                                             mydf.mesh,
@@ -261,7 +243,6 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
                                         Periodic=mydf.Periodic)
             logger.timer(mydf, 'vj atom', *cpu0)
             vj = vj1 + vj2 + vj3
-
         if with_k:
             is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
             if is_unrestricted:
@@ -325,18 +306,10 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
     vj = vk = None
     if with_j:
         cpu0 = (logger.process_clock(), logger.perf_counter())
-        if getattr(mydf, 'with_multigrid', 0) > 0:
+        if mydf.with_multigrid > 0:
             # Check if vj1 is already cached from the XC pass
             cached_dm = getattr(mydf, '_cached_vj1_dm', None)
-            cache_hit = False
-            if cached_dm is not None:
-                if dm is cached_dm:
-                    cache_hit = True
-                elif dm.shape == cached_dm.shape and numpy.allclose(dm, cached_dm, atol=1e-13, rtol=0):
-                    cache_hit = True
-            
-            if cache_hit:
-                logger.debug(mydf, "PAW J-cache HIT")
+            if cached_dm is not None and numpy.allclose(dm, cached_dm):
                 vj1 = mydf._cached_vj1
             else:
                 vj1 = PAWutils.getjSmoothPW2(cell, dm,
@@ -345,6 +318,8 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                              mydf.PAWdata,
                                              Periodic=mydf.Periodic)
         else:
+            assert(mydf.with_multigrid == 0)
+
             vj1 = PAWutils.getjSmoothPW(cell, dm, 
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
@@ -364,7 +339,6 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                     Periodic=mydf.Periodic)
         logger.timer(mydf, 'vj atom', *cpu0)
         vj = vj1 + vj2 + vj3
-
     if with_k:
         is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
         if is_unrestricted:
