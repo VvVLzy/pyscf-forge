@@ -1,6 +1,6 @@
 import numpy
 from pyscf import lib
-from pyscf.pbc.dft.numint import NumInt, KNumInt, nr_rks
+from pyscf.pbc.dft.numint import NumInt, KNumInt, nr_rks, nr_uks
 from pyscf.pbc.dft.gen_grid import BeckeGrids
 from pyscf.dft.gen_grid import Grids
 from pyscf.lib import logger
@@ -372,6 +372,137 @@ class PAWNumInt(NumInt):
             )
 
         return nelec3, exc3, vxc3
+
+    def nr_uks_uniform_smooth(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
+        if self.with_multigrid:
+            from . import tag_dm
+            nk = getattr(self.mf.with_df, 'kpts', numpy.zeros((1,3))).reshape(-1, 3).shape[0]
+            nao = self.cell.nao
+            dm_multigrid = tag_dm(self.mf.with_df, dms, self.cell, kpt, nk, nao)
+
+            if self.use_merged_multigrid:
+                # Call combined Hartree and XC multigrid pass
+                nelec1, exc1, ecoul1, vxc1, vj1 = get_vxc_and_j_smooth(
+                    self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata, 
+                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt
+                )
+                
+                # Cache vj1 for NewPAW.get_jk
+                # get_vxc_and_j_smooth now returns vj1 as (2, nao, nao) for UKS
+                self.mf.with_df._cached_vj1 = vj1
+                # Use dm_multigrid which is consistently (nset, nkpts, nao, nao)
+                self.mf.with_df._cached_vj1_dm = dm_multigrid
+                
+                vxc1 = lib.tag_array(vxc1, ecoul=ecoul1, exc=exc1, vj=vj1, vk=None)
+                
+                return nelec1, exc1, vxc1
+            else:
+                nelec1, exc1, vxc1 = self.mg_ni.nr_uks(self.smoothCell, self.uniform_grid, xc_code, dm_multigrid, 
+                                                    relativity=relativity, hermi=hermi, 
+                                                    kpts=kpt, kpts_band=kpts_band)
+                
+                if isinstance(vxc1, numpy.ndarray) and vxc1.ndim == 4 and vxc1.shape[0] == 1:
+                    vxc1 = vxc1[0]
+                
+                self.mf.with_df._cached_vj1_dm = dm_multigrid
+                
+                return nelec1, exc1, vxc1
+
+        if self._xc_type(xc_code) != 'HF':
+             return nr_uks(self, self.smoothCell, self.uniform_grid, xc_code, dms, 
+                           spin=1, relativity=relativity, hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose)
+
+        nelec1, exc1, vxc1 = nr_uks(self, self.smoothCell, self.uniform_grid, 'lda', dms, 
+                                    spin=1, relativity=relativity, hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose)
+        return nelec1, 0, numpy.zeros_like(vxc1)
+
+    def nr_uks_atomic_sharp(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
+        nelec2 = numpy.zeros(2)
+        exc2 = 0
+        vxc2 = numpy.zeros((2, self.cell.nao, self.cell.nao))
+        if self.smoothPcellAtoms == []:
+            return nelec2, exc2, vxc2
+
+        f = self.F_PmuArr
+        l = self.localIdx
+        for atomI in range(self.cell._atm.shape[0]):
+            pcellAtom = self.pcellAtoms[atomI]
+            grids = self.atomicGrids[atomI]
+            if grids.coords.size == 0:
+                continue
+
+            dm_loc = dms[:, l[atomI]][:, :, l[atomI]]
+            dm = smart_einsum('smn,Pm,Qn->sPQ', dm_loc, f[atomI], f[atomI])
+
+            if self._xc_type(xc_code) == 'HF':
+                temp = xc_code
+                xc_code = 'lda' # still want to check electron density
+                nelec2a, exc2a, vxc2a = nr_uks(
+                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
+                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
+                )
+                exc2a = 0
+                vxc2a = numpy.zeros_like(vxc2a)
+                xc_code = temp
+            else:
+                nelec2a, exc2a, vxc2a = nr_uks(
+                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
+                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
+                )
+
+            nelec2 += nelec2a
+            exc2 += exc2a
+            for s in range(2):
+                numpy.add.at(
+                    vxc2[s], numpy.ix_(l[atomI], l[atomI]),
+                    smart_einsum('PQ,Pm,Qn->mn', vxc2a[s], f[atomI], f[atomI])
+                )
+
+        return nelec2, exc2, vxc2
+
+    def nr_uks_atomic_smooth(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
+        nelec3 = numpy.zeros(2)
+        exc3 = 0
+        vxc3 = numpy.zeros((2, self.cell.nao, self.cell.nao))
+        if self.smoothPcellAtoms == []:
+            return nelec3, exc3, vxc3
+
+        f = self.Ftilde_PmuArr
+        l = self.localIdx
+        for atomI in range(self.cell._atm.shape[0]):
+            pcellAtom = self.smoothPcellAtoms[atomI]
+            grids = self.atomicGrids[atomI]
+            if grids.coords.size == 0:
+                continue
+
+            dm_loc = dms[:, l[atomI]][:, :, l[atomI]]
+            dm = smart_einsum('smn,Pm,Qn->sPQ', dm_loc, f[atomI], f[atomI])
+
+            if self._xc_type(xc_code) == 'HF':
+                temp = xc_code
+                xc_code = 'lda' # still want to check electron density
+                nelec3a, exc3a, vxc3a = nr_uks(
+                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
+                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
+                )
+                exc3a = 0
+                vxc3a = numpy.zeros_like(vxc3a)
+                xc_code = temp
+            else:
+                nelec3a, exc3a, vxc3a = nr_uks(
+                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
+                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
+                )
+
+            nelec3 += nelec3a
+            exc3 += exc3a
+            for s in range(2):
+                numpy.add.at(
+                    vxc3[s], numpy.ix_(l[atomI], l[atomI]),
+                    smart_einsum('PQ,Pm,Qn->mn', vxc3a[s], f[atomI], f[atomI])
+                )
+
+        return nelec3, exc3, vxc3
     
     def get_rho(self, cell, dm, grids, kpts=None, max_memory=2000):
         if kpts is not None and not isinstance(kpts, (numpy.ndarray, list)):
@@ -414,6 +545,49 @@ class PAWNumInt(NumInt):
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
         )
         nelec3, exc3, vxc3 = self.nr_rks_atomic_smooth(
+            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+        )
+        logger.timer(self.mf.with_df, 'vxc atomic', *cpu0)
+        logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec1)
+        logger.info(self.mf, 'all nelec with atomic grids = %s', nelec2)
+        logger.info(self.mf, 'smooth nelec with atomic grids = %s', nelec3)
+        logger.info(self.mf, 'sharp nelec with atomic grids = %s', nelec2 - nelec3)
+        nelec = nelec1 + nelec2 - nelec3
+        exc = exc1 + exc2 - exc3
+        vxc = vxc1 + vxc2 - vxc3
+        return nelec, exc, vxc
+
+    @lib.with_doc(nr_uks.__doc__)
+    def nr_uks(self, cell, grids, xc_code, dms, relativity=0, hermi=1,
+               kpt=None, kpts_band=None, max_memory=2000, verbose=None):
+        if kpt is None:
+            kpt = numpy.zeros((1,3))
+        if not isinstance(kpt, (numpy.ndarray, list)) or numpy.asarray(kpt).ndim == 0:
+            verbose = kpts_band
+            max_memory = kpt
+            kpt = numpy.zeros((1,3))
+            kpts_band = None
+
+        kpt = numpy.asarray(kpt).reshape(-1, 3)
+
+        if kpts_band is not None:
+            ni = self.view(KNumInt)
+            nao = dms.shape[-1]
+            dms = dms.reshape(-1,2,nao,nao)
+            return ni.nr_uks(cell, grids, xc_code, dms, relativity,
+                             hermi, kpt, kpts_band, max_memory, verbose)
+        spin = 1
+        
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        nelec1, exc1, vxc1 = self.nr_uks_uniform_smooth(
+            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+        )
+        logger.timer(self.mf.with_df, 'vxc uniform', *cpu0)
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        nelec2, exc2, vxc2 = self.nr_uks_atomic_sharp(
+            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+        )
+        nelec3, exc3, vxc3 = self.nr_uks_atomic_smooth(
             xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
         )
         logger.timer(self.mf.with_df, 'vxc atomic', *cpu0)
