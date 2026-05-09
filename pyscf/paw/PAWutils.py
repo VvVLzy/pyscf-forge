@@ -87,7 +87,16 @@ def pickalpha0(mol, Rb, epsilon = 1.e-5, maxL = 6):
 
     return numpy.max(alpha0)
 
-def prepareMolForPAW(mol):
+def prepareMolForPAW(mol, auto_box=False):
+    if auto_box:
+        box_lengths = estimate_box_size(mol)
+        print(f"Estimated rectangular box size (A): {box_lengths}")
+        import pdb; pdb.set_trace()
+        if mol.unit[0].capitalize() == 'A':
+            mol.a = numpy.diag(box_lengths)
+        else:
+            mol.a = numpy.diag(box_lengths) / pyscf.data.nist.BOHR
+
     ##move the atoms so they are in the center of the cell
     atomPos = numpy.asarray([mol._atom[i][1] for i in range(len(mol._atom))])
     center = numpy.sum(atomPos, axis=0)/atomPos.shape[0]    
@@ -99,10 +108,13 @@ def prepareMolForPAW(mol):
                           (atom[1][1]+displacement[1])*pyscf.data.nist.BOHR, 
                           (atom[1][2]+displacement[2])*pyscf.data.nist.BOHR]) for atom in mol._atom]
 
-    if mol.unit[0].capitalize()=='A':
-        k=mol.a
+    if getattr(mol, 'a', None) is not None:
+        if mol.unit[0].capitalize()=='A':
+            k=mol.a
+        else:
+            k=pyscf.data.nist.BOHR*mol.a
     else:
-        k=pyscf.data.nist.BOHR*mol.a
+        raise ValueError("mol.a must be defined or auto_box must be True")
 
     return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff,unit='A')
 
@@ -1695,7 +1707,7 @@ def get_gaussian_radius(alpha, l, eps):
     if len(idx) == 0: return 0.0
     return r[idx[-1]]
 
-def estimate_box_size(mol, epsilon=1e-7):
+def estimate_box_size(mol, epsilon=1e-8):
     """
     Estimates the required box size to contain a molecule's basis functions
     up to a threshold epsilon. Returns the box lengths in Angstrom.

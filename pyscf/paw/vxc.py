@@ -269,7 +269,8 @@ class PAWNumInt(NumInt):
                 # This matches standard PySCF order.
                 nelec1, exc1, vxc1 = self.mg_ni.nr_rks(self.smoothCell, self.uniform_grid, xc_code, dm_multigrid, 
                                                     relativity=relativity, hermi=hermi, 
-                                                    kpts=kpt, kpts_band=kpts_band)
+                                                    kpts=kpt, kpts_band=kpts_band,
+                                                    max_memory=max_memory, verbose=verbose)
                 
                 if isinstance(vxc1, numpy.ndarray) and vxc1.ndim == 3 and vxc1.shape[0] == 1:
                     vxc1 = vxc1[0]
@@ -375,10 +376,9 @@ class PAWNumInt(NumInt):
 
     def nr_uks_uniform_smooth(self, xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose):
         if self.with_multigrid:
-            from . import tag_dm
             nk = getattr(self.mf.with_df, 'kpts', numpy.zeros((1,3))).reshape(-1, 3).shape[0]
             nao = self.cell.nao
-            dm_multigrid = tag_dm(self.mf.with_df, dms, self.cell, kpt, nk, nao)
+            dm_multigrid = dms.reshape(-1, nk, nao, nao)
 
             if self.use_merged_multigrid:
                 # Call combined Hartree and XC multigrid pass
@@ -389,9 +389,12 @@ class PAWNumInt(NumInt):
                 
                 # Cache vj1 for NewPAW.get_jk
                 # get_vxc_and_j_smooth now returns vj1 as (2, nao, nao) for UKS
-                self.mf.with_df._cached_vj1 = vj1
-                # Use dm_multigrid which is consistently (nset, nkpts, nao, nao)
-                self.mf.with_df._cached_vj1_dm = dm_multigrid
+                
+                # As requested: store total DM for cache key
+                dm_total = dms[0] + dms[1]
+                dm_total_tagged = dm_total.reshape(-1, nk, nao, nao)
+                self.mf.with_df._cached_vj1_dm = dm_total_tagged
+                self.mf.with_df._cached_vj1 = vj1[0] + vj1[1]
                 
                 vxc1 = lib.tag_array(vxc1, ecoul=ecoul1, exc=exc1, vj=vj1, vk=None)
                 
@@ -399,10 +402,11 @@ class PAWNumInt(NumInt):
             else:
                 nelec1, exc1, vxc1 = self.mg_ni.nr_uks(self.smoothCell, self.uniform_grid, xc_code, dm_multigrid, 
                                                     relativity=relativity, hermi=hermi, 
-                                                    kpts=kpt, kpts_band=kpts_band)
+                                                    kpts=kpt, kpts_band=kpts_band,
+                                                    max_memory=max_memory, verbose=verbose)
                 
-                if isinstance(vxc1, numpy.ndarray) and vxc1.ndim == 4 and vxc1.shape[0] == 1:
-                    vxc1 = vxc1[0]
+                if isinstance(vxc1, numpy.ndarray) and vxc1.ndim == 4 and vxc1.shape[1] == 1:
+                    vxc1 = vxc1[:, 0]
                 
                 self.mf.with_df._cached_vj1_dm = dm_multigrid
                 

@@ -3,20 +3,21 @@ from pyscf import gto, scf, lib, dft
 from pyscf.pbc import gto as pgto
 import jax
 from pyscf.paw import NewPAW as PAW
+from pyscf.paw import PAWutils
 
 jax.config.update("jax_enable_x64", True)
 
 # Path setup
 # Assuming script runs from /home/lebox/Github/pyscf-forge/pyscf/paw
 geom_file = '/home/lebox/Github/pyscf-forge/pyscf/paw/molecule-tests/SLAC/dz/geoms/HighSpin-slab.xyz'
-chk_file = '/home/lebox/Github/pyscf-forge/pyscf/paw/molecule-tests/SLAC/dz/DFT/chkfiles/High_spin_clean_pbe-d3bj.chk'
+chk_file = '/home/lebox/Github/pyscf-forge/pyscf/paw/molecule-tests/candidacy/hs_clean_tz_df/High_spin_clean_pbe-d3bj.chk'
 
 # Parameters
-basis = 'def2-svpd'
+basis = 'def2-tzvp'
 spin = 4
 auxbasis = 'def2-universal-jkfit'
-ke_cutoff = 50
-alpha0 = 5
+ke_cutoff = 100
+alpha0 = 7
 
 # 1. Build Molecule
 mol = gto.Mole()
@@ -26,12 +27,14 @@ mol.spin = spin
 mol.verbose = 4
 mol.build()
 
+box_lengths = PAWutils.estimate_box_size(mol, epsilon=1e-10)
+
 # 2. Build Cell for PAW
 cell = pgto.M(
     atom = geom_file,
     basis = basis,
     spin = spin,
-    a = np.eye(3) * 30.0,
+    a = np.diag(box_lengths),
     verbose = 4,
     ke_cutoff = ke_cutoff,
 )

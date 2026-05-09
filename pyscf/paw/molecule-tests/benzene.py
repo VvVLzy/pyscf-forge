@@ -46,10 +46,11 @@ mf_mol_paw = scf.RKS(mol).density_fit()
 mf_mol_paw.xc = 'pbe'
 mf_mol_paw.init_guess = init_guess
 mydf = PAW.from_mf(mf_mol_paw, cell,
-                    alpha0=5, augRadius=None, with_multigrid=2, alpha0_lowmem=True).build()
+                    alpha0=5, augRadius=None, with_multigrid=2,
+                    alpha0_lowmem=True, auto_box=True).build()
 mf_mol_paw.with_df = mydf
-pawnumint = PAWNumInt(mydf, mf_mol_paw, use_merged_multigrid=True)
-mf_mol_paw._numint = pawnumint # this works but is no better than the default vxc
+# pawnumint = PAWNumInt(mydf, mf_mol_paw, use_merged_multigrid=True)
+# mf_mol_paw._numint = pawnumint # this works but is no better than the default vxc
 mf_mol_paw.kernel()
 
 print(f'Energy difference: {mf_mol_exact.e_tot - mf_mol_paw.e_tot}')

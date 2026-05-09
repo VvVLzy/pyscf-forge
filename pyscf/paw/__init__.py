@@ -29,10 +29,11 @@ def getPAWdataNew(mol,
                alpha0=None,
                augRadius=None,
                with_multigrid=2,
-               alpha0_lowmem=True):
+               alpha0_lowmem=True,
+               auto_box=False):
     mol.build()
     if (not Periodic):
-        mol                          = PAWutils.prepareMolForPAW(mol)
+        mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box)
 
     # uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
@@ -306,7 +307,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
     vj = vk = None
     if with_j:
         cpu0 = (logger.process_clock(), logger.perf_counter())
-        if mydf.with_multigrid > 0:
+        if getattr(mydf, 'with_multigrid', 0) > 0:
             # Check if vj1 is already cached from the XC pass
             cached_dm = getattr(mydf, '_cached_vj1_dm', None)
             if cached_dm is not None and numpy.allclose(dm, cached_dm):
@@ -394,6 +395,8 @@ class PAW(FFTDF):
                 wrap_around=True,
             )
         super().__init__(cell=self.cell, kpts=self.kpts)
+        self.stdout = cell.stdout
+        self.verbose = cell.verbose
 
         # PAW init
         self.printLevel = printLevel
@@ -463,9 +466,9 @@ class PAW(FFTDF):
         self.BeckeGrid = BeckeGrid
         
         if (self.printLevel > 0):
-            print ("Nelection   : {0:<10d}".format(nelec))
-            print ("Ngrid points: {0:<10d}".format(numpy.prod(self.cell.mesh)))
-            print ("delta-a     : {0:<10.2f}".format((self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.)))
+            logger.info(self, "Nelection   : %10d", nelec)
+            logger.info(self, "Ngrid points: %10d", numpy.prod(self.cell.mesh))
+            logger.info(self, "delta-a     : %10.2f", (self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.))
 
     def get_nuc(self, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
@@ -701,7 +704,8 @@ class NewPAW(FFTDF):
             gdfNuc=False,
             with_multigrid=2,
             use_merged_multigrid=True,
-            alpha0_lowmem=True
+            alpha0_lowmem=True,
+            auto_box=False
     ):
         
         self.scf_iter = 0
@@ -720,6 +724,8 @@ class NewPAW(FFTDF):
                 wrap_around=True,
             )
         super().__init__(cell=self.cell, kpts=self.kpts)
+        self.stdout = cell.stdout
+        self.verbose = cell.verbose
 
         # PAW init
         self.printLevel = printLevel
@@ -731,6 +737,7 @@ class NewPAW(FFTDF):
         self.with_multigrid = with_multigrid
         self.use_merged_multigrid = use_merged_multigrid
         self.alpha0_lowmem = alpha0_lowmem
+        self.auto_box = auto_box
         self.Times_ = {
             "Diagonalize":0.,
             "Exchange"   :0.,
@@ -780,7 +787,8 @@ class NewPAW(FFTDF):
             alpha0=alpha0,
             augRadius=self.augRadius,
             with_multigrid=self.with_multigrid,
-            alpha0_lowmem=self.alpha0_lowmem
+            alpha0_lowmem=self.alpha0_lowmem,
+            auto_box=self.auto_box
         )
 
         self.augRadius = Rs
@@ -815,9 +823,9 @@ class NewPAW(FFTDF):
         self.alpha0 = alpha0
         
         if (self.printLevel > 0):
-            print ("Nelection   : {0:<10d}".format(nelec))
-            print ("Ngrid points: {0:<10d}".format(numpy.prod(self.cell.mesh)))
-            print ("delta-a     : {0:<10.2f}".format((self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.)))
+            logger.info(self, "Nelection   : %10d", nelec)
+            logger.info(self, "Ngrid points: %10d", numpy.prod(self.cell.mesh))
+            logger.info(self, "delta-a     : %10.2f", (self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.))
 
     def get_nuc(self, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
