@@ -90,8 +90,8 @@ def pickalpha0(mol, Rb, epsilon = 1.e-5, maxL = 6):
 def prepareMolForPAW(mol, auto_box=False):
     if auto_box:
         box_lengths = estimate_box_size(mol)
-        print(f"Estimated rectangular box size (A): {box_lengths}")
-        import pdb; pdb.set_trace()
+        print(box_lengths)
+        logger.info(mol, "Estimated rectangular box size (A): %s", box_lengths)
         if mol.unit[0].capitalize() == 'A':
             mol.a = numpy.diag(box_lengths)
         else:
@@ -116,7 +116,7 @@ def prepareMolForPAW(mol, auto_box=False):
     else:
         raise ValueError("mol.a must be defined or auto_box must be True")
 
-    return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff,unit='A')
+    return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff, unit='A', max_memory=mol.max_memory)
 
 def addSharpGTO2Atom(mol):
     mol = mol.copy()
@@ -312,9 +312,9 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
     gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit) ##if periodic then cartesian functions
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
 
-    print('Making augmentation sphere for uniform grid:')
+    logger.debug(mol, 'Making augmentation sphere for uniform grid:')
     WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
-    gridIdx = makeAugmentationSphere(WignerSeitzData, pmol, LG, alpha0, Rb=Rb, epsilon=epsilon)[0]
+    gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere(WignerSeitzData, pmol, LG, alpha0, Rb=Rb, epsilon=epsilon)
 
     M_PQLarray, V_PQLarray, V_LLarray, gOnR = [], [], [], []
     for atomI in range(pmol._atm.shape[0]):
@@ -359,7 +359,7 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
 
-    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
+    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
 
 def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol, Rgrid, gridIdx):
     CG = ClebschGordan.RealCG
@@ -812,7 +812,7 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmolSph._bas, gmolSph._env, cart=gmolSph.cart)
     assert((alphaG == alphaG[0]).all())
 
-    print('Making augmentation sphere for uniform grid:')
+    logger.debug(mol, 'Making augmentation sphere for uniform grid:')
     WignerSeitzData = makeWignerSeitz(Rgrid, gmolSph, Periodic=Periodic)
     Lmax = numpy.array([max(LG.max(), 2)]*len(LG))
     gridIdx, _, _, Rs = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)
@@ -1007,14 +1007,18 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         
     # Pass 1: AO -> Grid (Smooth Density)
     # eval_rhoG processes the nset dimension natively
+    # start = time.time()
     rhoG = multigrid_pair._eval_rhoG(mg_ni, dm, hermi=hermi, kpts=kpt, deriv=deriv)
+    # print(f'Eval density on grid takes {time.time() - start : .1f} seconds')
     
     Ng = numpy.prod(mesh)
     dv = cell.vol / Ng
     weight = dv
     
+    # start = time.time()
     # XC Evaluation on pseudo-density only
     rhoR = numpy.fft.ifftn(rhoG.reshape(nset, -1, *mesh), axes=(2,3,4)).real.reshape(nset, -1, Ng) * (1./weight)
+    # print(f'First FFT from G to R takes {time.time() - start: .2f} seconds')
     
     if xctype == 'HF': # No XC part
         if is_uks:
@@ -1067,6 +1071,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         dm_val = dm[i, 0, :, :]
         rhoR_Ji = rhoR[i, 0].copy()
 
+        # start = time.time()
         for atomI in range(cell._atm.shape[0]):
             submat = dm_val[localIdx[atomI]][:, localIdx[atomI]]
             # Use @ for faster matrix multiplication
@@ -1079,19 +1084,25 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
             
             # rhoR_J += zg @ gOnR^T
             rhoR_Ji[gridIdx[atomI]] += gOnR[atomI] @ zg
+        # print(f'Density augmentation takes {time.time() - start: .2f} seconds')
 
+        # start = time.time()
         rhoG_Ji = numpy.fft.fftn(rhoR_Ji.reshape(mesh)).flatten()
         vG_Ji = rhoG_Ji * FF.flatten()
         
         # Use real-space integration for ecoul to ensure consistent scaling
         potential_Ji = numpy.fft.ifftn(vG_Ji.reshape(mesh)).real.flatten()
+        # print(f'Poisson solve takes {time.time() - start: .2f} seconds')
         ecoul_total += 0.5 * numpy.dot(rhoR_Ji, potential_Ji) * dv
         
         # Pass 2: Grid -> Matrix
+        # start = time.time()
         vj_mat_i = multigrid_pair._get_j_pass2(mg_ni, vG_Ji * weight, kpts=kpt, hermi=hermi)
         while vj_mat_i.ndim > 2: vj_mat_i = vj_mat_i[0]
+        # print(f'Pass 2 integration takes {time.time() - start: .2f} seconds')
         
         # Local Hartree Corrections
+        # start = time.time()
         for atomI in range(cell._atm.shape[0]):
             # zg2 = \int v(r) g_L(r) dr
             zg2 = potential_Ji[gridIdx[atomI]] @ gOnR[atomI] * dv
@@ -1104,6 +1115,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
             vj_mat_i[numpy.ix_(localIdx[atomI], localIdx[atomI])] += \
                 F_Pmu[atomI].T @ GL @ F_Pmu[atomI] - \
                 Ftilde_Pmu[atomI].T @ GL @ Ftilde_Pmu[atomI]
+        # print(f'Local corrections takes {time.time() - start: .2f} seconds')
         J_all.append(vj_mat_i)
 
     vj_mat = numpy.stack(J_all)
@@ -1111,6 +1123,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         vj_mat = vj_mat[0]
 
     # Pass 2: Grid -> Matrix (Vxc)
+    # start = time.time()
     if xctype == 'GGA' and GGA_METHOD.upper() != 'FFT':
         # multigrid_pair._get_gga_pass2 processes the nset dimension
         vxc_mat = multigrid_pair._get_gga_pass2(mg_ni, vxc_G, kpts=kpt, hermi=hermi)
@@ -1121,7 +1134,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         else:
             vxc_G_input = vxc_G
         vxc_mat = multigrid_pair._get_j_pass2(mg_ni, vxc_G_input, kpts=kpt, hermi=hermi)
-    
+    # print(f'Eval matrix from potential takes: {time.time() - start: .2f} seconds')
     # Squeeze J and Vxc appropriately
     if not is_uks:
         while vxc_mat.ndim > 2: vxc_mat = vxc_mat[0]
@@ -1257,7 +1270,7 @@ def getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
 # this is the original get k
 def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
-    print("entering exchange")
+    logger.debug(cell, "entering exchange")
     t0 = time.time()
 
     # TODO: generalize to multiple k-points
@@ -1271,7 +1284,7 @@ def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     ###
 
     nao, nmo = occMo.shape[0], occMo.shape[1]
-    print(f'nmo: {nmo}')
+    logger.debug(cell, 'nmo: %d', nmo)
     Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
@@ -1323,7 +1336,7 @@ def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         # print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
         # print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
     end1 = time.time()
-    print(f'PW part: {end1-start1}')
+    logger.debug(cell, 'PW part: %s', end1-start1)
 
     start2 = time.time()
     K = jnp.zeros((nao,nao))
@@ -1358,14 +1371,14 @@ def getk_PAW_JAX_old(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     end2 = time.time()
 
     K = K + getFullK_fromoccRI(Kimu, occMo, S)
-    print("Atom part: ",(end2-start2))
+    logger.debug(cell, "Atom part: %s", end2-start2)
 
     return numpy.asarray(K*2)
 
 
 # update Kimu for each i one time instead of j times
 def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
-    print("entering exchange")
+    logger.debug(cell, "entering exchange")
     t0 = time.time()
 
     # TODO: generalize to multiple k-points
@@ -1379,7 +1392,7 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     ###
 
     nao, nmo = occMo.shape[0], occMo.shape[1]
-    print(f'nmo: {nmo}')
+    logger.debug(cell, 'nmo: %d', nmo)
     Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
@@ -1431,10 +1444,10 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         start12 = time.time()
         # Kimu = Kimu.at[i].set(carry[0]+Kimu[i])
         end12 = time.time()
-        print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
-        print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
+        logger.debug(cell, 'matmul, loopoverj, setting %s %s %s', end10-start10, end11-start11, end12-start12)
+        logger.debug(cell, 'Sum of three: %s', (end10-start10)+(end11-start11)+(end12-start12))
     end1 = time.time()
-    print(f'PW part: {end1-start1}')
+    logger.debug(cell, 'PW part: %s', end1-start1)
 
     start2 = time.time()
     K = jnp.zeros((nao,nao))
@@ -1469,13 +1482,13 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     end2 = time.time()
 
     K = K + getFullK_fromoccRI(Kimu, occMo, S)
-    print("Atom part: ",(end2-start2))
+    logger.debug(cell, "Atom part: %s", end2-start2)
 
     return numpy.asarray(K*2)
 
 # test function for fft only
 def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
-    print("entering exchange")
+    logger.debug(cell, "entering exchange")
     # TODO: rewrite this whole thing in jax
     # aoOnR_tilde = jnp.array(aoOnR_tilde)
     # TODO: generalize to multiple k-points
@@ -1490,7 +1503,7 @@ def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     ###
 
     nao, nmo = occMo.shape[0], occMo.shape[1]
-    print(f'nmo: {nmo}')
+    logger.debug(cell, 'nmo: %d', nmo)
     Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
@@ -1535,7 +1548,7 @@ def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         Kimu = Kimu.at[i].set(jnp.einsum('r,mr->m', potential_phi_i, aoOnR_tilde) * f +\
                 carry[0])
     end1 = time.time()
-    print(f'PW Part: {end1-start1}')
+    logger.debug(cell, 'PW Part: %s', end1-start1)
 
     start2 = time.time()
     K = jnp.zeros((nao,nao))
@@ -1570,12 +1583,12 @@ def getk_PAW_loop(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     end2 = time.time()
 
     K = K + getFullK_fromoccRI(Kimu, occMo, S)
-    print("Atom part: ",(end2-start2))
+    logger.debug(cell, "Atom part: %s", end2-start2)
 
     return numpy.asarray(K*2)
 
 def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
-    print("entering exchange")
+    logger.debug(cell, "entering exchange")
     # TODO: rewrite this whole thing
     # some thing fishy going on that makes matmul very slow
     aoOnR_tilde = jnp.array(aoOnR_tilde.T)
@@ -1590,7 +1603,7 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     ###
 
     nao, nmo = occMo.shape[0], occMo.shape[1]
-    print(f'nmo: {nmo}')
+    logger.debug(cell, 'nmo: %d', nmo)
     Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
@@ -1641,7 +1654,7 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         # print(f'matmul, loopoverj, setting', (end10-start10), (end11-start11), (end12-start12), flush=True)
         # print(f'Sum of three: {(end10-start10)+(end11-start11)+(end12-start12)}', flush=True)
     end1 = time.time()
-    print(f'matmul(jax): {end1-start1}')
+    logger.debug(cell, 'matmul(jax): %s', end1-start1)
 
     occMoj = occMo.T[0,:]
     start1 = time.time()
@@ -1653,7 +1666,7 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         # endfft = time.time()
         # print(f'single fft time: {endfft-startfft}')
     end1 = time.time()
-    print(f'matmul(numpy): {end1-start1}')
+    logger.debug(cell, 'matmul(numpy): %s', end1-start1)
 
     start2 = time.time()
     K = jnp.zeros((nao,nao))
@@ -1688,7 +1701,7 @@ def getk_PAW_JAX(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
     end2 = time.time()
 
     K = K + getFullK_fromoccRI(Kimu, occMo, S)
-    print("Atom part: ",(end2-start2))
+    logger.debug(cell, "Atom part: %s", end2-start2)
 
     return numpy.asarray(K*2)
 
@@ -1744,7 +1757,7 @@ def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e
     '''
     grid2Atom, atomGridDist, Rgrid = WignerSeitzData
     
-    print(f'L max is :{L.max()}')
+    logger.debug(mol, 'L max is :%d', L.max())
 
     gridIdx, masked_gridIdx, masks, Rs = [], [], [], []
     for atomI in range(mol._atm.shape[0]):
@@ -1763,7 +1776,7 @@ def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e
         masks.append(mask)
         Rs.append(maxR)
 
-    print(f'The max augmentation radius is: {max(Rs)} Bohr')
+    logger.info(mol, 'The max augmentation radius is: %s Bohr', max(Rs))
     
     return gridIdx, masked_gridIdx, masks, Rs
 
@@ -1844,7 +1857,7 @@ def obtainLocalFns(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, 
     alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
     
-    print('Making augmentation sphere for Becke grid:')
+    logger.debug(mol, 'Making augmentation sphere for Becke grid:')
     WignerSeitzData = makeWignerSeitz(BeckeCoords, mol, Periodic=False) # Becke grid should not be interpreted periodically
     gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[1]
 
@@ -1897,7 +1910,7 @@ def obtainLocalFns(pmol, mol, ctr_coeff, grids, alpha0, epsilon=1.e-5, Rb=None, 
         F_PmuArr.append(F_Pmu)
         Ftilde_PmuArr.append(Ftilde_Pmu)
 
-        print(f'a{atomI}: numLoc {F_Pmu.shape[1]}; numPrim {F_Pmu.shape[0]}')
+        logger.debug(mol, 'a%d: numLoc %d; numPrim %d', atomI, F_Pmu.shape[1], F_Pmu.shape[0])
 
     VPQRSArr = obtainLocal2e(mol, pmol, Periodic)
 
@@ -1945,7 +1958,7 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
         coords = grids
     dv = mol.vol/coords.shape[0]
     
-    print('Making augmentation sphere for uniform grid:')
+    logger.debug(mol, 'Making augmentation sphere for uniform grid:')
     WignerSeitzData = makeWignerSeitz(coords, mol, Periodic=True)
     gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
 
@@ -2006,9 +2019,9 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
         AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
         primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
         fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
-        print(AOOnA.sum(axis=0)*dv)
-        print(fAOOnA.sum(axis=0)*dv)
-        print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
+        logger.debug(mol, 'a%d AOOnA sum: %s', atomI, AOOnA.sum(axis=0)*dv)
+        logger.debug(mol, 'a%d fAOOnA sum: %s', atomI, fAOOnA.sum(axis=0)*dv)
+        logger.debug(mol, 'a%d max diff: %s', atomI, numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
 
         # set local, a-centered function directly as contraction coefficient (no fitting)
         diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
@@ -2045,9 +2058,9 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
     
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
-    print('Building projectors...')
+    logger.debug(mol, 'Building projectors...')
     for atomI in range(mol._atm.shape[0]):
-        print(f'Atom {atomI}:')
+        logger.debug(mol, 'Atom %d:', atomI)
         # fit all local primitives with atom centered primitives
         ACenteredId = numpy.where(atoms == atomI)[0]
         ACenteredAOId = numpy.where(atomsAO == atomI)[0]
@@ -2083,7 +2096,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
                 if isoPrim[i]: alphasProj[i] = zetval; zetval *= x
 
             projBasis4L = [[l, [a, 1.]] for a in alphasProj]
-            print(f'L={l}: projExp {alphasProj}')
+            logger.debug(mol, 'L=%d: projExp %s', l, alphasProj)
             projBasis.extend(projBasis4L)
 
 
@@ -2326,7 +2339,8 @@ def getAlpha0(pmol, Rgrid, mesh, Periodic=False, tol=1e-3):
     alpha0, alpha0_wf = fineGrainAlpha0(maxSoftAlpha, minSharpAlpha, pmol, Rgrid, mesh, FF, Ng, f,
                                         tol=tol, Periodic=Periodic)
 
-    print(f'Recommended alpha0 for the given PW cutoff {alpha0}')
+    # print(f'Recommended alpha0 for the given PW cutoff {alpha0}')
+    logger.info(pmol, "Recommended alpha0 for the given PW cutoff: %s", alpha0)
     return alpha0, alpha0_wf
 
 

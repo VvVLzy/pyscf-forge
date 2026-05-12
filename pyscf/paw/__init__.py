@@ -24,7 +24,6 @@ import time
 def getPAWdataNew(mol,
                PAWorbitalCutOff=1.e-8,
                PWAccuracy=1e-5,
-               printLevel = 1,
                Periodic = False,
                alpha0=None,
                augRadius=None,
@@ -43,14 +42,9 @@ def getPAWdataNew(mol,
     mf = pyscf.scf.RKS(pmol)
     # mf.grids.level = 9
     # mf.grids.build()
-    # print(f'DFT grid size: {mf.grids.coords.shape[0]}')
+    # logger.debug(mol, 'DFT grid size: %d', mf.grids.coords.shape[0])
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
-
-    # if alpha0 is None:
-    #     rc = PAWutils.makeAugmentationRadius(mol)
-    #     alpha0 = PAWutils.pickalpha0(mol, rc, 1e-6)
-    #     alpha0_wf = alpha0/2
 
     # get alpha0
     if alpha0_lowmem:
@@ -86,10 +80,6 @@ def getPAWdataNew(mol,
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
         pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rb=numpy.max(Rs), Periodic = Periodic, rtol=1e-8)
-    # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNew(
-    #     pmol, mol, ctr_coeff, Rgrid, 12, r=2, epsilon=PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic, rtol=1e-8)
-    # localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFns(
-    #     pmol, mol, ctr_coeff, mf.grids, alpha0_wf, Rb=augRadius, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
 
     # Evaluate AOs on uniform grid
     start = time.time()
@@ -97,7 +87,7 @@ def getPAWdataNew(mol,
         aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
     else:
         aoOnR, aoOnR_tilde = 0, 0
-    print(f'AO eval on all grids take {time.time() - start: .2e} seconds')
+    logger.info(mol, 'AO eval on all grids take %.2e seconds', time.time() - start)
     gOnRAll = None
 
     # Prepare PAW data
@@ -106,26 +96,20 @@ def getPAWdataNew(mol,
     PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gridIdx, gOnR)
     PAWNucdata = result[-3:]
 
-    # JAX version of PAWdata
-    # PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
-
-    if (printLevel > 0):
-        # print ("Rb          : {0:<10.2f}".format(Rb))
-        print ("alpha0      : {0:<10.2f}".format(alpha0))
-        print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
     return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids, alpha0, Rs
 
 def getPAWdata(mol,
-               PAWorbitalCutOff=1.e-5,
+               PAWorbitalCutOff=1.e-8,
                PWAccuracy=1e-5,
-               printLevel = 1,
                Periodic = False,
                alpha0=None,
-               augRadius=None):
-
+               augRadius=None,
+               with_multigrid=2,
+               alpha0_lowmem=True,
+               auto_box=False):
     mol.build()
     if (not Periodic):
-        mol                          = PAWutils.prepareMolForPAW(mol)
+        mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box)
 
     # uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
@@ -134,28 +118,53 @@ def getPAWdata(mol,
     # initialize grids
     mf = pyscf.scf.RKS(pmol)
     # mf.grids.level = 9
-    mf.grids.build()
-    print(f'DFT grid size: {mf.grids.coords.shape[0]}')
+    # mf.grids.build()
+    # logger.debug(mol, 'DFT grid size: %d', mf.grids.coords.shape[0])
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
 
     # get alpha0
-    if alpha0 is None:
-        alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+    if alpha0_lowmem:
+        # Mini-cell implementation: Use a small box with same resolution (ke_cutoff)
+        test_cell = pgto.M(
+            atom='He 5 5 5',
+            basis=pmol.basis,
+            a=numpy.eye(3) * 10.0,
+            unit='B',
+            ke_cutoff=pmol.ke_cutoff,
+            verbose=0
+        )
+        t_pmol, _ = test_cell.decontract_basis()
+        t_pmol._basis = PAWutils.modifyMolBasis(t_pmol._basis)
+        t_mesh = t_pmol.mesh
+        t_Rgrid = t_pmol.get_uniform_grids(mesh=t_mesh)
+        if alpha0 is None:
+            alpha0, alpha0_wf = PAWutils.getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
+        else:
+            _, _ = PAWutils.getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
+            alpha0_wf = alpha0/2
     else:
-        _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
-        alpha0_wf = alpha0/2
+        if alpha0 is None:
+            alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+        else:
+            _, _ = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+            alpha0_wf = alpha0/2
 
-    alpha0_wf = alpha0 # it seems that this works better in practice
+    alpha0_wf = alpha0 # must be this!
 
     # PAWData
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNew(
-        pmol, mol, ctr_coeff, mf.grids, alpha0_wf, 2, Rb=0.5, epsilon=PAWorbitalCutOff, Periodic=Periodic, rtol=1e-9)
-    M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol    = PAWutils.compensatingCharge(
+    M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = PAWutils.compensatingCharge(
         pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
+    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
+        pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rb=numpy.max(Rs), Periodic = Periodic, rtol=1e-8)
 
     # Evaluate AOs on uniform grid
-    aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+    start = time.time()
+    if with_multigrid == 0: # store AO incore to speed up J
+        aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+    else:
+        aoOnR, aoOnR_tilde = 0, 0
+    logger.info(mol, 'AO eval on all grids take %.2e seconds', time.time() - start)
     gOnRAll = None
 
     # Prepare PAW data
@@ -164,14 +173,7 @@ def getPAWdata(mol,
     PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gridIdx, gOnR)
     PAWNucdata = result[-3:]
 
-    # JAX version of PAWdata
-    # PAWdataJAX = PAWutils.get_PAW_inUsefulFormForJax(PAWdata)
-
-    if (printLevel > 0):
-        # print ("Rb          : {0:<10.2f}".format(Rb))
-        print ("alpha0      : {0:<10.2f}".format(alpha0))
-        print ("alpha0_wf      : {0:<10.2f}".format(alpha0_wf))
-    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids
+    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, mf.grids, alpha0, Rs
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
     if mydf.scf_iter == 0:
@@ -371,12 +373,16 @@ class PAW(FFTDF):
             self,
             cell,
             kpts=None,
-            printLevel=1,
-            PAWorbitalCutOff=1e-5,
-            PWAccuracy=1e-5,
+            PAWorbitalCutOff=1e-8,
+            PWAccuracy=1e-8,
             Periodic=False,
             alpha0=None,
             augRadius=None,
+            gdfNuc=False,
+            with_multigrid=2,
+            use_merged_multigrid=True,
+            alpha0_lowmem=True,
+            auto_box=True
     ):
         
         self.scf_iter = 0
@@ -399,12 +405,15 @@ class PAW(FFTDF):
         self.verbose = cell.verbose
 
         # PAW init
-        self.printLevel = printLevel
         self.PAWorbitalCutOff = PAWorbitalCutOff
         self.PWAccuracy = PWAccuracy
         self.Periodic = Periodic
-        self.alpha0 = alpha0
         self.augRadius = augRadius
+        self.gdfNuc = gdfNuc
+        self.with_multigrid = with_multigrid
+        self.use_merged_multigrid = use_merged_multigrid
+        self.alpha0_lowmem = alpha0_lowmem
+        self.auto_box = auto_box
         self.Times_ = {
             "Diagonalize":0.,
             "Exchange"   :0.,
@@ -415,9 +424,26 @@ class PAW(FFTDF):
             "Fock"       :0.
         }
 
-        self.initPAW(cell)
+        self.initPAW(cell, alpha0)
 
-        
+        if self.with_multigrid > 0:
+            # Initialize Multigrid for optimized Hartree/XC integration
+            self.smoothCell = smoothCell2(self.cell, self.alpha0)
+            if self.with_multigrid == 1:
+                # self.mg_ni = MultiGridNumInt(self.smoothCell)
+                # self.mg_ni.mesh = self.grids.mesh
+                # self.mg_ni.xc_with_j = False
+                # self.mg_ni.build()
+                raise NotImplementedError('MultiGridNumInt1 not integrated with PAW yet')
+            elif self.with_multigrid == 2:
+                self.smoothCell.precision = min(self.cell.precision, 1e-10)
+                self.mg_ni = MultiGridNumInt2(self.smoothCell)
+                self.mg_ni.mesh = self.grids.mesh
+                self.mg_ni.xc_with_j = False
+                self.mg_ni.ntasks = 5 # consider making this a user input
+                self.mg_ni.build()
+        else:
+            self.mg_ni = None
 
         # update get_jk
         if self.Periodic:
@@ -426,17 +452,21 @@ class PAW(FFTDF):
             self.get_jk = get_jk_molecule.__get__(self, self.__class__)
         ###
 
-    def initPAW(self, cell):
+    def initPAW(self, cell, alpha0):
         t0 = time.time()
-        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid = getPAWdata(
+        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid, alpha0, Rs = getPAWdata(
             cell,
-            printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
             Periodic=self.Periodic,
-            alpha0=self.alpha0,
-            augRadius=self.augRadius
+            alpha0=alpha0,
+            augRadius=self.augRadius,
+            with_multigrid=self.with_multigrid,
+            alpha0_lowmem=self.alpha0_lowmem,
+            auto_box=self.auto_box
         )
+
+        self.augRadius = Rs
 
         
         self.Times_["PAWinit"] += time.time()-t0
@@ -445,30 +475,33 @@ class PAW(FFTDF):
         # nocc = nelec//2
         # madelung = pyscf.pbc.tools.pbc.madelung(self.cell, self.cell.make_kpts([1,1,1])) if self.Periodic else 0.
 
-        mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis, unit=cell.unit))
+        # mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis, unit=cell.unit))
 
         t0 = time.time()
         # hcore = mf.get_hcore().reshape((nao,nao))
-        S = mf.get_ovlp().reshape((nao,nao))
+        # S = mf.get_ovlp().reshape((nao,nao))
         # X = get_transformation_matrix(S)
         # nuc = mf.energy_nuc()
         self.Times_["1e-orbs"] += time.time()-t0
 
-        self.S = S
+        # self.S = S
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
         self.PAWNucdata = PAWNucdata
         self.Rgrid = Rgrid
+        self.cell = mol
         self.pcell = pmol
         self.gcell = gmol
         self.ctr_coeff = ctr_coeff
         self.BeckeGrid = BeckeGrid
+        self.alpha0 = alpha0
         
-        if (self.printLevel > 0):
-            logger.info(self, "Nelection   : %10d", nelec)
-            logger.info(self, "Ngrid points: %10d", numpy.prod(self.cell.mesh))
-            logger.info(self, "delta-a     : %10.2f", (self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.))
+        logger.info(self, "alpha0      : %10.2f", alpha0)
+        logger.info(self, "Rb          : %10.2f", numpy.max(Rs))
+        logger.info(self, "Nelection   : %10d", nelec)
+        logger.info(self, "Ngrid points: %10d", numpy.prod(self.cell.mesh))
+        logger.info(self, "delta-a     : %10.2f", (self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.))
 
     def get_nuc(self, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
@@ -477,8 +510,12 @@ class PAW(FFTDF):
         cell = self.cell
         kpts, is_single_kpt = _check_kpts(self, kpts)
         
-        nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                 self.PAWNucdata, self.Periodic)
+        if self.gdfNuc:
+            dfbuilder = _RSNucBuilder(cell, kpts).build()
+            nuc = dfbuilder.get_nuc()
+        else:
+            nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
+                                      self.PAWNucdata, self.mg_ni, self.Periodic, self.with_multigrid)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
@@ -522,21 +559,21 @@ class PAW(FFTDF):
             nuc = nuc[0]
         return nuc
     
-    # def get_nuc(self, kpts=None):
-    #     '''Get the periodic nuc-el AO matrix, with G=0 removed.
-    #     '''
-    #     cell = self.cell
-    #     kpts, is_single_kpt = _check_kpts(self, kpts)
-    #     # if self._prefer_ccdf or cell.omega > 0:
-    #     #     # For long-range integrals _CCGDFBuilder is the only option
-    #     #     dfbuilder = _CCNucBuilder(cell, kpts).build()
-    #     # else:
-    #     #     dfbuilder = _RSNucBuilder(cell, kpts).build()
-    #     dfbuilder = _RSNucBuilder(cell, kpts).build()
-    #     nuc = dfbuilder.get_nuc()
-    #     if is_single_kpt:
-    #         nuc = nuc[0]
-    #     return nuc
+    def get_nuc_rsdf(self, kpts=None):
+        '''Get the periodic nuc-el AO matrix, with G=0 removed.
+        '''
+        cell = self.cell
+        kpts, is_single_kpt = _check_kpts(self, kpts)
+        # if self._prefer_ccdf or cell.omega > 0:
+        #     # For long-range integrals _CCGDFBuilder is the only option
+        #     dfbuilder = _CCNucBuilder(cell, kpts).build()
+        # else:
+        #     dfbuilder = _RSNucBuilder(cell, kpts).build()
+        dfbuilder = _RSNucBuilder(cell, kpts).build()
+        nuc = dfbuilder.get_nuc()
+        if is_single_kpt:
+            nuc = nuc[0]
+        return nuc
     
     def getJ1(self, dm, hermi=1, kpts=None, kpts_band=None,
               with_j=True, with_k=True, omega=None, exxdiv=None):
@@ -552,13 +589,12 @@ class PAW(FFTDF):
         cell = self.cell
         if isinstance(dm, list):
             dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nk = kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
         nao = cell.nao
         # if with_k:
         if with_j or with_k:
             dm = tag_dm(self, dm, cell, kpts, nk, nao)
-        J1 = PAWutils.getjSmoothPW(self.cell, dm, self.aoOnR_tilde, self.mesh,
-                                   self.PAWdata, self.Periodic)
+        J1 = PAWutils.getjSmoothPW2(self.cell, dm, self.mg_ni, self.mesh, self.PAWdata, Periodic=self.Periodic)
         
         return J1
     
@@ -576,7 +612,7 @@ class PAW(FFTDF):
         cell = self.cell
         if isinstance(dm, list):
             dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nk = kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
         nao = cell.nao
         # if with_k:
         if with_j or with_k:
@@ -600,7 +636,7 @@ class PAW(FFTDF):
         cell = self.cell
         if isinstance(dm, list):
             dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nk = kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
         nao = cell.nao
         # if with_k:
         if with_j or with_k:
@@ -695,7 +731,6 @@ class NewPAW(FFTDF):
             self,
             cell,
             kpts=None,
-            printLevel=1,
             PAWorbitalCutOff=1e-8,
             PWAccuracy=1e-8,
             Periodic=False,
@@ -705,7 +740,7 @@ class NewPAW(FFTDF):
             with_multigrid=2,
             use_merged_multigrid=True,
             alpha0_lowmem=True,
-            auto_box=False
+            auto_box=True
     ):
         
         self.scf_iter = 0
@@ -728,7 +763,6 @@ class NewPAW(FFTDF):
         self.verbose = cell.verbose
 
         # PAW init
-        self.printLevel = printLevel
         self.PAWorbitalCutOff = PAWorbitalCutOff
         self.PWAccuracy = PWAccuracy
         self.Periodic = Periodic
@@ -780,7 +814,6 @@ class NewPAW(FFTDF):
         t0 = time.time()
         PAWdata, PAWNucdata, mesh, Rgrid, aoOnR, aoOnR_tilde, gOnRAll, mol, pmol, gmol, ctr_coeff, BeckeGrid, alpha0, Rs = getPAWdataNew(
             cell,
-            printLevel=self.printLevel,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
             Periodic=self.Periodic,
@@ -800,16 +833,16 @@ class NewPAW(FFTDF):
         # nocc = nelec//2
         # madelung = pyscf.pbc.tools.pbc.madelung(self.cell, self.cell.make_kpts([1,1,1])) if self.Periodic else 0.
 
-        mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis, unit=cell.unit))
+        # mf = pyscf.pbc.scf.RHF(cell).rs_density_fit() if self.Periodic else pyscf.scf.RHF(pyscf.gto.M(atom = cell.atom, basis = cell.basis, unit=cell.unit))
 
         t0 = time.time()
         # hcore = mf.get_hcore().reshape((nao,nao))
-        S = mf.get_ovlp().reshape((nao,nao))
+        # S = mf.get_ovlp().reshape((nao,nao))
         # X = get_transformation_matrix(S)
         # nuc = mf.energy_nuc()
         self.Times_["1e-orbs"] += time.time()-t0
 
-        self.S = S
+        # self.S = S
         self.aoOnR_tilde = aoOnR_tilde
         self.mesh = mesh
         self.PAWdata = PAWdata
@@ -822,10 +855,11 @@ class NewPAW(FFTDF):
         self.BeckeGrid = BeckeGrid
         self.alpha0 = alpha0
         
-        if (self.printLevel > 0):
-            logger.info(self, "Nelection   : %10d", nelec)
-            logger.info(self, "Ngrid points: %10d", numpy.prod(self.cell.mesh))
-            logger.info(self, "delta-a     : %10.2f", (self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.))
+        logger.info(self, "alpha0      : %10.2f", alpha0)
+        logger.info(self, "Rb          : %10.2f", numpy.max(Rs))
+        logger.info(self, "Nelection   : %10d", nelec)
+        logger.info(self, "Ngrid points: %10d", numpy.prod(self.cell.mesh))
+        logger.info(self, "delta-a     : %10.2f", (self.cell.vol/numpy.prod(self.cell.mesh))**(1./3.))
 
     def get_nuc(self, kpts=None):
         '''Get the periodic nuc-el AO matrix, with G=0 removed.
@@ -913,13 +947,12 @@ class NewPAW(FFTDF):
         cell = self.cell
         if isinstance(dm, list):
             dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nk = kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
         nao = cell.nao
         # if with_k:
         if with_j or with_k:
             dm = tag_dm(self, dm, cell, kpts, nk, nao)
-        J1 = PAWutils.getjSmoothPW(self.cell, dm, self.aoOnR_tilde, self.mesh,
-                                   self.PAWdata, self.Periodic)
+        J1 = PAWutils.getjSmoothPW2(self.cell, dm, self.mg_ni, self.mesh, self.PAWdata, Periodic=self.Periodic)
         
         return J1
     
@@ -937,7 +970,7 @@ class NewPAW(FFTDF):
         cell = self.cell
         if isinstance(dm, list):
             dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nk = kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
         nao = cell.nao
         # if with_k:
         if with_j or with_k:
@@ -961,7 +994,7 @@ class NewPAW(FFTDF):
         cell = self.cell
         if isinstance(dm, list):
             dm = numpy.asarray(dm)
-        nk = self.kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
+        nk = kpts.shape[0] # what is kpt default for no kpts (kpt=None)?
         nao = cell.nao
         # if with_k:
         if with_j or with_k:

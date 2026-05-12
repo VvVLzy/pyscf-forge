@@ -82,6 +82,7 @@ class PAWNumInt(NumInt):
         self.cell = mydf.cell
         self.smoothCell = smoothCell2(self.cell, mydf.alpha0)
         self.pcell = mydf.pcell
+        self.max_memory = mydf.max_memory
 
         self.with_multigrid = with_multigrid
         self.use_merged_multigrid = use_merged_multigrid
