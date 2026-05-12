@@ -11,7 +11,6 @@ import time
 
 # Configuration
 L = 40
-alpha0 = 10
 ddict10 = {'H':1/5,'He':1/10,'C':1/10,'N':1/10,'Ne':1/10}
 basis_sets = ['cc-pvdz', 'cc-pvtz', 'cc-pvqz']
 
@@ -90,13 +89,8 @@ molecules = {
     ]
 }
 
-basis_sets = ['cc-pvqz']
 basis_sets = ['cc-pvdz', 'cc-pvtz','cc-pvqz']
 
-# Molecule Geometries (centered at L/2)
-molecules = {
-    'Ne': [['Ne', [L/2, L/2, L/2]]],
-}
 
 results_file = 'paw_basis_errors.json'
 if os.path.exists(results_file):
@@ -131,7 +125,7 @@ for basis in basis_sets:
         # 3. PAW Calculation
         from pyscf.pbc import gto as pgto
         cell = pgto.M(atom=geo, basis=basis, a=np.array([[L,0,0],[0,L,0],[0,0,L]]), 
-                        unit='B', verbose=4, ke_cutoff=40)
+                        unit='B', verbose=4, ke_cutoff=100)
         
         mf_paw = dft.RKS(mol).density_fit()
         mf_paw.xc = ''

@@ -21,18 +21,19 @@ benzene = [[ 'C'  , ( 4.673795 ,   6.280948 , 0.00  ) ],
            [ 'H'  , ( 2.497289 ,   6.120281 , 0.00  ) ]]
 
 verbose = 4
-ke_cutoff = 50
+ke_cutoff = 100
 init_guess = '1e'
 
 cell = pgto.M(
     atom=benzene, 
-    basis='cc-pvtz', 
+    basis='cc-pvqz', 
     a=np.array([[20,0,0],[0,20,0],[0,0,20]]),
     verbose=verbose,
-    ke_cutoff=ke_cutoff,)
+    ke_cutoff=ke_cutoff,
+    max_memory=15000)
 
 
-mol = gto.M(atom=cell.atom, basis=cell.basis, verbose=verbose)
+mol = gto.M(atom=cell.atom, basis=cell.basis, verbose=verbose, max_memory=15000)
 
 # exact calculation
 mf_mol_exact = scf.RKS(mol)
@@ -46,7 +47,7 @@ mf_mol_paw = scf.RKS(mol).density_fit()
 mf_mol_paw.xc = 'pbe'
 mf_mol_paw.init_guess = init_guess
 mydf = PAW.from_mf(mf_mol_paw, cell,
-                    alpha0=5, augRadius=None, with_multigrid=2,
+                    alpha0=None, augRadius=None, with_multigrid=2,
                     alpha0_lowmem=True, auto_box=True).build()
 mf_mol_paw.with_df = mydf
 # pawnumint = PAWNumInt(mydf, mf_mol_paw, use_merged_multigrid=True)
