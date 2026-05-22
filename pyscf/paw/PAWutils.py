@@ -1292,10 +1292,6 @@ def getkSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         
         numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
     
-    # Debug print for energy contribution
-    e2 = -0.5 * numpy.einsum('ij,ji', dm_full, K)
-    print(f"    [ISDF-K] E_Sharp_Local: {e2:.6f}")
-
     return K * 2
 
 def getkSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
@@ -1329,10 +1325,6 @@ def getkSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         Katom -= smart_einsum('Pm,PQ,Qn->mn', fpmu, smart_einsum('PQRS, QR->PS', PQRS_comp, DPQ), fpmu)
         
         numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
-
-    # Debug print for energy contribution
-    e3 = -0.5 * numpy.einsum('ij,ji', dm_full, K)
-    print(f"    [ISDF-K] E_Smooth_Local: {e3:.6f}")
 
     return K * 2
 
