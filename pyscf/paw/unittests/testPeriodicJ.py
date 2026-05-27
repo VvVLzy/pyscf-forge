@@ -9,14 +9,14 @@ from pyscf.pbc import scf as pscf
 from pyscf.paw import PAW, NewPAW
 from pyscf.paw.vxc import PAWNumInt
 
-# L = 2.4  # box size
-# a = numpy.eye(3) * L
+L = 3  # box size
+a = numpy.eye(3) * L
 
-# # specify He2
-# r1      = 0.    # location of first carbon
-# r0      = 1.2    # N-N bond length
-# atom    = f'C {r1} {r1} {r1}; C {r1+r0} {r1} {r1}'
-# # atom    = f'He 0 0 0'
+# specify He2
+r1      = 0.    # location of first carbon
+r0      = 1.0    # N-N bond length
+atom    = f'C {r1} {r1} {r1}; C {r1+r0} {r1} {r1}'
+# atom    = f'He 0 0 0'
 
 a = numpy.array([[ 2.18050236,  0.,          1.25891346],
                  [ 0.72683412,  2.05579703,  1.25891346],
@@ -27,7 +27,7 @@ C 2.543919 1.798822 4.406197
 C 0.363417 0.256975 0.629457
 '''
 
-zeta = 'tz'
+zeta = 'dz'
 basis = "ccpv"+zeta
 
 ## ccpvdz
@@ -81,13 +81,13 @@ def check_J(alpha0=10, Rb=1.5):
     # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
     mf_per_rks_gdf.with_df = mydf
 
-    # # old coulomb
-    # mf_per_rks_paw = pscf.RKS(cell)
-    # mf_per_rks_paw.init_guess = init_guess
-    # mf_per_rks_paw.xc = xc
-    # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, augRadius=Rb).build()
-    # # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
-    # mf_per_rks_paw.with_df = mydf
+    # old coulomb
+    mf_per_rks_paw = pscf.RKS(cell)
+    mf_per_rks_paw.init_guess = init_guess
+    mf_per_rks_paw.xc = xc
+    mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, augRadius=Rb).build()
+    # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
+    mf_per_rks_paw.with_df = mydf
 
     # new coulomb
     mf_per_rks_paw_new = pscf.RKS(cell)
@@ -104,8 +104,8 @@ def check_J(alpha0=10, Rb=1.5):
     mf_per_rks_gdf.kernel()
     dm = mf_per_rks_gdf.make_rdm1()
 
-    # J_fftdf = mf_per_rks.get_j(dm=dm)
-    # J_paw = mf_per_rks_paw.get_j(dm=dm)
+    J_fftdf = mf_per_rks.get_j(dm=dm)
+    J_paw = mf_per_rks_paw.get_j(dm=dm)
     J_gdf = mf_per_rks_gdf.get_j(dm=dm)
     J_paw_new = mf_per_rks_paw_new.get_j(dm=dm)
 
@@ -115,21 +115,6 @@ def check_J(alpha0=10, Rb=1.5):
     mf_per_rks_paw_new.kernel()
 
     import pdb; pdb.set_trace()
-
-
-def main():
-    # debugNumpyJ(alpha0=20, Rb=1.5)
-    # debugNumpyJ(alpha0=20, Rb=3.0)
-    # debugRb(1.5, 3.0, alpha0=20)
-    # debug_J2(alpha0=20, Rb=1.5)
-    # debug_J(alpha0=20, Rb=3.0)
-    check_J(alpha0=10, Rb=1.5)
-    # check_J_scan(alpha0=10, Rb=1.5)
-    # check_J_random_position(alpha0=10, Rb=1.5)
-    # check_nuc()
-
-if __name__ == '__main__':
-    main()
 
 def debugNumpyJ(alpha0=20, Rb=1.5):
     # fftdf
@@ -276,7 +261,7 @@ def check_J_scan(alpha0=20, Rb=1.5):
         mf_per_rks_paw = pscf.RKS(cell)
         mf_per_rks_paw.init_guess = init_guess
         mf_per_rks_paw.xc = xc
-        mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb).build()
+        mydf = PAW.from_mf(mf_per_rks_paw, alpha0=alpha0, augRadius=Rb, use_new_comp_charge=False).build()
         # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, PAWorbitalCutOff=1e-8).build()
         # mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, PAWorbitalCutOff=1e-8).build()
         mf_per_rks_paw.with_df = mydf
@@ -414,3 +399,17 @@ def check_J_random_position(alpha0=20, Rb=1.5):
         ])
         writer.writeheader()
         writer.writerows(results)
+
+def main():
+    # debugNumpyJ(alpha0=20, Rb=1.5)
+    # debugNumpyJ(alpha0=20, Rb=3.0)
+    # debugRb(1.5, 3.0, alpha0=20)
+    # debug_J2(alpha0=20, Rb=1.5)
+    # debug_J(alpha0=20, Rb=3.0)
+    # check_J(alpha0=10, Rb=1.5)
+    check_J_scan(alpha0=10, Rb=1.5)
+    # check_J_random_position(alpha0=10, Rb=1.5)
+    # check_nuc()
+
+if __name__ == '__main__':
+    main()
