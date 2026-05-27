@@ -2256,6 +2256,7 @@ def getAuxbasis(pmol):
 
 # PAW nuclear
 def getnuc_PAW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+    raise ValueError("Not properly implemented for ISDF")
     nuc1 = getNucPAWSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
     nuc2 = getNucPAWSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
     nuc3 = getNucPAWSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)

@@ -3,11 +3,10 @@ from pyscf.pbc import gto as pgto
 import numpy as np
 import jax, pyscf
 from pyscf.paw import NewPAW as PAW
-from Gausslets import isdfgrid
+from Gausslets import newisdfgrid as isdfgrid
+import sys
 
-jax.config.update("jax_enable_x64", True)
-
-L=30
+L=20
 alpha0=10
 
 # Molecule Definitions
@@ -58,13 +57,17 @@ ddict2={'H':1/2,'He':1/2,'C':1/2,'N':1/2,'Ne':1/2}
 ddict3={'H':1/3,'He':1/3,'C':1/3,'N':1/3,'Ne':1/3}
 ddict4={'H':1/4,'He':1/4,'C':1/4,'N':1/4,'Ne':1/4}
 ddict5={'H':1/5,'He':1/5,'C':1/5,'N':1/5,'Ne':1/5}
-ddict6={'H':1/5,'He':1/6,'C':1/6,'N':1/6,'Ne':1/6}
+ddict6={'H':1/3,'He':1/6,'C':1/6,'N':1/6,'Ne':1/6}
 ddict7={'H':1/5,'He':1/7,'C':1/7,'N':1/7,'Ne':1/7}
 ddict8={'H':1/5,'He':1/8,'C':1/8,'N':1/8,'Ne':1/8}
 
 # Testing Configuration
-for ddict in [ddict8]:
-    for atom in [methane]:
+for ddict in [ddict6]:
+    if len(sys.argv)<2:
+        arr=[methane]
+    else:
+        arr=[benzene]
+    for atom in arr:
         verbose = 1
         cell = pgto.M(
             atom=atom,
@@ -82,7 +85,8 @@ for ddict in [ddict8]:
         mf.kernel()
 
         # ISDF-PAW setup
-        gausslet = isdfgrid.ISDFGrid(mf, L, [ddict[i] for i in mol.elements], uniform=6, spread=0.7, maxgto=alpha0)
+        #gausslet = isdfgrid.ISDFGrid(mf, L, [ddict[i] for i in mol.elements], uniform=6, spread=0.7, maxgto=alpha0,Nmax=8196,max_box_size=5)
+        gausslet = isdfgrid.ISDFGrid(mf, L, [ddict[i] for i in mol.elements], uniform=6, spread=0.7, maxgto=alpha0,Nmax=8196000,max_box_size=10000)
         mf_mol_paw = scf.RHF(mol).density_fit()
         mydf = PAW.from_mf(mf_mol_paw, cell, gausslet, alpha0=alpha0, augRadius=1.5).build()
 
@@ -103,7 +107,6 @@ for ddict in [ddict8]:
         print("PAW SCF:      ", mf_mol_paw.e_tot)
         print("Difference:   ", mf_mol_paw.e_tot - mf.e_tot, flush=True)
         gausslet.print_timing_summary()
-        exit()
 
         print("Smooth JK Differences")
         # Calculate analytic K matrix and E_K for smooth portions
@@ -127,12 +130,12 @@ for ddict in [ddict8]:
         EJ_isdf = np.einsum('ij,ji->', DM, J)
         K = gausslet.compute_exchange(DM)
         EK_isdf = 0.5 * np.einsum('ij,ji->', DM, K)
-        print(f"Coulomb Difference: {abs(EJ_isdf - EJ):.4e}")
-        print(f"Exchange Difference: {abs(EK_isdf - EK):.4e}")
+        print(f"Coulomb Difference: {EJ_isdf - EJ:.4e}")
+        print(f"Exchange Difference: {EK_isdf - EK:.4e}")
 
-        # Correct overlap and compute transformed exchange
-        S_exact = smooth_mol.intor('int1e_ovlp')
-        L_trans, T_trans = gausslet.create_transformation(S_exact)
-        K_trans = gausslet.compute_exchange(DM, transform_L=L_trans)
-        EK_trans = 0.5 * np.einsum('ij,ji->', DM, K_trans)
-        print(f"Transformed Exchange Difference: {abs(EK_trans - EK):.4e}")
+        ## Correct overlap and compute transformed exchange
+        #S_exact = smooth_mol.intor('int1e_ovlp')
+        #L_trans, T_trans = gausslet.create_transformation(S_exact)
+        #K_trans = gausslet.compute_exchange(DM, transform_L=L_trans)
+        #EK_trans = 0.5 * np.einsum('ij,ji->', DM, K_trans)
+        #print(f"Transformed Exchange Difference: {abs(EK_trans - EK):.4e}")
