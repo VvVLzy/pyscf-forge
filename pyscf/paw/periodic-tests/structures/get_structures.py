@@ -23,7 +23,7 @@ for i, id in enumerate(structure_id):
         # 1. Get the structure object
         structure = mpr.get_structure_by_material_id(
             id,
-            conventional_unit_cell=False
+            conventional_unit_cell=True
         ) 
         
         # 2. Convert to a 'Molecule' object to write to XYZ 

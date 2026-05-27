@@ -50,7 +50,7 @@ cell_fftdf = pgto.M(
 # TODO: the default minao guess usually give mo that is not (cell.nao, cell.nao)
 # and thus will give an error
 init_guess = '1e'
-xc = ''
+xc = 'pbe'
 
 def exact_fftdf(rscale):
     r       = r0*rscale    # rescale C=C bond length
@@ -123,6 +123,62 @@ def exact_paw_diff_auto():
         writer.writeheader()
         writer.writerows(results)
 
+def exact_paw_diff_single_point(alpha0=None, Rb=None):
+    # Define a box with 8 He atoms
+    L = 3.
+    a = numpy.eye(3) * L
+    atom = ""
+    for i in [0, 1]:
+        for j in [0, 1]:
+            for k in [0, 1]:
+                atom += f"He {i*1.0} {j*1.0} {k*1.0}; "
+    
+    cell = pgto.M(
+        atom = atom,
+        basis = basis,
+        a = a,
+        ke_cutoff = ke_cutoff,
+        precision = precision,
+        verbose = verbose,
+    )
+    cell_fftdf = pgto.M(
+        atom = atom,
+        basis = basis,
+        a = a,
+        ke_cutoff = 1000,
+        precision = precision,
+        verbose = verbose,
+    )
+
+    # exact calculation fftdf
+    mf_per_rks = pscf.RKS(cell_fftdf)
+    mf_per_rks.init_guess = init_guess
+    mf_per_rks.xc = xc
+    mf_per_rks.grids.level = 5
+    mf_per_rks.kernel()
+
+    # paw calculation
+    mf_per_rks_paw = pscf.RKS(cell)
+    mf_per_rks_paw.init_guess = init_guess
+    mf_per_rks_paw.xc = xc
+    mf_per_rks_paw.grids.level = 5
+    mydf = PAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=alpha0, augRadius=Rb, gdfNuc=False).build()
+    mf_per_rks_paw.with_df = mydf
+    # paw vxc
+    pawnumint = PAWNumInt(mydf, mf_per_rks_paw)
+    mf_per_rks_paw._numint = pawnumint
+    mf_per_rks_paw.kernel()
+
+    print(f"Exact energy: {mf_per_rks.e_tot}")
+    print(f"PAW energy:   {mf_per_rks_paw.e_tot}")
+    print(f"Difference:   {mf_per_rks.e_tot - mf_per_rks_paw.e_tot}")
+
+    # CLEANUP
+    del mf_per_rks
+    del mf_per_rks_paw
+    del mydf
+    gc.collect() # Manually trigger garbage collection
+
 def exact_paw_diff_manual(alpha0=None, Rb=None):
     results = []
     for rscale in rscales:
@@ -187,7 +243,8 @@ def main():
     # exact_paw_diff_auto()
     # print(f'Time elapsed: {time.time()-start:.2f}')
     # exact_fftdf(0.7)
-    exact_paw_diff_manual(alpha0=12.5, Rb=1.32)
+    # exact_paw_diff_manual(alpha0=12.5, Rb=1.32)
+    exact_paw_diff_single_point()
 
 if __name__ == '__main__':
     main()

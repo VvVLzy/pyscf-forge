@@ -48,7 +48,7 @@ xc = 'pbe'
 mf_per_rks_paw = pscf.RKS(cell)
 mf_per_rks_paw.init_guess = init_guess
 mf_per_rks_paw.xc = xc
-mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=10, augRadius=1.5).build()
+mydf = NewPAW.from_mf(mf_per_rks_paw, PWAccuracy=1e-8, alpha0=10, augRadius=1.5, with_multigrid=0).build()
 mf_per_rks_paw.with_df = mydf
 
 def testmakeWignerSeitz():
@@ -357,6 +357,38 @@ def testvxc():
 
     print(numpy.max(numpy.abs(vxc1-vxc2)))
 
+def testMultiGridJ():
+    from pyscf import lib
+    from pyscf.paw.vxc import PAWNumInt
+    from PAWutilsNumpy import getjSmoothPW as old
+    from PAWutilsNumpy import getjSmoothPW2 as new
+
+    nk, nao = 1, cell.nao
+    mo_coeff = numpy.random.random((1, nk, nao, nao))
+    mo_occ = numpy.ones((1, nk, nao)) * 2
+    # Construct DM from MOs to ensure consistency with tags
+    dm_val = numpy.einsum('nkia,nka,nkja->nkij', mo_coeff, mo_occ, mo_coeff)
+    dm = lib.tag_array(dm_val, mo_coeff=mo_coeff, mo_occ=mo_occ)
+    
+    aoOnR_tilde = mydf.aoOnR_tilde
+    mesh = mydf.mesh
+    PAWdata = mydf.PAWdata
+
+    ni = PAWNumInt(mydf, mf_per_rks_paw, with_multigrid=2)
+    ni.mg_ni.ntasks = 1 # Force single grid for comparison
+    ni.mg_ni.build()
+
+    start = time.time()
+    result = old(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False)
+    print(f'Incore AO takes {time.time() - start}')
+    start = time.time()
+    result1 = new(cell, dm, ni.mg_ni, mesh, PAWdata, Periodic=False)
+    print(f'MG on the fly takes {time.time() - start}')
+
+    print(numpy.max(numpy.abs((result - result1))))
+    import pdb; pdb.set_trace()
+
+
 def main():
     # testmakeWignerSeitz()
     # testcompensatingCharge()
@@ -371,7 +403,8 @@ def main():
     # testmakeAugmentationRadius()
     # testpickalpha0()
     # testPartitionAOs()
-    testvxc()
+    # testvxc()
+    testMultiGridJ()
 
 if __name__ == '__main__':
     main()

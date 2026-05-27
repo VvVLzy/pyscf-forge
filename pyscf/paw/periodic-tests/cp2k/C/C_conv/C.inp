@@ -20,8 +20,8 @@
     &END TOPOLOGY
     &KIND C
       POTENTIAL ALL
-      BASIS_SET CC-PVDZ
-      HARD_EXP_RADIUS 1.2
+      BASIS_SET CC-PVQZ
+      HARD_EXP_RADIUS 1.5
     &END KIND
   &END SUBSYS
   &DFT
@@ -35,11 +35,12 @@
       METHOD GAPW
       EPS_DEFAULT 1.0E-10
       EPSFIT 1.0E-8
+      EPS_PGF_ORB 1.0E-8
       ALPHA0_HARD 10 # might have factor of 2 difference with ours, No! just use high pw cutoff this is grid artifact
       !LMAXN0 4
     &END QS
     &XC
-      &XC_FUNCTIONAL NONE
+      &XC_FUNCTIONAL LDA
       &END XC_FUNCTIONAL
     &END XC
     &SCF

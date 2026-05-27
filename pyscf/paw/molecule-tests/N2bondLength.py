@@ -7,19 +7,14 @@ import csv
 
 from pyscf.pbc import gto as pgto
 from pyscf import gto, scf
-from pyscf.paw import PAW
+from pyscf.paw import NewPAW as PAW
+from pyscf.paw.vxc import PAWNumInt
 
 # specify C2
 r1      = 0.    # location of first carbon
 r0       = 1.10    # N-N bond length
-# atom    = f'N {r1} {r1} {r1}; N {r1+r0/3.**0.5} {r1+r0/3.**0.5} {r1+r0/3.**0.5}'
-L = 50
-# L = 20
-# atom    = [
-#     ['N', [L/2+1.037, L/2, L/2]],
-#     ['N', [L/2-1.037, L/2, L/2]]
-# ]
-atom=[['Ne',[L/2,L/2,L/2]]]
+atom    = f'N {r1} {r1} {r1}; N {r1+r0/3.**0.5} {r1+r0/3.**0.5} {r1+r0/3.**0.5}'
+L = 20
 rscales = np.linspace(0.7, 1.5, 15)
 
 # other params
@@ -36,7 +31,6 @@ cell = pgto.M(
     basis       = basis,
     ke_cutoff   = ke_cutoff,
     a           = a,
-    unit        = 'B'
 )
 
 # corresponding mol for pyscf exact calculation
@@ -44,11 +38,10 @@ mol = gto.M(
     atom        = atom,
     verbose     = verbose,
     basis       = basis,
-    unit        = 'B'
 )
 
 # mf params
-xc = ''
+xc = 'pbe'
 init_guess = '1e'
 
 def single_point():
@@ -63,8 +56,10 @@ def single_point():
     mf_mol_paw.xc = xc
     mf_mol_paw.init_guess = init_guess
     mydf = PAW.from_mf(mf_mol_paw, cell,
-                        alpha0=1, augRadius=15).build()
+                        alpha0=None, augRadius=None, with_multigrid=2).build()
     mf_mol_paw.with_df = mydf
+    # pawnumint = PAWNumInt(mydf, mf_mol_paw)
+    # mf_mol_paw._numint = pawnumint # this works but is no better than the default vxc
     mf_mol_paw.kernel()
 
     print(mf_mol_exact.e_tot - mf_mol_paw.e_tot)

@@ -1,5 +1,0 @@
-#!/bin/bash
-
-echo "total numLoc"
-grep -P "a[0-7]:" *.out | awk -F'[ ;]' '{sum += $3} END {print sum}'
-

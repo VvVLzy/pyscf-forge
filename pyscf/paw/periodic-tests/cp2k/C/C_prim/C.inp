@@ -64,11 +64,11 @@
         &PROJECTORS ON
         &END PROJECTORS
       &END GAPW
-      &MO ON
+      &MO OFF
         EIGENVECTORS T
         OCCUPATION_NUMBERS T
       &END MO
-      &AO_MATRICES ON
+      &AO_MATRICES OFF
         OCE_HARD T
         OCE_SOFT T
         DENSITY T

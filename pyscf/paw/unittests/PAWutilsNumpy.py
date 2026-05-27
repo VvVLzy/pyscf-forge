@@ -5,6 +5,9 @@ import scipy, time
 import pyscf
 from pyscf import gto, lib
 from pyscf.pbc import gto as pgto
+from pyscf.pbc.dft.multigrid import multigrid_pair
+from pyscf.pbc.dft.multigrid import _backend_c as backend
+from pyscf import __config__
 from pyscf.pbc.df.rsdf_builder import _RSNucBuilder
 from pyscf.pbc.lib.kpts_helper import unique
 from pyscf.pbc.df import GDF, incore
@@ -755,7 +758,7 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     print('Making augmentation sphere for uniform grid:')
     WignerSeitzData = makeWignerSeitz(Rgrid, gmolSph, Periodic=Periodic)
     Lmax = numpy.array([max(LG.max(), 2)]*len(LG))
-    gridIdx = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)[0]
+    gridIdx, _, _, Rs = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)
 
     if Periodic:
         M_PQLarray = getMPQLarray(pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax)
@@ -768,7 +771,7 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
             pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmolSph, Rgrid, gridIdx
         )
 
-    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
+    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
 
 def intor_cross(intor, mol1, mol2, shls_slice, comp=None):
     nbas1 = len(mol1._bas)
@@ -896,7 +899,7 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     ###
 
     Ng = numpy.prod(mesh)
-    f = (cell.vol/Ng)
+    dv = (cell.vol/Ng)
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
     moOnR = smart_einsum('ra,am->rm', aoOnR_tilde, occMo)
     density = smart_einsum('rm,rm->r', moOnR.conj(), moOnR)
@@ -909,13 +912,165 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         numpy.add.at(density, gridIdx[atomI], smart_einsum('L,rL->r', zg, gOnR[atomI]))
     potential = numpy.fft.ifftn( FF * numpy.fft.fftn(density.reshape(mesh))).real.flatten()
 
-    J = smart_einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)*f
+    J = smart_einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)*dv
     assert(J.shape[0] == cell.nao)
     assert(J.shape[1] == cell.nao)
 
     for atomI in range(cell._atm.shape[0]):
         # el+comp-compOnA
-        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*f
+        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*dv
+        GL  = smart_einsum('L,RSL->RS', zg2, M_PQLarr[atomI])
+        numpy.add.at(
+            J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
+             smart_einsum('RS,Rm,Sn->mn', GL, F_Pmu[atomI], F_Pmu[atomI])\
+            -smart_einsum('RS,Rm,Sn->mn', GL, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])
+        )
+    
+    return J*2
+
+def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False, hermi=1, kpt=None):
+    GGA_METHOD = getattr(__config__, 'pbc_dft_multigrid_gga_method', 'FFT')
+
+    if kpt is None:
+        kpt = numpy.zeros((1,3))
+    
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+
+    # Use total DM to ensure correct non-linear XC potential evaluation
+    # dm expected as (nset, nkpts, nao, nao)
+    dm_val = dm[0, 0, :, :]
+    
+    xctype = mg_ni._xc_type(xc_code)
+    if xctype in (None, 'LDA', 'HF'):
+        deriv = 0
+    elif xctype == 'GGA':
+        deriv = 1
+    else:
+        raise NotImplementedError(f'xctype {xctype} not implemented in PAW multigrid')
+        
+    # Pass 1: AO -> Grid (Smooth Density)
+    rhoG = multigrid_pair._eval_rhoG(mg_ni, dm, hermi=hermi, kpts=kpt, deriv=deriv)
+    
+    Ng = numpy.prod(mesh)
+    dv = cell.vol / Ng
+    weight = dv
+    
+    # XC Evaluation on pseudo-density only
+    rhoR = numpy.fft.ifftn(rhoG.reshape(-1, *mesh), axes=(1,2,3)).real.reshape(-1, Ng) * (1./weight)
+    
+    if xctype == 'HF': # No XC part
+        nelec = numpy.sum(rhoR[0]) * weight
+        excsum = 0
+        vxc_G = numpy.zeros_like(rhoG[0])
+    else:
+        # Evaluate XC on total density
+        exc, vxcR = mg_ni.eval_xc_eff(xc_code, rhoR, deriv=1, xctype=xctype)[:2]
+        nelec = numpy.sum(rhoR[0]) * weight
+        excsum = numpy.dot(rhoR[0], exc) * weight
+        vxc_G = numpy.fft.fftn(vxcR.reshape(-1, *mesh), axes=(1,2,3)).reshape(-1, Ng)
+        
+        if xctype == 'GGA' and GGA_METHOD.upper() == 'FFT':
+            Gv = cell.get_Gv(mesh)
+            vxc_G = backend.get_gga_vrho_gs(vxc_G[:1], vxc_G[1:4], Gv, weight, Ng, 1.)
+        else:
+            vxc_G *= weight
+
+    # Hartree Evaluation on pseudo-density + compensating charges
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    
+    rhoR_J = rhoR[0].copy()
+    for atomI in range(cell._atm.shape[0]):
+        submat = dm_val[localIdx[atomI]][:, localIdx[atomI]]
+        # Use @ for faster matrix multiplication
+        DPQ = F_Pmu[atomI] @ submat @ F_Pmu[atomI].T
+        DPQtilde = Ftilde_Pmu[atomI] @ submat @ Ftilde_Pmu[atomI].T
+        
+        # zg = (DPQ - DPQtilde) : M_PQL
+        diff_DPQ = (DPQ - DPQtilde).ravel()
+        zg = diff_DPQ @ M_PQLarr[atomI].reshape(-1, M_PQLarr[atomI].shape[-1])
+        
+        # rhoR_J += zg @ gOnR^T
+        rhoR_J[gridIdx[atomI]] += gOnR[atomI] @ zg
+
+    rhoG_J = numpy.fft.fftn(rhoR_J.reshape(mesh)).flatten()
+    vG_J = rhoG_J * FF.flatten()
+    
+    # Use real-space integration for ecoul to ensure consistent scaling
+    potential_J = numpy.fft.ifftn(vG_J.reshape(mesh)).real.flatten()
+    ecoul = 0.5 * numpy.dot(rhoR_J, potential_J) * dv
+    
+    # Pass 2: Grid -> Matrix
+    # vxc matrix
+    if xctype == 'GGA' and GGA_METHOD.upper() != 'FFT':
+        vxc_mat = multigrid_pair._get_gga_pass2(mg_ni, vxc_G, kpts=kpt, hermi=hermi)
+    else:
+        vxc_mat = multigrid_pair._get_j_pass2(mg_ni, vxc_G, kpts=kpt, hermi=hermi)
+    
+    # vj matrix
+    vj_mat = multigrid_pair._get_j_pass2(mg_ni, vG_J * weight, kpts=kpt, hermi=hermi)
+    
+    # Squeeze J and Vxc
+    while vxc_mat.ndim > 2: vxc_mat = vxc_mat[0]
+    while vj_mat.ndim > 2: vj_mat = vj_mat[0]
+    
+    # Local Hartree Corrections
+    for atomI in range(cell._atm.shape[0]):
+        # zg2 = \int v(r) g_L(r) dr
+        zg2 = potential_J[gridIdx[atomI]] @ gOnR[atomI] * dv
+        
+        # GL = zg2 : M_PQL
+        # GL_RS = \sum_L zg2_L * M_RSL
+        GL = (M_PQLarr[atomI].reshape(-1, M_PQLarr[atomI].shape[-1]) @ zg2).reshape(M_PQLarr[atomI].shape[:-1])
+        
+        # vj_mat += F @ GL @ F^T
+        vj_mat[numpy.ix_(localIdx[atomI], localIdx[atomI])] += \
+            F_Pmu[atomI].T @ GL @ F_Pmu[atomI] - \
+            Ftilde_Pmu[atomI].T @ GL @ Ftilde_Pmu[atomI]
+
+    return nelec, excsum, ecoul, vxc_mat, vj_mat
+
+def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+
+    # Use alpha-DM to match getjSmoothPW logic (which returns J*2)
+    dm_alpha = dm / 2
+    dm_val = dm_alpha[0, 0, :, :]
+
+    # Pass 1: AO -> Grid (Smooth Density)
+    # Use multigrid for efficient collocation on the smooth basis
+    rhoG = multigrid_pair._eval_rhoG(mg_ni, dm_alpha, hermi=1, kpts=numpy.zeros((1,3)), deriv=0)
+    
+    Ng = numpy.prod(mesh)
+    dv = cell.vol / Ng
+    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
+    # Transform back to the fine grid for adding local compensating charges
+    # rhoG from _eval_rhoG is already scaled by weight (Vol/Ng)
+    rhoR = numpy.fft.ifftn(rhoG.reshape(mesh)).real.flatten() * (1./dv)
+    
+    for atomI in range(cell._atm.shape[0]):
+        submat = dm_val[localIdx[atomI]][:, localIdx[atomI]]
+        DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
+        DPQtilde = smart_einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
+        zg = smart_einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
+        numpy.add.at(rhoR, gridIdx[atomI], smart_einsum('L,rL->r', zg, gOnR[atomI]))
+
+    # Poisson in G-space
+    # Standard FFT (unscaled)
+    rhoG_total = numpy.fft.fftn(rhoR.reshape(mesh))
+    vG = rhoG_total * FF
+    
+    # Pass 2: Grid -> Matrix (Smooth Potential Integration)
+    # Note: _get_j_pass2 expects vG * weight
+    wv_freq = vG * dv
+    J = multigrid_pair._get_j_pass2(mg_ni, wv_freq, kpts=numpy.zeros((1,3)), hermi=1)
+    while J.ndim > 2:
+        J = J[0]
+    
+    # Local Matrix Corrections (zg2 terms)
+    potential = numpy.fft.ifftn(vG).real.flatten()
+    for atomI in range(cell._atm.shape[0]):
+        # el+comp-compOnA
+        zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*dv
         GL  = smart_einsum('L,RSL->RS', zg2, M_PQLarr[atomI])
         numpy.add.at(
             J, numpy.ix_(localIdx[atomI], localIdx[atomI]),
@@ -1644,10 +1799,14 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
     alpha, atoms, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
 
-    dv = mol.vol/grids.shape[0]
+    if hasattr(grids, 'coords'):
+        coords = grids.coords
+    else:
+        coords = grids
+    dv = mol.vol/coords.shape[0]
     
     print('Making augmentation sphere for uniform grid:')
-    WignerSeitzData = makeWignerSeitz(grids, mol, Periodic=True)
+    WignerSeitzData = makeWignerSeitz(coords, mol, Periodic=True)
     gridIdx = makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=Rb, epsilon=epsilon)[0]
 
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
@@ -1703,14 +1862,13 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
         Ftilde_Pmu[:, idxToFit] = F_fitted
 
         ### check normalization of fitted AO and original AO
-        gridOnA = grids[gridIdx[atomI]]
+        gridOnA = coords[gridIdx[atomI]]
         AOOnA = mol.pbc_eval_gto('GTOval', gridOnA)[:, locId][:, idxToFit]
         primOnA = pmol.pbc_eval_gto('GTOval', gridOnA)[:, ACenteredId]
         fAOOnA = smart_einsum('rP,Pm->rm', primOnA, F_fitted)
         print(AOOnA.sum(axis=0)*dv)
         print(fAOOnA.sum(axis=0)*dv)
         print(numpy.max(numpy.abs(AOOnA.sum(axis=0)-fAOOnA.sum(axis=0))*dv))
-        import pdb; pdb.set_trace()
 
         # set local, a-centered function directly as contraction coefficient (no fitting)
         diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
@@ -1733,7 +1891,7 @@ def obtainLocalFnsNew(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, R
 
     return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr
 
-def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-8):
+def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-8):
     '''
     Fit AO and diffuse AO directly, much faster
     set F_Pmu directly to contraction coefficient when P=mu
@@ -1747,7 +1905,9 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
     
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
 
+    print('Building projectors...')
     for atomI in range(mol._atm.shape[0]):
+        print(f'Atom {atomI}:')
         # fit all local primitives with atom centered primitives
         ACenteredId = numpy.where(atoms == atomI)[0]
         ACenteredAOId = numpy.where(atomsAO == atomI)[0]
@@ -1783,7 +1943,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
                 if isoPrim[i]: alphasProj[i] = zetval; zetval *= x
 
             projBasis4L = [[l, [a, 1.]] for a in alphasProj]
-            print(projBasis4L)
+            print(f'L={l}: projExp {alphasProj}')
             projBasis.extend(projBasis4L)
 
 
@@ -1804,8 +1964,8 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, grids, alpha0, r=2, epsilon=1.e-5,
 
         # ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
         U, s, Vh = numpy.linalg.svd(projPrimOvlp)
-        s_inv = 1/s
-        s_inv[s<rtol] = 0
+        s_inv = numpy.zeros_like(s)
+        s_inv[s>rtol] = 1/s[s>rtol]
         ppoinv = Vh.T@numpy.diag(s_inv)@U.T
 
         # construct proj-ao overlap

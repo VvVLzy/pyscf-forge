@@ -51,4 +51,4 @@ def convert_basis(input_file, output_file, basis_name):
 
 # Usage:
 # convert_basis('ccpvdz.dat', 'ccpvdz_cp2k.dat', 'CC-PVDZ')
-convert_basis('ccpvtz.dat', 'ccpvtz_cp2k.dat', 'CC-PVTZ')
+convert_basis('ccpvqz.dat', 'ccpvqz_cp2k.dat', 'CC-PVQZ')
