@@ -26,7 +26,7 @@ init_guess = '1e'
 
 cell = pgto.M(
     atom=benzene, 
-    basis='cc-pvqz', 
+    basis='cc-pvtz', 
     a=np.array([[20,0,0],[0,20,0],[0,0,20]]),
     verbose=verbose,
     ke_cutoff=ke_cutoff,
@@ -43,6 +43,8 @@ mf_mol_exact.kernel()
 
 
 # paw calculation
+import time
+start = time.time()
 mf_mol_paw = scf.RKS(mol).density_fit()
 mf_mol_paw.xc = 'pbe'
 mf_mol_paw.init_guess = init_guess
@@ -53,5 +55,6 @@ mf_mol_paw.with_df = mydf
 # pawnumint = PAWNumInt(mydf, mf_mol_paw, use_merged_multigrid=True)
 # mf_mol_paw._numint = pawnumint # this works but is no better than the default vxc
 mf_mol_paw.kernel()
+print(f'paw takes {time.time()- start:.2f} seconds')
 
 print(f'Energy difference: {mf_mol_exact.e_tot - mf_mol_paw.e_tot}')

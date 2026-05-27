@@ -32,10 +32,10 @@ mol = gto.M(atom=cell.atom, basis=cell.basis, spin=2, verbose=verbose)
 
 # exact calculation
 # UKS is chosen explicitly
-mf_mol_exact = scf.UKS(mol)
-mf_mol_exact.xc = 'pbe'
-mf_mol_exact.init_guess = init_guess
-mf_mol_exact.kernel()
+# mf_mol_exact = scf.UKS(mol)
+# mf_mol_exact.xc = 'pbe'
+# mf_mol_exact.init_guess = init_guess
+# mf_mol_exact.kernel()
 
 # paw calculation
 mf_mol_paw = scf.UKS(mol).density_fit()
@@ -47,6 +47,6 @@ mydf = PAW.from_mf(mf_mol_paw, cell,
 mf_mol_paw.with_df = mydf
 # pawnumint = PAWNumInt(mydf, mf_mol_paw, use_merged_multigrid=True)
 # mf_mol_paw._numint = pawnumint # this works but is no better than the default vxc
-mf_mol_paw.kernel()
+# mf_mol_paw.kernel()
 
-print(f'Energy difference: {mf_mol_exact.e_tot - mf_mol_paw.e_tot}')
+# print(f'Energy difference: {mf_mol_exact.e_tot - mf_mol_paw.e_tot}')

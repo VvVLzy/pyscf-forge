@@ -28,7 +28,7 @@ print(rscales)
 zeta = 'qz'
 basis = "ccpv"+zeta
 
-verbose = 4
+verbose = 3
 a = numpy.eye(3) * L
 ke_cutoff = 200
 precision = 1e-8
@@ -166,7 +166,8 @@ def main():
     prefix = './'
     path = prefix + f"data/CBulkModulus_{ke_cutoff:.2f}_a_{alpha0}_r_{Rb}_{zeta}_{precision:.0e}_{xc}_nuc.csv"
     
-    if not os.path.exists(path):
+    # if not os.path.exists(path):
+    if True:
         path = calc_pes()
     
     analyze_bm(path)

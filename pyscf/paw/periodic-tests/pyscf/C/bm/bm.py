@@ -25,7 +25,7 @@ C 2.670559 2.670559 2.670559
 rscales = numpy.linspace(0.9, 1.1, 5)
 print(rscales)
 
-zeta = 'qz'
+zeta = 'dz'
 basis = "ccpv"+zeta
 
 verbose = 4
@@ -41,7 +41,7 @@ cell = pgto.M(
     ke_cutoff   = ke_cutoff,
     precision   = precision
 )
-cell.exp_to_discard = 0.2
+# cell.exp_to_discard = 0.2
 
 coords_bohr = cell.atom_coords() 
 lattice_bohr = cell.lattice_vectors()
