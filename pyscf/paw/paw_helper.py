@@ -333,6 +333,91 @@ def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e
     
     return gridIdx, masked_gridIdx, masks, Rs
 
+def get_grid_indices_within_radius(Rgrid, atom_pos, radius, cell_lattice=None):
+    """
+    Finds indices of points in Rgrid that are within `radius` of `atom_pos`.
+    
+    Args:
+        Rgrid: (N, 3) array of grid coordinates.
+        atom_pos: (3,) array of the atom's coordinate.
+        radius: float, the maximum distance.
+        cell_lattice: (3, 3) array of lattice vectors (optional, for Periodic=True).
+                      If None, assumes open boundary conditions.
+                      
+    Returns:
+        1D numpy array of integer indices.
+    """
+    # 1. Calculate displacement vectors from the atom to all grid points
+    # Shape: (N, 3)
+    diff = Rgrid - atom_pos
+    
+    # 2. Apply Minimum Image Convention (PBC wrapping) if lattice is provided
+    if cell_lattice is not None:
+        # Get fractional coordinates by multiplying by inverse lattice
+        L_inv = numpy.linalg.inv(cell_lattice)
+        frac_diff = numpy.dot(diff, L_inv)
+        
+        # Wrap fractional coordinates to [-0.5, 0.5] to find the shortest path
+        frac_diff -= numpy.round(frac_diff)
+        
+        # Convert back to Cartesian coordinates
+        diff = numpy.dot(frac_diff, cell_lattice)
+        
+    # 3. Filter out a small box containing the sphere
+    box_mask = (numpy.abs(diff[:, 0]) <= radius) & \
+               (numpy.abs(diff[:, 1]) <= radius) & \
+               (numpy.abs(diff[:, 2]) <= radius)
+    box_indices = numpy.where(box_mask)[0]
+    diff_box = diff[box_indices]
+    
+    # 4. Calculate squared distances within that box
+    dist_sq = numpy.sum(diff_box**2, axis=-1)
+    
+    # 5. Find indices where distance is less than radius
+    # We compare squared distances to avoid the expensive numpy.sqrt
+    radius_sq = radius**2
+    valid_in_box = numpy.where(dist_sq < radius_sq)[0]
+    
+    valid_indices = box_indices[valid_in_box]
+    
+    return valid_indices
+
+def makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=False):
+    '''
+    Memory efficient version of makeAugmentationSphere that computes distances
+    on-the-fly using get_grid_indices_within_radius instead of requiring a
+    pre-computed Wigner-Seitz distance matrix.
+    '''
+    logger.debug(mol, 'L max is :%d', L.max())
+
+    gridIdx, masked_gridIdx, masks, Rs = [], [], [], []
+    
+    cell_lattice = mol.lattice_vectors() if Periodic else None
+    
+    for atomI in range(mol._atm.shape[0]):
+        if Rb is None:
+            maxR = get_gaussian_radius(alpha0, L.max(), epsilon)
+        else:
+            maxR = Rb
+            
+        atom_pos = mol.atom_coord(atomI)
+        
+        # Get indices directly without storing N_atoms x N_grid matrix
+        allIdx = get_grid_indices_within_radius(Rgrid, atom_pos, maxR, cell_lattice=cell_lattice)
+        
+        # Placeholders for Wigner-Seitz dependent outputs to maintain uniform signature
+        mask = None
+        masked_idx = None
+        
+        gridIdx.append(allIdx)
+        masked_gridIdx.append(masked_idx)
+        masks.append(mask)
+        Rs.append(maxR)
+
+    logger.info(mol, 'The max augmentation radius is: %s Bohr', max(Rs))
+    
+    return gridIdx, masked_gridIdx, masks, Rs
+
 
 def getPrimIdxFromAOIdx(mol, pmol):
     ao2prim = []

@@ -29,17 +29,24 @@ def getPAWdata(mol,
                alpha0_lowmem=True,
                auto_box=False,
                use_new_comp_charge=True):
+    t_start = time.time()
     mol.build()
     if (not Periodic):
         mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box)
+    print(f"Time for mol.build and prepareMolForPAW: {time.time() - t_start:.4f}s")
+    t_start = time.time()
 
     # uncontract basis
     pmol, ctr_coeff = mol.decontract_basis()
     pmol._basis = PAWutils.modifyMolBasis(pmol._basis)
+    print(f"Time for decontract_basis: {time.time() - t_start:.4f}s")
+    t_start = time.time()
 
     # initialize grids
     mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
+    print(f"Time for grids init: {time.time() - t_start:.4f}s")
+    t_start = time.time()
 
     # get alpha0
     if alpha0_lowmem:
@@ -73,6 +80,8 @@ def getPAWdata(mol,
             alpha0_wf = alpha0/2
 
     alpha0_wf = alpha0 # must be this!
+    print(f"Time for getAlpha0: {time.time() - t_start:.4f}s")
+    t_start = time.time()
 
     # PAWData
     if use_new_comp_charge:
@@ -81,9 +90,13 @@ def getPAWdata(mol,
     else:
         M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = PAWutils.compensatingCharge(
             pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
+    print(f"Time for compensatingCharge: {time.time() - t_start:.4f}s")
+    t_start = time.time()
         
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
         pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rb=numpy.max(Rs), Periodic = Periodic, rtol=1e-8)
+    print(f"Time for obtainLocalFnsNewer: {time.time() - t_start:.4f}s")
+    t_start = time.time()
 
     # Evaluate AOs on uniform grid
     start = time.time()
@@ -92,12 +105,15 @@ def getPAWdata(mol,
     else:
         aoOnR_tilde = 0
     logger.info(mol, 'AO eval on all grids take %.2e seconds', time.time() - start)
+    print(f"Time for AO evaluation (partitionAOs): {time.time() - t_start:.4f}s")
+    t_start = time.time()
 
     # Prepare PAW data
     result = PAWutils.separateNuclearElectron(
         pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr)
     PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gridIdx, gOnR)
     PAWNucdata = result[-3:]
+    print(f"Time for separateNuclearElectron: {time.time() - t_start:.4f}s")
 
     return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol, ctr_coeff, alpha0, Rs
 

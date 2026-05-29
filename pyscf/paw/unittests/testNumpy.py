@@ -390,7 +390,7 @@ def testMultiGridJ():
 
 
 def main():
-    # testmakeWignerSeitz()
+    testmakeWignerSeitz()
     # testcompensatingCharge()
     # testcompensatingChargeSph()
     # testgetMPQLarray()
@@ -404,7 +404,7 @@ def main():
     # testpickalpha0()
     # testPartitionAOs()
     # testvxc()
-    testMultiGridJ()
+    # testMultiGridJ()
 
 if __name__ == '__main__':
     main()
