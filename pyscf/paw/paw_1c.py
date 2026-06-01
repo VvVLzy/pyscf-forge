@@ -22,11 +22,6 @@ smart_einsum = partial(numpy.einsum, optimize='optimal')
 def RadialNorm(alpha, l):
     return 1./2./alpha**(0.5*(l+1.)) * scipy.special.gamma(0.5*(l+1.))
 
-def basisnorm(alpha, l):
-    L = l*2+2
-    n = 0.5*(L+1)
-    return 1./(1./2./(2.*alpha)**n * scipy.special.gamma(n))**0.5
-
 def gammaBar(n, l, a):
     """Vectorized Gamma calculation"""
     L_val = n + 2 + l
@@ -350,8 +345,9 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
 
     logger.debug(mol, 'Making augmentation sphere for uniform grid:')
-    WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
-    gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere(WignerSeitzData, pmol, LG, alpha0, Rb=Rb, epsilon=epsilon)
+    # WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
+    # gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere(WignerSeitzData, pmol, LG, alpha0, Rb=Rb, epsilon=epsilon)
+    gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic)
 
     M_PQLarray, V_PQLarray, V_LLarray, gOnR = [], [], [], []
     for atomI in range(pmol._atm.shape[0]):
@@ -399,32 +395,89 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
 
 def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol, Rgrid, gridIdx):
+    import time
     CG = ClebschGordan.RealCG
     M_PQLarray, V_PQLarray, V_LLarray, gOnR = [], [], [], []
-    for atomI in range(pmol._atm.shape[0]):
-        idx  = (atoms==atomI)
-        idxg = (atomsG==atomI)
-        M_PQLarray.append(getmpql(L, M, alpha, LG, MG, alphaG, idx, idxg))
 
+    atomBass = {}
+    atomData = {}
+    
+    def getCalcIdx(atomInfo, atomBas):
+        for i, info in enumerate(atomBas):
+            if (atomInfo==info).all():
+                return i
+        return None
+
+    t_mpql, t_vpql, t_vll, t_gonr = 0, 0, 0, 0
+
+    for atomI in range(pmol._atm.shape[0]):
         shellsA, shellsB = numpy.where(pmol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
 
-        # assert(Periodic)
-        VPQL = intor_cross('int3c2e', pmol, gmol,  
-                            shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
-        V_PQLarray.append(VPQL)
+        # check if redundant (cache key)
+        idx_bas = numpy.where(pmol._bas[:,0] == atomI)[0]
+        atomZ = pmol._atm[atomI, 0]
+        atomL = pmol._bas[idx_bas][:, 1]
+        atomExp = pmol._env[pmol._bas[idx_bas][:, -3]]
+        atomInfo = numpy.concatenate((atomL, atomExp))
+        
+        atomBas = atomBass.get(atomZ, [])
+        i = getCalcIdx(atomInfo, atomBas)
+        
+        if i is not None:
+            # Use cached
+            mpql, vpql, vll = atomData[atomZ][i]
+            M_PQLarray.append(mpql)
+            V_PQLarray.append(vpql)
+            V_LLarray.append(vll)
+        else:
+            # Calculate and cache
+            idx  = (atoms==atomI)
+            idxg = (atomsG==atomI)
+            
+            t0 = time.time()
+            mpql = getmpql(L, M, alpha, LG, MG, alphaG, idx, idxg)
+            t_mpql += time.time() - t0
 
-        VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1,shellsB[0], shellsB[-1]+1))
-        V_LLarray.append(VLL)
+            t0 = time.time()
+            VPQL = intor_cross('int3c2e', pmol, gmol,  
+                                shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
+            t_vpql += time.time() - t0
 
+            t0 = time.time()
+            VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1,shellsB[0], shellsB[-1]+1))
+            t_vll += time.time() - t0
+
+            M_PQLarray.append(mpql)
+            V_PQLarray.append(VPQL)
+            V_LLarray.append(VLL)
+
+            # Update cache
+            atomBas.append(atomInfo)
+            atomBass[atomZ] = atomBas
+            data_list = atomData.get(atomZ, [])
+            data_list.append((mpql, VPQL, VLL))
+            atomData[atomZ] = data_list
+
+        # gOnR depends on Rgrid which is globally shifted relative to the atom, must compute per atom
+        t0 = time.time()
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
+        t_gonr += time.time() - t0
 
+    print(f"      [Time breakdown] mpql: {t_mpql:.4f}s, vpql: {t_vpql:.4f}s, vll: {t_vll:.4f}s, gonr: {t_gonr:.4f}s")
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
 
 def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
+    import time
+    print("\n--- Starting mergeCompensatingCharge ---")
+    t0 = time.time()
+    
     pmolNuc = addSharpGTO2Atom(pmol)
     assert(type(pmolNuc.basis) == dict)
     assert(pmolNuc.basis == modifyMolBasis(pmolNuc.basis))
     alpha, atoms, L, M = getAlphaAtomsL(pmolNuc._bas, pmolNuc._env)
+    
+    t1 = time.time()
+    print(f"  [Time] Setup & getAlphaAtomsL (pmolNuc): {t1 - t0:.4f}s")
 
     ##introducing the compensating charge basis set
     # need both spherical and cartesian
@@ -444,21 +497,43 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmolSph._bas, gmolSph._env, cart=gmolSph.cart)
     assert((alphaG == alphaG[0]).all())
 
+    t2 = time.time()
+    print(f"  [Time] Compensating charge basis setup (gmolCart/Sph): {t2 - t1:.4f}s")
+
     logger.debug(mol, 'Making augmentation sphere for uniform grid:')
-    WignerSeitzData = makeWignerSeitz(Rgrid, gmolSph, Periodic=Periodic)
+    # WignerSeitzData = makeWignerSeitz(Rgrid, gmolSph, Periodic=Periodic)
     Lmax = numpy.array([max(LG.max(), 2)]*len(LG))
-    gridIdx, _, _, Rs = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)
+    # gridIdx, _, _, Rs = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)
+    gridIdx, _, _, Rs = makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=Rb, epsilon=epsilon, Periodic=Periodic)
+    
+    t3 = time.time()
+    print(f"  [Time] makeAugmentationSphere1: {t3 - t2:.4f}s")
 
     if Periodic:
+        t_periodic_start = time.time()
         M_PQLarray = getMPQLarray(pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax)
+        t_mpql = time.time()
+        print(f"    [Time] getMPQLarray: {t_mpql - t_periodic_start:.4f}s")
+        
         V_LLarray, V_PQLarray = getVLLVPQLarray(mol, pmolNuc, gmolCart, gmax)
+        t_vll_vpql = time.time()
+        print(f"    [Time] getVLLVPQLarray: {t_vll_vpql - t_mpql:.4f}s")
+        
         gOnR = getGOnR(pmolNuc, gmolCart, gmolSph, Rgrid, gridIdx, gmax)
+        t_gonr = time.time()
+        print(f"    [Time] getGOnR: {t_gonr - t_vll_vpql:.4f}s")
+        
         gmol = gmolCart
     else:
+        t_non_periodic_start = time.time()
         M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol = compensatingChargeSph(
             # pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, Periodic, gmolSph, Rgrid, gridIdx
             pmolNuc, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmolSph, Rgrid, gridIdx
         )
+        print(f"    [Time] compensatingChargeSph (Non-Periodic): {time.time() - t_non_periodic_start:.4f}s")
+
+    t_end = time.time()
+    print(f"--- Finished mergeCompensatingCharge (Total: {t_end - t0:.4f}s) ---\n")
 
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
 
@@ -468,6 +543,9 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
     set F_Pmu directly to contraction coefficient when P=mu
     new projectors!!
     '''
+    import time
+    print("\n--- Starting obtainLocalFnsNewer ---")
+    t0 = time.time()
 
     labels = labelShellWithIdx(ctr_coeff, mol)
 
@@ -475,6 +553,14 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
     atomsAO, _, _ = getAtomsL(mol._bas, mol._env)
     
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = [], [], [], [], []
+
+    t1 = time.time()
+    print(f"  [Time] Setup & label/getAtoms: {t1 - t0:.4f}s")
+    
+    t_neigh = time.time()
+    neighbor_list = get_neighbor_list(mol, epsilon=epsilon, Periodic=Periodic)
+    aoslice = mol.aoslice_by_atom()
+    print(f"  [Time] get_neighbor_list: {time.time() - t_neigh:.4f}s")
 
     logger.debug(mol, 'Building projectors...')
     for atomI in range(mol._atm.shape[0]):
@@ -539,27 +625,43 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
         s_inv[s>rtol] = 1/s[s>rtol]
         ppoinv = Vh.T@numpy.diag(s_inv)@U.T
 
-        # construct proj-ao overlap
+        # construct proj-ao overlap using NEIGHBOR CLUSTER
         numProj = projPrimOvlp.shape[0]
-        projAOBasis = mol._basis.copy()
-        projAOBasis[projElem] = projBasis
-        projAOAtom = mol._atom.copy()
-        projAOAtom.append((projElem, projAOAtom[atomI][1])) # adds projector to last so indexing is easy
-        projAOMol = pgto.M(atom=projAOAtom, basis=projAOBasis, a=mol.lattice_vectors(), unit='B', cart = mol.cart)
-        # projAOMol = smoothCell(projAOMol, alpha0, projAOMol=True)
-        projAOOvlp = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
-
+        neighbors = neighbor_list[atomI]
+        
+        clusterAOAtom = []
+        clusterAOBasis = {}
+        global_ao_indices = []
+        
+        for j in neighbors:
+            clusterAOAtom.append(mol._atom[j])
+            elem = mol._atom[j][0]
+            clusterAOBasis[elem] = mol._basis[elem]
+            global_ao_indices.extend(range(aoslice[j, 2], aoslice[j, 3]))
+            
+        global_ao_indices = numpy.array(global_ao_indices)
+        
+        clusterAOAtom.append((projElem, mol._atom[atomI][1]))
+        clusterAOBasis[projElem] = projBasis
+        
+        projAOMol = pgto.M(atom=clusterAOAtom, basis=clusterAOBasis, a=mol.lattice_vectors(), unit='B', cart=mol.cart)
+        projAOOvlp_cluster = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
+        import pdb; pdb.set_trace()
         # determine local functions
-        locId = numpy.where(numpy.max(numpy.abs(projAOOvlp), axis=0) > epsilon)[0]
-        # print(f'LocId: {locId}')
-        assert(numpy.isin(ACenteredAOId, locId).all()) # this must be true
+        local_locId = numpy.where(numpy.max(numpy.abs(projAOOvlp_cluster), axis=0) > epsilon)[0]
+        locId = global_ao_indices[local_locId]
+        
+        # assert(numpy.isin(ACenteredAOId, locId).all()) # this must be true
+        if not numpy.isin(ACenteredAOId, locId).all():
+            logger.warn(mol, f"Warning: ACenteredAOId not fully contained in locId for atom {atomI}. Check threshold.")
+            
         idxToFit = numpy.where(~numpy.isin(locId, ACenteredAOId))[0]
         idxToSet = numpy.where(numpy.isin(locId, ACenteredAOId))[0]
 
         # fit the functions
-        projAOOvlp = projAOOvlp[:, locId][:, idxToFit]
+        projAOOvlp_active = projAOOvlp_cluster[:, local_locId][:, idxToFit]
         # F_fitted, residuals, rank, s = numpy.linalg.lstsq(projPrimOvlp, projAOOvlp, rcond=None)
-        F_fitted = ppoinv @ projAOOvlp
+        F_fitted = ppoinv @ projAOOvlp_active
 
         # update arrays
         F_Pmu = numpy.zeros((len(ACenteredId), len(locId)))
@@ -584,6 +686,13 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
         F_PmuArr.append(F_Pmu)
         Ftilde_PmuArr.append(Ftilde_Pmu)
 
+    t2 = time.time()
+    print(f"  [Time] Atom loop (projectors & fitting): {t2 - t1:.4f}s")
+
     VPQRSArr = obtainLocal2e(mol, pmol, Periodic)
+
+    t3 = time.time()
+    print(f"  [Time] obtainLocal2e: {t3 - t2:.4f}s")
+    print(f"--- Finished obtainLocalFnsNewer (Total: {t3 - t0:.4f}s) ---\n")
 
     return localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr

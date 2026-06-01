@@ -704,3 +704,66 @@ def getAuxbasis(pmol):
         auxbas[atom] = shellAtom
 
     return auxbas
+
+def get_atom_radii(mol, epsilon=1e-8):
+    """
+    For each atom, determine the radius within which its most diffuse 
+    basis function decays below epsilon, accounting for contraction coefficients.
+    """
+    natm = mol.natm
+    radii = numpy.zeros(natm)
+    for ib in range(mol.nbas):
+        ia = mol.bas_atom(ib)
+        l = mol.bas_angular(ib)
+        exps = mol.bas_exp(ib)
+        # bas_ctr_coeff returns (n_prim, n_ctr) matrix
+        coeffs = mol.bas_ctr_coeff(ib)
+        
+        # We care about the tail, dominated by the smallest exponent
+        idx_min = numpy.argmin(exps)
+        alpha_min = exps[idx_min]
+        
+        # Max coefficient across all contracted functions for this shell's diffuse primitive
+        c_max = numpy.max(numpy.abs(coeffs[idx_min, :]))
+        
+        # Effective threshold adjusted by the coefficient: |c| * N * G(r) < epsilon
+        # So we find where N * G(r) < epsilon / |c|
+        eps_eff = epsilon / max(c_max, 1e-15)
+        
+        r = get_gaussian_radius(alpha_min, l, eps_eff)
+        radii[ia] = max(radii[ia], r)
+    return radii
+
+def get_neighbor_list(mol, epsilon=1e-8, Periodic=False):
+    """
+    Generates a neighbor list where atoms i and j are neighbors if
+    distance(i, j) < radius_i + radius_j.
+    """
+    coords = mol.atom_coords() # Coords in Bohr
+    natm = mol.natm
+    radii = get_atom_radii(mol, epsilon)
+    
+    neighbor_list = []
+    
+    if Periodic:
+        L = mol.lattice_vectors()
+        L_inv = numpy.linalg.inv(L)
+    
+    for i in range(natm):
+        # Displacement from atom i to all other atoms
+        diff = coords - coords[i]
+        
+        if Periodic:
+            # Minimum Image Convention
+            frac_diff = numpy.dot(diff, L_inv)
+            frac_diff -= numpy.round(frac_diff)
+            diff = numpy.dot(frac_diff, L)
+            
+        dist = numpy.sqrt(numpy.sum(diff**2, axis=-1))
+        
+        # Two atoms are neighbors if their spheres of influence overlap
+        thresholds = radii[i] + radii
+        neighbors = numpy.where(dist < thresholds)[0]
+        neighbor_list.append(neighbors)
+        
+    return neighbor_list

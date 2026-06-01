@@ -166,7 +166,6 @@ def obtainLocal2e(mol, pmol, Periodic):
         if i is not None:
             VPQRSArr.append(atom2eInts[atomZ][i])
             continue
-
         # calculate integrals
         # auxbasis = getAuxbasis(pmol)
         if Periodic :
@@ -178,17 +177,22 @@ def obtainLocal2e(mol, pmol, Periodic):
             # TODO: get this by GDF 2c2e
             # import pdb; pdb.set_trace()
             VPQRS = mydf.get_eri(compact=False).reshape((molAtom.nao, molAtom.nao, molAtom.nao, molAtom.nao))
+
+            VPQRSWithNuc = numpy.zeros([VPQRS.shape[0]+1]*len(VPQRS.shape))
+            VPQRSWithNuc[1:, 1:, 1:, 1:] = VPQRS
+
+            # nuclear
+            dfbuilder = _RSNucBuilder(molAtom, kpts=numpy.zeros((1,3))).build()
+            VPQRSWithNuc[0, 0, 1:, 1:] = -dfbuilder.get_nuc()[0]/pmol._atm[atomI, 0]
+            VPQRSArr.append(VPQRSWithNuc)
         else:
             molAtom = buildPmolAtom(mol, pmol, atomI, pmol.cart)
-            VPQRS = pmol.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1))
+            # VPQRS = pmol.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1))
+            VPQRS = molAtom.intor('int2e')
 
-        VPQRSWithNuc = numpy.zeros([VPQRS.shape[0]+1]*len(VPQRS.shape))
-        VPQRSWithNuc[1:, 1:, 1:, 1:] = VPQRS
-
-        # nuclear
-        dfbuilder = _RSNucBuilder(molAtom, kpts=numpy.zeros((1,3))).build()
-        VPQRSWithNuc[0, 0, 1:, 1:] = -dfbuilder.get_nuc()[0]/pmol._atm[atomI, 0]
-        VPQRSArr.append(VPQRSWithNuc)
+            VPQRSWithNuc = numpy.zeros([VPQRS.shape[0]+1]*len(VPQRS.shape))
+            VPQRSWithNuc[1:, 1:, 1:, 1:] = VPQRS
+            VPQRSArr.append(VPQRSWithNuc)
 
         # update calculated
         atomBas.append(atomInfo)
