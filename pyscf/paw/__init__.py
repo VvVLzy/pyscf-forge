@@ -148,7 +148,8 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
     nao = cell.nao
     # if with_k:
     if with_j or with_k:
-        dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
+        # dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
+        dm = dm.reshape(-1, nk, nao, nao)
 
     if is_single_kpt:
         # TODO: test paw jk here
@@ -246,11 +247,14 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
     nao = cell.nao
     # if with_k:
     if with_j or with_k:
-        dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
+        # import pdb; pdb.set_trace()
+        # dm = tag_dm(mydf, dm, cell, kpts, nk, nao)
+        dm = dm.reshape(-1, nk, nao, nao)
 
     vj = vk = None
     if with_j:
         cpu0 = (logger.process_clock(), logger.perf_counter())
+        start = time.time()
         if getattr(mydf, 'with_multigrid', 0) > 0:
             # Check if vj1 is already cached from the XC pass
             cached_dm = getattr(mydf, '_cached_vj1_dm', None)
@@ -271,7 +275,9 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                         mydf.PAWdata,
                                         Periodic=mydf.Periodic)
         logger.timer(mydf, 'vj PW', *cpu0)
+        print(f'PW J takes {time.time() - start:.2f} sec')
         cpu0 = (logger.process_clock(), logger.perf_counter())
+        start = time.time()
         vj2 = PAWutils.getjSharpLocal(cell, dm, 
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
@@ -283,6 +289,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                     mydf.PAWdata,
                                     Periodic=mydf.Periodic)
         logger.timer(mydf, 'vj atom', *cpu0)
+        print(f'Atom J takes {time.time() - start:.2f} sec')
         vj = vj1 + vj2 + vj3
     if with_k:
         is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
