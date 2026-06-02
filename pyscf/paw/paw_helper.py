@@ -418,6 +418,33 @@ def makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Perio
     
     return gridIdx, masked_gridIdx, masks, Rs
 
+def makeAugmentationSphere_Fast(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=False):
+    '''
+    O(N log Ng) version of makeAugmentationSphere using a cKDTree
+    for fast spatial queries, replacing the O(N*Ng) distance broadcasting.
+    '''
+    # Build the KDTree - O(Ng log Ng)
+    # boxsize for periodic boundary conditions in cKDTree
+    lattice = mol.lattice_vectors()
+    boxsize = lattice.diagonal() if Periodic else None
+    
+    tree = scipy.spatial.cKDTree(Rgrid, boxsize=boxsize)
+    
+    gridIdx = []
+    Rs = []
+    L_max = L.max()
+    
+    for atomI in range(mol._atm.shape[0]):
+        maxR = Rb if Rb is not None else get_gaussian_radius(alpha0, L_max, epsilon)
+        atom_pos = mol.atom_coord(atomI)
+        
+        # Query points within radius - O(log Ng) per atom
+        allIdx = tree.query_ball_point(atom_pos, maxR)
+        
+        gridIdx.append(numpy.array(allIdx, dtype=int))
+        Rs.append(maxR)
+
+    return gridIdx, [None]*len(gridIdx), [None]*len(gridIdx), Rs
 
 def getPrimIdxFromAOIdx(mol, pmol):
     ao2prim = []

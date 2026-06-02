@@ -115,21 +115,23 @@ def getGOnR(pmol, gmolCart, gmolSph, Rgrid, gridIdx, gmax):
     gOnR = []
     for atomI in range(pmol._atm.shape[0]):
         shellsB = numpy.where(gmolCart._bas[:,0] == atomI)[0]
+        gmolCartAtom = pgto.M(atom = [gmolCart._atom[atomI]], basis = gmolCart.basis, a = gmolCart.lattice_vectors(), cart = True, unit='B')
+        gmolSphAtom = pgto.M(atom = [gmolSph._atom[atomI]], basis = gmolSph.basis, a = gmolSph.lattice_vectors(), cart = False, unit='B')
         if gmax < 2:
             gOnR.append(
-                gmolCart.pbc_eval_gto(
-                    'GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)
+                gmolCartAtom.pbc_eval_gto(
+                    'GTOval', Rgrid[gridIdx[atomI]]
                     )[:, [0, 1, 4, 6]]
             )
         else:
             # evaluate S00 cart AO
-            s00OnR = gmolCart.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[0]+1))
+            s00OnR = gmolCartAtom.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(0, 1))
 
             # evaluate l=2 cart AO
-            l2OnR = gmolCart.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[2], shellsB[2]+1))[:, [0, 3, 5]]
+            l2OnR = gmolCartAtom.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(2, 3))[:, [0, 3, 5]]
 
             # evaluate sph AO
-            sphOnR = gmolSph.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1))
+            sphOnR = gmolSphAtom.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]])
             maskSph = numpy.zeros(sphOnR.shape[-1], dtype=bool)
             maskSph[[0, 6, 8]] = True
             sphOnR = sphOnR[:, ~maskSph]

@@ -347,7 +347,8 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
     logger.debug(mol, 'Making augmentation sphere for uniform grid:')
     # WignerSeitzData = makeWignerSeitz(Rgrid, pmol, Periodic=Periodic)
     # gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere(WignerSeitzData, pmol, LG, alpha0, Rb=Rb, epsilon=epsilon)
-    gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic)
+    # gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic)
+    gridIdx, masked_gridIdx, masks, Rs = makeAugmentationSphere_Fast(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic)
 
     M_PQLarray, V_PQLarray, V_LLarray, gOnR = [], [], [], []
     for atomI in range(pmol._atm.shape[0]):
@@ -389,7 +390,7 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
             V_LLarray.append(VLL)
             V_PQLarray.append(VPQL)
-
+        buildPmolAtom()
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
 
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
@@ -460,7 +461,9 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol
 
         # gOnR depends on Rgrid which is globally shifted relative to the atom, must compute per atom
         t0 = time.time()
-        gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
+        # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
+        gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.lattice_vectors(), cart = False, unit='B')
+        gOnR.append(gmolAtom.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]]))
         t_gonr += time.time() - t0
 
     print(f"      [Time breakdown] mpql: {t_mpql:.4f}s, vpql: {t_vpql:.4f}s, vll: {t_vll:.4f}s, gonr: {t_gonr:.4f}s")
@@ -504,7 +507,8 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     # WignerSeitzData = makeWignerSeitz(Rgrid, gmolSph, Periodic=Periodic)
     Lmax = numpy.array([max(LG.max(), 2)]*len(LG))
     # gridIdx, _, _, Rs = makeAugmentationSphere(WignerSeitzData, gmolSph, Lmax, alpha0, Rb=Rb, epsilon=epsilon)
-    gridIdx, _, _, Rs = makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=Rb, epsilon=epsilon, Periodic=Periodic)
+    # gridIdx, _, _, Rs = makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=Rb, epsilon=epsilon, Periodic=Periodic)
+    gridIdx, _, _, Rs = makeAugmentationSphere_Fast(Rgrid, mol, L, alpha0, Rb=Rb, epsilon=epsilon, Periodic=Periodic)
     
     t3 = time.time()
     print(f"  [Time] makeAugmentationSphere1: {t3 - t2:.4f}s")
@@ -646,7 +650,6 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
         
         projAOMol = pgto.M(atom=clusterAOAtom, basis=clusterAOBasis, a=mol.lattice_vectors(), unit='B', cart=mol.cart)
         projAOOvlp_cluster = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
-        import pdb; pdb.set_trace()
         # determine local functions
         local_locId = numpy.where(numpy.max(numpy.abs(projAOOvlp_cluster), axis=0) > epsilon)[0]
         locId = global_ao_indices[local_locId]
