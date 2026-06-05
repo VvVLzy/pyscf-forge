@@ -390,7 +390,7 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
             V_LLarray.append(VLL)
             V_PQLarray.append(VPQL)
-        buildPmolAtom()
+
         gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
 
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
@@ -413,6 +413,8 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol
 
     for atomI in range(pmol._atm.shape[0]):
         shellsA, shellsB = numpy.where(pmol._bas[:,0] == atomI)[0], numpy.where(gmol._bas[:,0] == atomI)[0]
+        gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.lattice_vectors(), cart = False, unit='B')
+        pmolAtom = buildPmolAtom(pmol, pmol, atomI, cart=False)
 
         # check if redundant (cache key)
         idx_bas = numpy.where(pmol._bas[:,0] == atomI)[0]
@@ -440,12 +442,15 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol
             t_mpql += time.time() - t0
 
             t0 = time.time()
-            VPQL = intor_cross('int3c2e', pmol, gmol,  
-                                shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
+            # VPQL = intor_cross('int3c2e', pmol, gmol,  
+                                # shls_slice=(shellsA[0], shellsA[-1]+1, shellsA[0], shellsA[-1]+1, pmol.nbas + shellsB[0], pmol.nbas + shellsB[-1]+1))
+            VPQL = intor_cross('int3c2e', pmolAtom, gmolAtom,  
+                                shls_slice=(0, pmolAtom.nbas, 0, pmolAtom.nbas, pmolAtom.nbas, pmolAtom.nbas+gmolAtom.nbas))
             t_vpql += time.time() - t0
 
             t0 = time.time()
-            VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1,shellsB[0], shellsB[-1]+1))
+            # VLL = gmol.intor('int2c2e', shls_slice=(shellsB[0], shellsB[-1]+1, shellsB[0], shellsB[-1]+1))
+            VLL = gmolAtom.intor('int2c2e', shls_slice=(0, gmolAtom.nbas, 0, gmolAtom.nbas))
             t_vll += time.time() - t0
 
             M_PQLarray.append(mpql)
@@ -462,7 +467,6 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol
         # gOnR depends on Rgrid which is globally shifted relative to the atom, must compute per atom
         t0 = time.time()
         # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
-        gmolAtom = pgto.M(atom = [gmol._atom[atomI]], basis = gmol.basis, a = gmol.lattice_vectors(), cart = False, unit='B')
         gOnR.append(gmolAtom.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]]))
         t_gonr += time.time() - t0
 

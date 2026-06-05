@@ -18,7 +18,7 @@ import pyscf
 
 import time
 
-def testMolecule():
+def testMolecule(natm):
     SPACING = 3.0    # Spacing between Ne atoms in Bohr
     BASIS = 'cc-pvtz'
 
@@ -30,7 +30,7 @@ def testMolecule():
             atoms.append(['Ne', [i * SPACING, 0, 0]])
         return atoms
 
-    geo = make_neon_chain(50)
+    geo = make_neon_chain(natm)
 
     mol = gto.M(atom=geo, basis=BASIS, unit='Bohr', verbose=0)
     mol.max_memory = 15000
@@ -44,28 +44,28 @@ def testMolecule():
     mf_paw.xc = ''
     mydf = PAW.from_mf(mf_paw, cell).build()
     mf_paw.with_df = mydf
-    from paw_helper import makeAugmentationSphere1, makeAugmentationSphere
-    from paw_helper import makeWignerSeitz
+    # from paw_helper import makeAugmentationSphere1, makeAugmentationSphere
+    # from paw_helper import makeWignerSeitz
 
-    L = numpy.array([6])
-    alpha0 = mydf.alpha0
-    Periodic = False
-    Rgrid = mydf.Rgrid
+    # L = numpy.array([6])
+    # alpha0 = mydf.alpha0
+    # Periodic = False
+    # Rgrid = mydf.Rgrid
 
     # import pdb; pdb.set_trace()
     # start = time.time()
     # data = makeWignerSeitz(Rgrid, cell, Periodic=Periodic)
     # result = makeAugmentationSphere(data, cell, L, alpha0, Rb=None, epsilon=1.e-5)
     # print(f'old takes {time.time() - start: .2f} s')
-    start = time.time()
-    result1 = makeAugmentationSphere1(
-        Rgrid, cell, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic
-    )
-    print(f'new takes {time.time() - start: .2f} s')
+    # start = time.time()
+    # result1 = makeAugmentationSphere1(
+    #     Rgrid, cell, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic
+    # )
+    # print(f'new takes {time.time() - start: .2f} s')
 
     # assert(numpy.isclose(result[0][10], result1[0][10]).all())
 
-def testPeriodic():
+def testPeriodic(ncell):
     L = 5.443702372939453  # box size
 
     # specify He2
@@ -84,7 +84,7 @@ def testPeriodic():
     print(rscales)
 
     basis = "ccpvdz"
-    verbose = 4
+    verbose = 0
     a = numpy.eye(3) * L
     ke_cutoff = 200
     precision = 1e-5
@@ -98,7 +98,7 @@ def testPeriodic():
         precision   = precision
     )
 
-    ncopy = [1, 1, 1]
+    ncopy = [ncell, 1, 1]
     cell = tools.super_cell(cell, ncopy)
     # mesh = pyscf.pbc.tools.cutoff_to_mesh(cell.lattice_vectors(), cell.ke_cutoff)
     # Rgrid = cell.get_uniform_grids(mesh=mesh, wrap_around=False)
@@ -106,31 +106,39 @@ def testPeriodic():
     mf_paw.xc = ''
     mydf = PAW.from_mf(mf_paw).build()
     mf_paw.with_df = mydf
-    from paw_helper import makeAugmentationSphere1, makeAugmentationSphere
-    from paw_helper import makeWignerSeitz
 
-    L = numpy.array([6])
-    alpha0 = mydf.alpha0
-    Periodic = True
-    Rgrid = mydf.Rgrid
+    # from paw_helper import makeAugmentationSphere1, makeAugmentationSphere
+    # from paw_helper import makeWignerSeitz
 
-    import pdb; pdb.set_trace()
-    start = time.time()
-    data = makeWignerSeitz(Rgrid, cell, Periodic=Periodic)
-    result = makeAugmentationSphere(data, cell, L, alpha0, Rb=None, epsilon=1.e-5)
-    print(f'old takes {time.time() - start: .2f} s')
-    start = time.time()
-    result1 = makeAugmentationSphere1(
-        Rgrid, cell, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic
-    )
-    print(f'new takes {time.time() - start: .2f} s')
-    for i in range(cell._atm.shape[0]):
-        assert(numpy.isclose(result[0][i], result1[0][i]).all())
+    # L = numpy.array([6])
+    # alpha0 = mydf.alpha0
+    # Periodic = True
+    # Rgrid = mydf.Rgrid
+
+    # import pdb; pdb.set_trace()
+    # start = time.time()
+    # data = makeWignerSeitz(Rgrid, cell, Periodic=Periodic)
+    # result = makeAugmentationSphere(data, cell, L, alpha0, Rb=None, epsilon=1.e-5)
+    # print(f'old takes {time.time() - start: .2f} s')
+    # start = time.time()
+    # result1 = makeAugmentationSphere1(
+    #     Rgrid, cell, L, alpha0, Rb=None, epsilon=1.e-5, Periodic=Periodic
+    # )
+    # print(f'new takes {time.time() - start: .2f} s')
+    # for i in range(cell._atm.shape[0]):
+    #     assert(numpy.isclose(result[0][i], result1[0][i]).all())
 
 
 def main():
-    # testMolecule()
-    testPeriodic()
+    # testMolecule(50)
+    # testMolecule(100)
+    # testMolecule(200)
+    # testMolecule(500)
+    testPeriodic(1)
+    testPeriodic(2)
+    testPeriodic(3)
+    # testPeriodic(10)
+    # testPeriodic(20)
 
 if __name__ == '__main__':
     main()
