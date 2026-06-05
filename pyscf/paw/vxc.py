@@ -1,5 +1,6 @@
 import numpy
 from pyscf import lib
+from concurrent.futures import ThreadPoolExecutor
 from pyscf.pbc.dft.numint import NumInt, KNumInt, nr_rks, nr_uks
 from pyscf.pbc.dft.gen_grid import BeckeGrids
 from pyscf.dft.gen_grid import Grids
@@ -297,38 +298,42 @@ class PAWNumInt(NumInt):
 
         f = self.F_PmuArr
         l = self.localIdx
-        for atomI in range(self.cell._atm.shape[0]):
+        
+        def process_atom(atomI):
             pcellAtom = self.pcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
             if grids.coords.size == 0:
-                continue
+                return 0.0, 0.0, None
 
             dm_loc = dms[l[atomI]][:, l[atomI]]
             dm = smart_einsum('mn,Pm,Qn->PQ', dm_loc, f[atomI], f[atomI])
 
-            if self._xc_type(xc_code) == 'HF':
-                temp = xc_code
-                xc_code = 'lda' # still want to check electron density
-                nelec2a, exc2a, vxc2a = nr_rks(
-                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
-                    hermi, kpt, kpts_band, max_memory, verbose
-                )
-                exc2a = 0
-                vxc2a = numpy.zeros_like(vxc2a)
-                xc_code = temp
-            else:
-                nelec2a, exc2a, vxc2a = nr_rks(
-                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
-                    hermi, kpt, kpts_band, max_memory, verbose
-                )
-            # import pdb; pdb.set_trace()
-            nelec2 += nelec2a
-            exc2 += exc2a
-            numpy.add.at(
-                vxc2, numpy.ix_(l[atomI], l[atomI]),
-                smart_einsum('PQ,Pm,Qn->mn', vxc2a, f[atomI], f[atomI])
+            local_xc_code = xc_code
+            if self._xc_type(local_xc_code) == 'HF':
+                local_xc_code = 'lda' # still want to check electron density
+                
+            nelec2a, exc2a, vxc2a = nr_rks(
+                self, pcellAtom, grids, local_xc_code, dm, spin, relativity,
+                hermi, kpt, kpts_band, max_memory, verbose
             )
-            # vxc2 += smart_einsum('PQ,Pm,Qn->mn', vxc2a, f[atomI], f[atomI])
+            
+            if self._xc_type(xc_code) == 'HF':
+                exc2a = 0.0
+                vxc2a = numpy.zeros_like(vxc2a)
+
+            vxc_update = smart_einsum('PQ,Pm,Qn->mn', vxc2a, f[atomI], f[atomI])
+            return nelec2a, exc2a, vxc_update
+
+        with ThreadPoolExecutor(max_workers=lib.num_threads()) as executor:
+            results = executor.map(process_atom, range(self.cell._atm.shape[0]))
+
+        for atomI, (nelec2a, exc2a, vxc_update) in enumerate(results):
+            if vxc_update is not None:
+                nelec2 += nelec2a
+                exc2 += exc2a
+                numpy.add.at(
+                    vxc2, numpy.ix_(l[atomI], l[atomI]), vxc_update
+                )
 
         return nelec2, exc2, vxc2
 
@@ -341,37 +346,42 @@ class PAWNumInt(NumInt):
 
         f = self.Ftilde_PmuArr
         l = self.localIdx
-        for atomI in range(self.cell._atm.shape[0]):
+        
+        def process_atom(atomI):
             pcellAtom = self.smoothPcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
             if grids.coords.size == 0:
-                continue
+                return 0.0, 0.0, None
 
             dm_loc = dms[l[atomI]][:, l[atomI]]
             dm = smart_einsum('mn,Pm,Qn->PQ', dm_loc, f[atomI], f[atomI])
 
-            if self._xc_type(xc_code) == 'HF':
-                temp = xc_code
-                xc_code = 'lda' # still want to check electron density
-                nelec3a, exc3a, vxc3a = nr_rks(
-                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
-                    hermi, kpt, kpts_band, max_memory, verbose
-                )
-                exc3a = 0
-                vxc3a = numpy.zeros_like(vxc3a)
-                xc_code = temp
-            else:
-                nelec3a, exc3a, vxc3a = nr_rks(
-                    self, pcellAtom, grids, xc_code, dm, spin, relativity,
-                    hermi, kpt, kpts_band, max_memory, verbose
-                )
-
-            nelec3 += nelec3a
-            exc3 += exc3a
-            numpy.add.at(
-                vxc3, numpy.ix_(l[atomI], l[atomI]),
-                smart_einsum('PQ,Pm,Qn->mn', vxc3a, f[atomI], f[atomI])
+            local_xc_code = xc_code
+            if self._xc_type(local_xc_code) == 'HF':
+                local_xc_code = 'lda' # still want to check electron density
+                
+            nelec3a, exc3a, vxc3a = nr_rks(
+                self, pcellAtom, grids, local_xc_code, dm, spin, relativity,
+                hermi, kpt, kpts_band, max_memory, verbose
             )
+            
+            if self._xc_type(xc_code) == 'HF':
+                exc3a = 0.0
+                vxc3a = numpy.zeros_like(vxc3a)
+
+            vxc_update = smart_einsum('PQ,Pm,Qn->mn', vxc3a, f[atomI], f[atomI])
+            return nelec3a, exc3a, vxc_update
+
+        with ThreadPoolExecutor(max_workers=lib.num_threads()) as executor:
+            results = executor.map(process_atom, range(self.cell._atm.shape[0]))
+
+        for atomI, (nelec3a, exc3a, vxc_update) in enumerate(results):
+            if vxc_update is not None:
+                nelec3 += nelec3a
+                exc3 += exc3a
+                numpy.add.at(
+                    vxc3, numpy.ix_(l[atomI], l[atomI]), vxc_update
+                )
 
         return nelec3, exc3, vxc3
 
@@ -430,38 +440,45 @@ class PAWNumInt(NumInt):
 
         f = self.F_PmuArr
         l = self.localIdx
-        for atomI in range(self.cell._atm.shape[0]):
+        
+        def process_atom(atomI):
             pcellAtom = self.pcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
             if grids.coords.size == 0:
-                continue
+                return numpy.zeros(2), 0.0, None
 
             dm_loc = dms[:, l[atomI]][:, :, l[atomI]]
             dm = smart_einsum('smn,Pm,Qn->sPQ', dm_loc, f[atomI], f[atomI])
 
+            local_xc_code = xc_code
+            if self._xc_type(local_xc_code) == 'HF':
+                local_xc_code = 'lda' # still want to check electron density
+                
+            nelec2a, exc2a, vxc2a = nr_uks(
+                self, pcellAtom, grids, local_xc_code, dm, spin=1, relativity=relativity,
+                hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
+            )
+            
             if self._xc_type(xc_code) == 'HF':
-                temp = xc_code
-                xc_code = 'lda' # still want to check electron density
-                nelec2a, exc2a, vxc2a = nr_uks(
-                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
-                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
-                )
-                exc2a = 0
+                exc2a = 0.0
                 vxc2a = numpy.zeros_like(vxc2a)
-                xc_code = temp
-            else:
-                nelec2a, exc2a, vxc2a = nr_uks(
-                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
-                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
-                )
 
-            nelec2 += nelec2a
-            exc2 += exc2a
+            vxc_update = []
             for s in range(2):
-                numpy.add.at(
-                    vxc2[s], numpy.ix_(l[atomI], l[atomI]),
-                    smart_einsum('PQ,Pm,Qn->mn', vxc2a[s], f[atomI], f[atomI])
-                )
+                vxc_update.append(smart_einsum('PQ,Pm,Qn->mn', vxc2a[s], f[atomI], f[atomI]))
+            return nelec2a, exc2a, vxc_update
+
+        with ThreadPoolExecutor(max_workers=lib.num_threads()) as executor:
+            results = executor.map(process_atom, range(self.cell._atm.shape[0]))
+
+        for atomI, (nelec2a, exc2a, vxc_update) in enumerate(results):
+            if vxc_update is not None:
+                nelec2 += nelec2a
+                exc2 += exc2a
+                for s in range(2):
+                    numpy.add.at(
+                        vxc2[s], numpy.ix_(l[atomI], l[atomI]), vxc_update[s]
+                    )
 
         return nelec2, exc2, vxc2
 
@@ -474,38 +491,45 @@ class PAWNumInt(NumInt):
 
         f = self.Ftilde_PmuArr
         l = self.localIdx
-        for atomI in range(self.cell._atm.shape[0]):
+        
+        def process_atom(atomI):
             pcellAtom = self.smoothPcellAtoms[atomI]
             grids = self.atomicGrids[atomI]
             if grids.coords.size == 0:
-                continue
+                return numpy.zeros(2), 0.0, None
 
             dm_loc = dms[:, l[atomI]][:, :, l[atomI]]
             dm = smart_einsum('smn,Pm,Qn->sPQ', dm_loc, f[atomI], f[atomI])
 
+            local_xc_code = xc_code
+            if self._xc_type(local_xc_code) == 'HF':
+                local_xc_code = 'lda' # still want to check electron density
+                
+            nelec3a, exc3a, vxc3a = nr_uks(
+                self, pcellAtom, grids, local_xc_code, dm, spin=1, relativity=relativity,
+                hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
+            )
+            
             if self._xc_type(xc_code) == 'HF':
-                temp = xc_code
-                xc_code = 'lda' # still want to check electron density
-                nelec3a, exc3a, vxc3a = nr_uks(
-                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
-                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
-                )
-                exc3a = 0
+                exc3a = 0.0
                 vxc3a = numpy.zeros_like(vxc3a)
-                xc_code = temp
-            else:
-                nelec3a, exc3a, vxc3a = nr_uks(
-                    self, pcellAtom, grids, xc_code, dm, spin=1, relativity=relativity,
-                    hermi=hermi, kpts=kpt, kpts_band=kpts_band, max_memory=max_memory, verbose=verbose
-                )
 
-            nelec3 += nelec3a
-            exc3 += exc3a
+            vxc_update = []
             for s in range(2):
-                numpy.add.at(
-                    vxc3[s], numpy.ix_(l[atomI], l[atomI]),
-                    smart_einsum('PQ,Pm,Qn->mn', vxc3a[s], f[atomI], f[atomI])
-                )
+                vxc_update.append(smart_einsum('PQ,Pm,Qn->mn', vxc3a[s], f[atomI], f[atomI]))
+            return nelec3a, exc3a, vxc_update
+
+        with ThreadPoolExecutor(max_workers=lib.num_threads()) as executor:
+            results = executor.map(process_atom, range(self.cell._atm.shape[0]))
+
+        for atomI, (nelec3a, exc3a, vxc_update) in enumerate(results):
+            if vxc_update is not None:
+                nelec3 += nelec3a
+                exc3 += exc3a
+                for s in range(2):
+                    numpy.add.at(
+                        vxc3[s], numpy.ix_(l[atomI], l[atomI]), vxc_update[s]
+                    )
 
         return nelec3, exc3, vxc3
     
