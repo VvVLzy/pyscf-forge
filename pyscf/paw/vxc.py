@@ -45,6 +45,10 @@ def smoothCell2(mol, alpha0):
     new_env = list(mol._env[:split_ptr])
     
     for i in range(len(new_bas)):
+        atom_id = new_bas[i, 0]
+        elem = mol._atom[atom_id][0]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
+
         nprim = new_bas[i, 2]
         nconc = new_bas[i, 3]
         ptr_exp = new_bas[i, 5]
@@ -53,7 +57,7 @@ def smoothCell2(mol, alpha0):
         exps = mol._env[ptr_exp : ptr_exp + nprim]
         coeffs = mol._env[ptr_coeff : ptr_coeff + nprim * nconc].reshape(nconc, nprim)
         
-        mask = exps <= alpha0
+        mask = exps <= alpha0_val
         new_nprim = numpy.count_nonzero(mask)
         
         if new_nprim > 0:
@@ -63,7 +67,7 @@ def smoothCell2(mol, alpha0):
             # Keep one dummy primitive with zero coefficient to maintain nao consistency
             # and avoid nprim=0 which might cause issues in some PySCF routines.
             new_nprim = 1
-            filtered_exps = numpy.array([alpha0])
+            filtered_exps = numpy.array([alpha0_val])
             filtered_coeffs = numpy.zeros((nconc, 1))
             
         # Update env and pointers
