@@ -339,7 +339,8 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
     gbas = {}
     for atomI in range(pmol._atm.shape[0]):
         elem = pmol._atom[atomI][0]
-        gbas[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
+        gbas[elem] = [ [l, [alpha0_val, 1.]] for l in range(gmax+1)]
 
     gmol = pgto.M(atom=pmol.atom, basis=gbas, a=pmol.a, unit=pmol.unit) ##if periodic then cartesian functions
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmol._bas, gmol._env, cart=gmol.cart)
@@ -492,17 +493,17 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     gbasCart, gbasSph = {}, {}
     for atomI in range(pmol._atm.shape[0]):
         elem = pmol._atom[atomI][0]
-        gbasSph[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
+        gbasSph[elem] = [ [l, [alpha0_val, 1.]] for l in range(gmax+1)]
         if gmax < 2:
             assert(gmax == 0)
-            gbasCart[elem] = [ [0, [alpha0, 1.]], [2, [alpha0, 1.]]]
+            gbasCart[elem] = [ [0, [alpha0_val, 1.]], [2, [alpha0_val, 1.]]]
         else:
-            gbasCart[elem] = [ [l, [alpha0, 1.]] for l in range(gmax+1)]
+            gbasCart[elem] = [ [l, [alpha0_val, 1.]] for l in range(gmax+1)]
 
     gmolCart = pgto.M(atom=pmol.atom, basis=gbasCart, a=pmol.a, unit=pmol.unit, cart=True)
     gmolSph = pgto.M(atom=pmol.atom, basis=gbasSph, a=pmol.a, unit=pmol.unit, cart=False)
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmolSph._bas, gmolSph._env, cart=gmolSph.cart)
-    assert((alphaG == alphaG[0]).all())
 
     t2 = time.time()
     print(f"  [Time] Compensating charge basis setup (gmolCart/Sph): {t2 - t1:.4f}s")
@@ -545,7 +546,7 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
 
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
 
-def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Periodic = False, rtol=1e-8):
+def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rs=None, Periodic=False, neighbor_list=None, rtol=1e-8):
     '''
     Fit AO and diffuse AO directly, much faster
     set F_Pmu directly to contraction coefficient when P=mu
@@ -565,14 +566,14 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
     t1 = time.time()
     print(f"  [Time] Setup & label/getAtoms: {t1 - t0:.4f}s")
     
-    t_neigh = time.time()
-    neighbor_list = get_neighbor_list(mol, epsilon=epsilon, Periodic=Periodic)
     aoslice = mol.aoslice_by_atom()
-    print(f"  [Time] get_neighbor_list: {time.time() - t_neigh:.4f}s")
 
     logger.debug(mol, 'Building projectors...')
     for atomI in range(mol._atm.shape[0]):
+        Rb = Rs[atomI] if Rs is not None else None
         logger.debug(mol, 'Atom %d:', atomI)
+        elem = mol._atom[atomI][0]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
         # fit all local primitives with atom centered primitives
         ACenteredId = numpy.where(atoms == atomI)[0]
         ACenteredAOId = numpy.where(atomsAO == atomI)[0]
@@ -592,7 +593,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
             # nAlpha = c//(2*l+1) # assume spherical GTO
             alphaProj = (l * numpy.log(Rb) - numpy.log(epsilon)) / Rb**2
             alphaAtomL = alphaAtom[Latom==l]
-            isoPrim = alphaAtomL > alpha0
+            isoPrim = alphaAtomL > alpha0_val
             numPrimL = len(alphaAtomL) // (2*l+1)
             numIsoPrimL = sum(isoPrim) // (2*l+1)
             assert(c == numPrimL*(2*l+1))
@@ -622,7 +623,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
         projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
 
         # isolated projectors
-        sharpAlphaId = numpy.where(alphaAtom > alpha0)[0] # could use a different threshold?
+        sharpAlphaId = numpy.where(alphaAtom > alpha0_val)[0] # could use a different threshold?
         for i in sharpAlphaId:
             projPrimOvlp[i, :] = 0
             projPrimOvlp[:, i] = 0
@@ -635,7 +636,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
 
         # construct proj-ao overlap using NEIGHBOR CLUSTER
         numProj = projPrimOvlp.shape[0]
-        neighbors = neighbor_list[atomI]
+        neighbors = neighbor_list[atomI] if neighbor_list is not None else range(mol._atm.shape[0])
         
         clusterAOAtom = []
         clusterAOBasis = {}
@@ -677,7 +678,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rb=None, Pe
         Ftilde_Pmu[:, idxToFit] = F_fitted
 
         # set local, a-centered function directly as contraction coefficient (no fitting)
-        diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0
+        diffuseAcenteredPrimMask = alpha[ACenteredId] < alpha0_val
         C_Pa = getContMatFromID(ACenteredAOId, ACenteredId, ctr_coeff, labels, mol)
         Ctilde_Pa = numpy.zeros_like(C_Pa)
         Ctilde_Pa[diffuseAcenteredPrimMask, :] = C_Pa[diffuseAcenteredPrimMask, :]

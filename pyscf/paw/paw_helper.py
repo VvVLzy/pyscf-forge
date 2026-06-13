@@ -45,7 +45,6 @@ def getFormFactor(nmesh,cell):
 def prepareMolForPAW(mol, auto_box=False):
     if auto_box:
         box_lengths = estimate_box_size(mol)
-        print(box_lengths)
         logger.info(mol, "Estimated rectangular box size (A): %s", box_lengths)
         if mol.unit[0].capitalize() == 'A':
             mol.a = numpy.diag(box_lengths)
@@ -232,16 +231,21 @@ def partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0):
             nprim = coeff.shape[0]
             ncontracted = coeff.shape[1]
             
-            alphaa = alpha[count_prim: count_prim+nprim]
-            diffuseIdx = numpy.where(alphaa < alpha0)[0]
-
-            aoOnR_p = aoOnR_prim[:, count_prim: count_prim+nprim]
-
             # assertions
             LL = numpy.unique(L[count_prim: count_prim+nprim])
             aa = numpy.unique(atoms[count_prim: count_prim+nprim])
             assert(len(LL) == 1)
             assert(len(aa) == 1)
+            
+            atomI = aa[0]
+            elem = pmol._atom[atomI][0]
+            alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
+
+            alphaa = alpha[count_prim: count_prim+nprim]
+            diffuseIdx = numpy.where(alphaa < alpha0_val)[0]
+
+            aoOnR_p = aoOnR_prim[:, count_prim: count_prim+nprim]
+
             ###
 
             # aoOnR_from_prim[:, count_contracted: count_contracted+ncontracted] = aoOnR_p @ coeff
@@ -273,7 +277,7 @@ def get_gaussian_radius(alpha, l, eps):
     if len(idx) == 0: return 0.0
     return r[idx[-1]]
 
-def estimate_box_size(mol, epsilon=1e-8):
+def estimate_box_size(mol, epsilon=1e-13):
     """
     Estimates the required box size to contain a molecule's basis functions
     up to a threshold epsilon. Returns the box lengths in Angstrom.
@@ -314,8 +318,10 @@ def makeAugmentationSphere(WignerSeitzData, mol, L, alpha0, Rb=None, epsilon=1.e
 
     gridIdx, masked_gridIdx, masks, Rs = [], [], [], []
     for atomI in range(mol._atm.shape[0]):
+        elem = mol._atom[atomI][0]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
         if Rb is None:
-            maxR = get_gaussian_radius(alpha0, L.max(), epsilon)
+            maxR = get_gaussian_radius(alpha0_val, L.max(), epsilon)
         else:
             maxR = Rb
         
@@ -395,8 +401,10 @@ def makeAugmentationSphere1(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, Perio
     cell_lattice = mol.lattice_vectors() if Periodic else None
     
     for atomI in range(mol._atm.shape[0]):
+        elem = mol._atom[atomI][0]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
         if Rb is None:
-            maxR = get_gaussian_radius(alpha0, L.max(), epsilon)
+            maxR = get_gaussian_radius(alpha0_val, L.max(), epsilon)
         else:
             maxR = Rb
             
@@ -435,7 +443,9 @@ def makeAugmentationSphere_Fast(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, P
     L_max = L.max()
     
     for atomI in range(mol._atm.shape[0]):
-        maxR = Rb if Rb is not None else get_gaussian_radius(alpha0, L_max, epsilon)
+        elem = mol._atom[atomI][0]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
+        maxR = Rb if Rb is not None else get_gaussian_radius(alpha0_val, L_max, epsilon)
         atom_pos = mol.atom_coord(atomI)
         
         # Query points within radius - O(log Ng) per atom
@@ -515,6 +525,7 @@ def getIntegralDiff(dmol, L, Rgrid, mesh, FF, Ng, f, Periodic=False, diag=True, 
     given a mol object
     '''
     aoOnR = dmol.pbc_eval_gto('GTOval', Rgrid)
+    L = aoOnR.shape[1]
 
     # calculate numerical integral
     density_L = aoOnR.T
@@ -622,6 +633,115 @@ def getAlpha0(pmol, Rgrid, mesh, Periodic=False, tol=1e-3):
     # print(f'Recommended alpha0 for the given PW cutoff {alpha0}')
     logger.info(pmol, "Recommended alpha0 for the given PW cutoff: %s", alpha0)
     return alpha0, alpha0_wf
+
+def calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0_input, PWAccuracy, Periodic, alpha0_lowmem, mol=None, neighbor_list=None):
+    """
+    Calculates and constructs a dictionary of alpha0 values for each element.
+    If alpha0_input is None, it computes the reference alpha0.
+    If it's a number, it's used globally.
+    If it's a dict, it uses the provided values and falls back to the reference.
+    """
+    if alpha0_lowmem:
+        # Mini-cell implementation: Use a small box with same resolution (ke_cutoff)
+        basis = []
+        for v in pmol._basis.values():
+            basis.extend(v)
+        test_cell = pgto.M(
+            atom='He 5 5 5',
+            basis={'He': basis},
+            a=numpy.eye(3) * 10.0,
+            unit='B',
+            ke_cutoff=pmol.ke_cutoff,
+            verbose=0
+        )
+        t_pmol, _ = test_cell.decontract_basis()
+        t_pmol._basis = modifyMolBasis(t_pmol._basis)
+        t_mesh = t_pmol.mesh
+        t_Rgrid = t_pmol.get_uniform_grids(mesh=t_mesh)
+        alpha0_ref, alpha0_wf_ref = getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
+    else:
+        alpha0_ref, alpha0_wf_ref = getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+
+    elements = list(pmol._basis.keys())
+    alpha0_dict = {}
+
+    log_target = mol if mol is not None else pmol
+
+    if alpha0_input is None:
+        alpha0_dict = {el: alpha0_ref for el in elements}
+    elif isinstance(alpha0_input, dict):
+        coords = mol.atom_coords() if mol is not None else None
+        if Periodic and mol is not None:
+            L = mol.lattice_vectors()
+            L_inv = numpy.linalg.inv(L)
+            
+        for el in elements:
+            if el in alpha0_input:
+                val = alpha0_input[el]
+                if val is None and neighbor_list is not None and mol is not None:
+                    # Calculate min distance
+                    type_indices = [i for i in range(mol.natm) if mol.atom_symbol(i) == el]
+                    min_dist = float('inf')
+                    for i in type_indices:
+                        for j in neighbor_list[i]:
+                            if i == j or mol.atom_symbol(j) not in alpha0_input: continue
+                            diff = coords[i] - coords[j]
+                            if Periodic:
+                                frac_diff = numpy.dot(diff, L_inv)
+                                frac_diff -= numpy.round(frac_diff)
+                                diff = numpy.dot(frac_diff, L)
+                            dist = numpy.linalg.norm(diff)
+                            if dist < min_dist:
+                                min_dist = dist
+                    
+                    if min_dist != float('inf'):
+                        print(f"Smallest nearest neighbor distance for element {el}: {min_dist:.4f} Bohr")
+                        val = solve_alpha(min_dist / 2.0)
+                        print(f"Calculated alpha0 for {el} based on Rb={min_dist/2.0:.4f}: {val:.4f}")
+                    else:
+                        val = alpha0_ref # Fallback if no neighbors found
+            else:
+                val = alpha0_ref
+                
+            alpha0_dict[el] = val
+            if val > alpha0_ref:
+                logger.warn(log_target, 'Provided alpha0 (%.3f) for element %s is greater than the recommended alpha0_ref (%.3f). The provided PW cutoff may not be accurate enough.', val, el, alpha0_ref)
+    else: # single number
+        alpha0_dict = {el: alpha0_input for el in elements}
+        if alpha0_input > alpha0_ref:
+            logger.warn(log_target, 'Provided alpha0 (%.3f) is greater than the recommended alpha0_ref (%.3f). The provided PW cutoff may not be accurate enough.', alpha0_input, alpha0_ref)
+
+    return alpha0_dict
+
+
+def solve_alpha(r_c, l=1, epsilon=1e-4):
+    """
+    Solves for alpha in the equation:
+    sqrt((2*(2*alpha)**(l+1.5))/gamma(l+1.5)) * r_c**l * exp(-alpha * r_c**2) = epsilon
+    """
+    
+    # 1. Define the substituted variables to keep the code clean
+    p = (l + 1.5) / 2.0
+    
+    # Calculate the constant C
+    numerator_C = 2**(l + 2.5)
+    denominator_C = scipy.special.gamma(l + 1.5)
+    C = (r_c**l) * numpy.sqrt(numerator_C / denominator_C)
+    
+    # 2. Calculate z (the argument for the Lambert W function)
+    z = -(r_c**2 / p) * (epsilon / C)**(1.0 / p)
+    
+    # 3. Apply the Lambert W function
+    # We use the k=-1 branch because we expect a small epsilon and a large positive alpha.
+    # The argument z will be small and negative (between -1/e and 0).
+    W_val = scipy.special.lambertw(z, k=-1)
+    
+    # 4. Solve for alpha
+    alpha = -(p / r_c**2) * W_val
+    
+    # The Lambert W function returns a complex number type in SciPy.
+    # The physical solution we want is purely real, so we return the real part.
+    return alpha.real
 
 
 def make_natural_orbitals(cell, kpts, dms):

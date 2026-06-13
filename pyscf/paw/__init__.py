@@ -48,37 +48,14 @@ def getPAWdata(mol,
     print(f"Time for grids init: {time.time() - t_start:.4f}s")
     t_start = time.time()
 
-    # get alpha0
-    if alpha0_lowmem:
-        # Mini-cell implementation: Use a small box with same resolution (ke_cutoff)
-        test_cell = pgto.M(
-            atom='He 5 5 5',
-            basis=pmol.basis,
-            a=numpy.eye(3) * 10.0,
-            unit='B',
-            ke_cutoff=pmol.ke_cutoff,
-            verbose=0
-        )
-        t_pmol, _ = test_cell.decontract_basis()
-        t_pmol._basis = PAWutils.modifyMolBasis(t_pmol._basis)
-        t_mesh = t_pmol.mesh
-        t_Rgrid = t_pmol.get_uniform_grids(mesh=t_mesh)
-        if alpha0 is None:
-            alpha0, alpha0_wf = PAWutils.getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
-        else:
-            alpha0_ref, alpha0_wf_ref = PAWutils.getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
-            if alpha0 > alpha0_ref:
-                logger.warn(mol, 'Provided alpha0 (%.3f) is greater than the recommended alpha0_ref (%.3f). The provided PW cutoff may not be accurate enough.', alpha0, alpha0_ref)
-            alpha0_wf = alpha0/2
-    else:
-        if alpha0 is None:
-            alpha0, alpha0_wf = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
-        else:
-            alpha0_ref, alpha0_wf_ref = PAWutils.getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
-            if alpha0 > alpha0_ref:
-                logger.warn(mol, 'Provided alpha0 (%.3f) is greater than the recommended alpha0_ref (%.3f). The provided PW cutoff may not be accurate enough.', alpha0, alpha0_ref)
-            alpha0_wf = alpha0/2
+    t_neigh = time.time()
+    neighbor_list = PAWutils.get_neighbor_list(mol, epsilon=PAWorbitalCutOff, Periodic=Periodic)
+    print(f"Time for get_neighbor_list: {time.time() - t_neigh:.4f}s")
 
+    # get alpha0
+    alpha0_dict = PAWutils.calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0, PWAccuracy, Periodic, alpha0_lowmem, mol=mol, neighbor_list=neighbor_list)
+
+    alpha0 = alpha0_dict
     alpha0_wf = alpha0 # must be this!
     print(f"Time for getAlpha0: {time.time() - t_start:.4f}s")
     t_start = time.time()
@@ -94,7 +71,7 @@ def getPAWdata(mol,
     t_start = time.time()
         
     localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
-        pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rb=numpy.max(Rs), Periodic = Periodic, rtol=1e-8)
+        pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rs=Rs, Periodic=Periodic, neighbor_list=neighbor_list, rtol=1e-8)
     print(f"Time for obtainLocalFnsNewer: {time.time() - t_start:.4f}s")
     t_start = time.time()
 
@@ -254,7 +231,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
     vj = vk = None
     if with_j:
         cpu0 = (logger.process_clock(), logger.perf_counter())
-        start = time.time()
+        # start = time.time()
         if getattr(mydf, 'with_multigrid', 0) > 0:
             # Check if vj1 is already cached from the XC pass
             cached_dm = getattr(mydf, '_cached_vj1_dm', None)
@@ -275,9 +252,9 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                         mydf.PAWdata,
                                         Periodic=mydf.Periodic)
         logger.timer(mydf, 'vj PW', *cpu0)
-        print(f'PW J takes {time.time() - start:.2f} sec')
+        # print(f'PW J takes {time.time() - start:.2f} sec')
         cpu0 = (logger.process_clock(), logger.perf_counter())
-        start = time.time()
+        # start = time.time()
         vj2 = PAWutils.getjSharpLocal(cell, dm, 
                                     mydf.aoOnR_tilde,
                                     mydf.mesh,
@@ -289,7 +266,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                     mydf.PAWdata,
                                     Periodic=mydf.Periodic)
         logger.timer(mydf, 'vj atom', *cpu0)
-        print(f'Atom J takes {time.time() - start:.2f} sec')
+        # print(f'Atom J takes {time.time() - start:.2f} sec')
         vj = vj1 + vj2 + vj3
     if with_k:
         is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
@@ -331,7 +308,7 @@ class PAW(FFTDF):
             cell,
             kpts=None,
             PAWorbitalCutOff=1e-8,
-            PWAccuracy=1e-8,
+            PWAccuracy=1e-6,
             Periodic=False,
             alpha0=None,
             augRadius=None,
@@ -451,7 +428,7 @@ class PAW(FFTDF):
         self.ctr_coeff = ctr_coeff
         self.alpha0 = alpha0
         
-        logger.info(self, "alpha0      : %10.2f", alpha0)
+        logger.info(self, "alpha0      : %s", str(alpha0))
         logger.info(self, "Rb          : %10.2f", numpy.max(Rs))
         logger.info(self, "Nelection   : %10d", nelec)
         logger.info(self, "Ngrid points: %10d", numpy.prod(self.cell.mesh))
