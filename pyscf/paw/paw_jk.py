@@ -87,18 +87,18 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         
     # Pass 1: AO -> Grid (Smooth Density)
     # eval_rhoG processes the nset dimension natively
-    start = time.time()
+    # start = time.time()
     rhoG = multigrid_pair._eval_rhoG(mg_ni, dm, hermi=hermi, kpts=kpt, deriv=deriv)
-    print(f'Eval density on grid takes {time.time() - start : .1f} seconds')
+    # print(f'Eval density on grid takes {time.time() - start : .1f} seconds')
     
     Ng = numpy.prod(mesh)
     dv = cell.vol / Ng
     weight = dv
     
-    start = time.time()
+    # start = time.time()
     # XC Evaluation on pseudo-density only
     rhoR = numpy.fft.ifftn(rhoG.reshape(nset, -1, *mesh), axes=(2,3,4)).real.reshape(nset, -1, Ng) * (1./weight)
-    print(f'First FFT from G to R takes {time.time() - start: .2f} seconds')
+    # print(f'First FFT from G to R takes {time.time() - start: .2f} seconds')
     
     if xctype == 'HF': # No XC part
         if is_uks:
@@ -117,9 +117,9 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         else:
             rho_eval = rhoR
         
-        start = time.time()
+        # start = time.time()
         exc, vxcR = mg_ni.eval_xc_eff(xc_code, rho_eval, deriv=1, xctype=xctype, spin=spin)[:2]
-        print(f'Eval XC on grid takes {time.time() - start: .2f} seconds')
+        # print(f'Eval XC on grid takes {time.time() - start: .2f} seconds')
         
         if is_uks:
             nelec = numpy.array([numpy.sum(rhoR[0,0]) * weight, numpy.sum(rhoR[1,0]) * weight])
@@ -153,7 +153,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         dm_val = dm[i, 0, :, :]
         rhoR_Ji = rhoR[i, 0].copy()
 
-        start = time.time()
+        # start = time.time()
         for atomI in range(cell._atm.shape[0]):
             submat = dm_val[localIdx[atomI]][:, localIdx[atomI]]
             # Use @ for faster matrix multiplication
@@ -166,25 +166,25 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
             
             # rhoR_J += zg @ gOnR^T
             rhoR_Ji[gridIdx[atomI]] += gOnR[atomI] @ zg
-        print(f'Density augmentation takes {time.time() - start: .2f} seconds')
+        # print(f'Density augmentation takes {time.time() - start: .2f} seconds')
 
-        start = time.time()
+        # start = time.time()
         rhoG_Ji = numpy.fft.fftn(rhoR_Ji.reshape(mesh)).flatten()
         vG_Ji = rhoG_Ji * FF.flatten()
         
         # Use real-space integration for ecoul to ensure consistent scaling
         potential_Ji = numpy.fft.ifftn(vG_Ji.reshape(mesh)).real.flatten()
-        print(f'Poisson solve takes {time.time() - start: .2f} seconds')
+        # print(f'Poisson solve takes {time.time() - start: .2f} seconds')
         ecoul_total += 0.5 * numpy.dot(rhoR_Ji, potential_Ji) * dv
         
         # Pass 2: Grid -> Matrix
-        start = time.time()
+        # start = time.time()
         vj_mat_i = multigrid_pair._get_j_pass2(mg_ni, vG_Ji * weight, kpts=kpt, hermi=hermi)
         while vj_mat_i.ndim > 2: vj_mat_i = vj_mat_i[0]
-        print(f'Pass 2 integration takes {time.time() - start: .2f} seconds')
+        # print(f'Pass 2 integration takes {time.time() - start: .2f} seconds')
         
         # Local Hartree Corrections
-        start = time.time()
+        # start = time.time()
         for atomI in range(cell._atm.shape[0]):
             # zg2 = \int v(r) g_L(r) dr
             zg2 = potential_Ji[gridIdx[atomI]] @ gOnR[atomI] * dv
@@ -197,7 +197,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
             vj_mat_i[numpy.ix_(localIdx[atomI], localIdx[atomI])] += \
                 F_Pmu[atomI].T @ GL @ F_Pmu[atomI] - \
                 Ftilde_Pmu[atomI].T @ GL @ Ftilde_Pmu[atomI]
-        print(f'Local corrections takes {time.time() - start: .2f} seconds')
+        # print(f'Local corrections takes {time.time() - start: .2f} seconds')
         J_all.append(vj_mat_i)
 
     vj_mat = numpy.stack(J_all)
@@ -205,7 +205,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         vj_mat = vj_mat[0]
 
     # Pass 2: Grid -> Matrix (Vxc)
-    start = time.time()
+    # start = time.time()
     if xctype == 'GGA' and GGA_METHOD.upper() != 'FFT':
         # multigrid_pair._get_gga_pass2 processes the nset dimension
         vxc_mat = multigrid_pair._get_gga_pass2(mg_ni, vxc_G, kpts=kpt, hermi=hermi)
@@ -216,7 +216,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         else:
             vxc_G_input = vxc_G
         vxc_mat = multigrid_pair._get_j_pass2(mg_ni, vxc_G_input, kpts=kpt, hermi=hermi)
-    print(f'Eval matrix from potential takes: {time.time() - start: .2f} seconds')
+    # print(f'Eval matrix from potential takes: {time.time() - start: .2f} seconds')
     # Squeeze J and Vxc appropriately
     if not is_uks:
         while vxc_mat.ndim > 2: vxc_mat = vxc_mat[0]
@@ -237,47 +237,47 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
 
     # Pass 1: AO -> Grid (Smooth Density)
-    t0 = time.time()
+    # t0 = time.time()
     rhoG = multigrid_pair._eval_rhoG(mg_ni, dm, hermi=1, kpts=numpy.zeros((1,3)), deriv=0)
-    print(f"[getjSmoothPW2] _eval_rhoG takes: {time.time() - t0:.4f} seconds")
+    # print(f"[getjSmoothPW2] _eval_rhoG takes: {time.time() - t0:.4f} seconds")
     
     J_all = []
     for i in range(nset):
         dm_val = dm[i, 0, :, :]
         
-        t0 = time.time()
+        # t0 = time.time()
         rhoR = numpy.fft.ifftn(rhoG[i].reshape(mesh)).real.flatten() * (1./dv)
-        print(f"[getjSmoothPW2] Set {i}: ifftn for rhoR takes: {time.time() - t0:.4f} seconds")
+        # print(f"[getjSmoothPW2] Set {i}: ifftn for rhoR takes: {time.time() - t0:.4f} seconds")
         
-        t0 = time.time()
+        # t0 = time.time()
         for atomI in range(cell._atm.shape[0]):
             submat = dm_val[localIdx[atomI]][:, localIdx[atomI]]
             DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
             DPQtilde = smart_einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
             zg = smart_einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
             numpy.add.at(rhoR, gridIdx[atomI], smart_einsum('L,rL->r', zg, gOnR[atomI]))
-        print(f"[getjSmoothPW2] Set {i}: Atom loop for density augmentation takes: {time.time() - t0:.4f} seconds")
+        # print(f"[getjSmoothPW2] Set {i}: Atom loop for density augmentation takes: {time.time() - t0:.4f} seconds")
 
         # Poisson in G-space
-        t0 = time.time()
+        # t0 = time.time()
         rhoG_total = numpy.fft.fftn(rhoR.reshape(mesh))
         vG = rhoG_total * FF
-        print(f"[getjSmoothPW2] Set {i}: fftn for rhoG_total takes: {time.time() - t0:.4f} seconds")
+        # print(f"[getjSmoothPW2] Set {i}: fftn for rhoG_total takes: {time.time() - t0:.4f} seconds")
         
         # Pass 2: Grid -> Matrix (Smooth Potential Integration)
-        t0 = time.time()
+        # t0 = time.time()
         wv_freq = vG * dv
         Ji = multigrid_pair._get_j_pass2(mg_ni, wv_freq[numpy.newaxis, numpy.newaxis, :], kpts=numpy.zeros((1,3)), hermi=1)
         while Ji.ndim > 2:
             Ji = Ji[0]
-        print(f"[getjSmoothPW2] Set {i}: _get_j_pass2 takes: {time.time() - t0:.4f} seconds")
+        # print(f"[getjSmoothPW2] Set {i}: _get_j_pass2 takes: {time.time() - t0:.4f} seconds")
         
         # Local Matrix Corrections (zg2 terms)
-        t0 = time.time()
+        # t0 = time.time()
         potential = numpy.fft.ifftn(vG).real.flatten()
-        print(f"[getjSmoothPW2] Set {i}: ifftn for potential takes: {time.time() - t0:.4f} seconds")
+        # print(f"[getjSmoothPW2] Set {i}: ifftn for potential takes: {time.time() - t0:.4f} seconds")
         
-        t0 = time.time()
+        # t0 = time.time()
         for atomI in range(cell._atm.shape[0]):
             # el+comp-compOnA
             zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*dv
@@ -287,14 +287,14 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
                  smart_einsum('RS,Rm,Sn->mn', GL, F_Pmu[atomI], F_Pmu[atomI])\
                 -smart_einsum('RS,Rm,Sn->mn', GL, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])
             )
-        print(f"[getjSmoothPW2] Set {i}: Atom loop for local corrections takes: {time.time() - t0:.4f} seconds")
+        # print(f"[getjSmoothPW2] Set {i}: Atom loop for local corrections takes: {time.time() - t0:.4f} seconds")
         
         J_all.append(Ji)
     
     J = numpy.stack(J_all)
     if nset == 1:
         J = J[0]
-    print(f"[getjSmoothPW2] Total time: {time.time() - t_start_total:.4f} seconds")
+    # print(f"[getjSmoothPW2] Total time: {time.time() - t_start_total:.4f} seconds")
     return J
 
 def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
