@@ -42,8 +42,8 @@ def getPAWdataNew(mol,
     # initialize grids
     mf = pyscf.scf.RKS(pmol)
     # mf.grids.level = 9
-    mf.grids.build()
-    print(f'DFT grid size: {mf.grids.coords.shape[0]}')
+    #mf.grids.build()
+    #print(f'DFT grid size: {mf.grids.coords.shape[0]}')
     #mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
     #Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
     #TODO just hacking gmol in here early to set up isdf but this could be done better
@@ -98,7 +98,9 @@ def getPAWdataNew(mol,
     # Evaluate AOs on uniform grid
     start = time.time()
     if with_multigrid == 0: # store AO incore to speed up J
-        aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+        #aoOnR, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
+        #No longer needed for gausslets
+        aoOnR, aoOnR_tilde = 0, 0
     else:
         aoOnR, aoOnR_tilde = 0, 0
     logger.info(mol, 'AO eval on all grids take %.2e seconds', time.time() - start)
@@ -121,6 +123,7 @@ def getPAWdata(mol,
                with_multigrid=2,
                alpha0_lowmem=True,
                auto_box=False):
+    raise ValueError()
     mol.build()
     if (not Periodic):
         mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box)
