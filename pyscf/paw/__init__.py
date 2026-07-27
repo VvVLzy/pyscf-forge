@@ -331,41 +331,47 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
 
     vj = vk = None
     if with_j:
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        if getattr(mydf, 'with_multigrid', 0) > 0:
-            raise ValueError('Not implemented with multigrid yet')
-            # Check if vj1 is already cached from the XC pass
-            cached_dm = getattr(mydf, '_cached_vj1_dm', None)
-            if cached_dm is not None and numpy.allclose(dm, cached_dm):
-                vj1 = mydf._cached_vj1
-            else:
-                vj1 = PAWutils.getjSmoothPW2(cell, dm,
-                                             mydf.mg_ni,
-                                             mydf.mesh,
-                                             mydf.PAWdata,
-                                             Periodic=mydf.Periodic)
+        if not getattr(mydf, 'paw_j', True):
+            from pyscf.scf import hf
+            # dm is reshaped to (nset, nk, nao, nao) by tag_dm. 
+            # For molecule, we only support nset=1 and nk=1 for now.
+            vj, _ = hf.get_jk(cell, dm[0, 0], hermi, with_j=True, with_k=False)
         else:
-            assert(mydf.with_multigrid == 0)
+            cpu0 = (logger.process_clock(), logger.perf_counter())
+            if getattr(mydf, 'with_multigrid', 0) > 0:
+                raise ValueError('Not implemented with multigrid yet')
+                # Check if vj1 is already cached from the XC pass
+                cached_dm = getattr(mydf, '_cached_vj1_dm', None)
+                if cached_dm is not None and numpy.allclose(dm, cached_dm):
+                    vj1 = mydf._cached_vj1
+                else:
+                    vj1 = PAWutils.getjSmoothPW2(cell, dm,
+                                                 mydf.mg_ni,
+                                                 mydf.mesh,
+                                                 mydf.PAWdata,
+                                                 Periodic=mydf.Periodic)
+            else:
+                assert(mydf.with_multigrid == 0)
 
-            vj1 = PAWutils.getjSmoothISDF(cell, dm, mydf.gaussgrid,
+                vj1 = PAWutils.getjSmoothISDF(cell, dm, mydf.gaussgrid,
+                                            mydf.aoOnR_tilde,
+                                            mydf.mesh,
+                                            mydf.PAWdata,
+                                            Periodic=mydf.Periodic)
+            logger.timer(mydf, 'vj PW', *cpu0)
+            cpu0 = (logger.process_clock(), logger.perf_counter())
+            vj2 = PAWutils.getjSharpLocal(cell, dm, 
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
                                         mydf.PAWdata,
                                         Periodic=mydf.Periodic)
-        logger.timer(mydf, 'vj PW', *cpu0)
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        vj2 = PAWutils.getjSharpLocal(cell, dm, 
-                                    mydf.aoOnR_tilde,
-                                    mydf.mesh,
-                                    mydf.PAWdata,
-                                    Periodic=mydf.Periodic)
-        vj3 = PAWutils.getjSmoothLocal(cell, dm, 
-                                    mydf.aoOnR_tilde,
-                                    mydf.mesh,
-                                    mydf.PAWdata,
-                                    Periodic=mydf.Periodic)
-        logger.timer(mydf, 'vj atom', *cpu0)
-        vj = vj1 + vj2 + vj3
+            vj3 = PAWutils.getjSmoothLocal(cell, dm, 
+                                        mydf.aoOnR_tilde,
+                                        mydf.mesh,
+                                        mydf.PAWdata,
+                                        Periodic=mydf.Periodic)
+            logger.timer(mydf, 'vj atom', *cpu0)
+            vj = vj1 + vj2 + vj3
     if with_k:
         is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
         if is_unrestricted:
@@ -407,11 +413,13 @@ class PAW(FFTDF):
             with_multigrid=2,
             use_merged_multigrid=True,
             alpha0_lowmem=True,
-            auto_box=True
+            auto_box=True,
+            paw_j=True
     ):
         
         self.scf_iter = 0
         self.cell = cell
+        self.paw_j = paw_j
 
         # not sure what this part do
         if kpts is None:
@@ -767,11 +775,13 @@ class NewPAW(FFTDF):
             with_multigrid=0,
             use_merged_multigrid=False,
             alpha0_lowmem=False,
-            auto_box=False
+            auto_box=False,
+            paw_j=True
     ):
         
         self.scf_iter = 0
         self.cell = cell
+        self.paw_j = paw_j
 
         # not sure what this part do
         if kpts is None:
