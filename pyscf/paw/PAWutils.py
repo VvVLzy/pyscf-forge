@@ -1507,18 +1507,30 @@ def getk_PAW_JAX_new(cell, dm, aoOnR_tilde, mesh, PAWdata, S, Periodic = False):
         Katom = jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS',vpqrs, DPQ), fpmu)
 
         ##diffuse-diffuse
-        B = jnp.einsum('PQg, RSg->PQRS', vpql, mpql)
-        PQRS = vpqrs - B - B.T + jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql) # 4 terms
-        Katom -= jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde), ftildepmu)
+        E_diffuse = jnp.einsum('PQRS, QR->PS', vpqrs, DPQtilde)
+        tmp = jnp.einsum('RSg, QR->QSg', mpql, DPQtilde)
+        E_diffuse -= jnp.einsum('PQg, QSg->PS', vpql, tmp)
+        tmp = jnp.einsum('RSg, QR->QSg', vpql, DPQtilde)
+        E_diffuse -= jnp.einsum('PQg, QSg->PS', mpql, tmp)
+        tmp = jnp.einsum('RSf, QR->QSf', mpql, DPQtilde)
+        tmp2 = jnp.einsum('gf, QSf->QSg', vlm, tmp)
+        E_diffuse += jnp.einsum('PQg, QSg->PS', mpql, tmp2)
+        Katom -= jnp.einsum('Pm, PS, Sn->mn', ftildepmu, E_diffuse, ftildepmu)
 
         # mixed terms
-        DPQtilde = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm[localidx][:,localidx])
-        PQRS = B - jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
-        Ktemp   = jnp.einsum('Pm,PQ,Qn->mn', ftildepmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQtilde),  fpmu)
-        Katom -= Ktemp + Ktemp.T # 4 terms
+        DPQmixed = jnp.einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm[localidx][:,localidx])
+        tmp = jnp.einsum('RSg, QR->QSg', mpql, DPQmixed)
+        E_mixed = jnp.einsum('PQg, QSg->PS', vpql, tmp)
+        tmp = jnp.einsum('RSf, QR->QSf', mpql, DPQmixed)
+        tmp2 = jnp.einsum('gf, QSf->QSg', vlm, tmp)
+        E_mixed -= jnp.einsum('PQg, QSg->PS', mpql, tmp2)
+        Ktemp = jnp.einsum('Pm, PS, Sn->mn', ftildepmu, E_mixed, fpmu)
+        Katom -= Ktemp + Ktemp.T
 
-        PQRS = jnp.einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
-        Katom -= jnp.einsum('Pm,PQ,Qn->mn', fpmu, jnp.einsum('PQRS, QR->PS', PQRS, DPQ),  fpmu) # 1 term
+        tmp = jnp.einsum('RSf, QR->QSf', mpql, DPQ)
+        tmp2 = jnp.einsum('gf, QSf->QSg', vlm, tmp)
+        E_comp = jnp.einsum('PQg, QSg->PS', mpql, tmp2)
+        Katom -= jnp.einsum('Pm, PS, Sn->mn', fpmu, E_comp, fpmu)
 
         return k.at[jnp.ix_(localidx, localidx)].set(
             k[localidx][:, localidx]  + Katom
@@ -1574,18 +1586,29 @@ def getkSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:,localidx])
         DPQtilde = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm_half[localidx][:,localidx])
         
-        B = smart_einsum('PQg, RSg->PQRS', vpql, mpql)
-        PQRS_diffuse = vpqrs - B - B.transpose(2, 3, 0, 1) + smart_einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
-        
-        Katom = -smart_einsum('Pm,PQ,Qn->mn', ftildepmu, smart_einsum('PQRS, QR->PS', PQRS_diffuse, DPQtilde), ftildepmu)
+        E_diffuse = smart_einsum('PQRS, QR->PS', vpqrs, DPQtilde)
+        tmp = smart_einsum('RSg, QR->QSg', mpql, DPQtilde)
+        E_diffuse -= smart_einsum('PQg, QSg->PS', vpql, tmp)
+        tmp = smart_einsum('RSg, QR->QSg', vpql, DPQtilde)
+        E_diffuse -= smart_einsum('PQg, QSg->PS', mpql, tmp)
+        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQtilde)
+        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+        E_diffuse += smart_einsum('PQg, QSg->PS', mpql, tmp2)
+        Katom = -smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_diffuse, ftildepmu)
         
         DPQmixed = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm_half[localidx][:,localidx])
-        PQRS_mixed = B - smart_einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
-        Ktemp = smart_einsum('Pm,PQ,Qn->mn', ftildepmu, smart_einsum('PQRS, QR->PS', PQRS_mixed, DPQmixed), fpmu)
+        tmp = smart_einsum('RSg, QR->QSg', mpql, DPQmixed)
+        E_mixed = smart_einsum('PQg, QSg->PS', vpql, tmp)
+        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQmixed)
+        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+        E_mixed -= smart_einsum('PQg, QSg->PS', mpql, tmp2)
+        Ktemp = smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_mixed, fpmu)
         Katom -= Ktemp + Ktemp.T
         
-        PQRS_comp = smart_einsum('PQg, gf, RSf->PQRS', mpql, vlm, mpql)
-        Katom -= smart_einsum('Pm,PQ,Qn->mn', fpmu, smart_einsum('PQRS, QR->PS', PQRS_comp, DPQ), fpmu)
+        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQ)
+        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+        E_comp = smart_einsum('PQg, QSg->PS', mpql, tmp2)
+        Katom -= smart_einsum('Pm, PS, Sn->mn', fpmu, E_comp, fpmu)
         
         numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
 
