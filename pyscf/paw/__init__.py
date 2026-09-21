@@ -414,7 +414,7 @@ class PAW(FFTDF):
             use_merged_multigrid=True,
             alpha0_lowmem=True,
             auto_box=True,
-            paw_j=True
+            paw_j=False
     ):
         
         self.scf_iter = 0
@@ -776,7 +776,7 @@ class NewPAW(FFTDF):
             use_merged_multigrid=False,
             alpha0_lowmem=False,
             auto_box=False,
-            paw_j=True
+            paw_j=False
     ):
         
         self.scf_iter = 0
