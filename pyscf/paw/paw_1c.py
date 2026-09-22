@@ -396,6 +396,69 @@ def compensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = Fa
 
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
 
+def buildCompensatingBasis(pmol, alpha0, gmax=None):
+    """The compensating-charge basis (gmolCart, gmolSph, gmax) for `pmol`.
+
+    Lifted verbatim out of mergeCompensatingCharge so that it can be built EARLY.
+    The ISDF exchange path needs gmolSph before the grid exists -- ISDFGrid.setup_isdf
+    takes it as `extrafuns` so the pivot selection sees the compensating charge, not
+    just the AO products -- while mergeCompensatingCharge needs the same two objects
+    later. Building them twice would be harmless but wasteful, so the caller passes
+    the result back in.
+
+    `alpha0` is a scalar or a dict keyed by element symbol, resolved per atom exactly
+    as the rest of the package does it.
+
+    `gmax` may be supplied to skip the getAlphaAtomsL call when the caller already
+    knows it; otherwise it is derived from pmol's angular momenta the same way.
+    """
+    if gmax is None:
+        _, _, L, _ = getAlphaAtomsL(pmol._bas, pmol._env)
+        gmax = int(L.max() * 2)
+
+    gbasCart, gbasSph = {}, {}
+    for atomI in range(pmol._atm.shape[0]):
+        elem = pmol._atom[atomI][0]
+        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
+        gbasSph[elem] = [ [l, [alpha0_val, 1.]] for l in range(gmax+1)]
+        if gmax < 2:
+            assert(gmax == 0)
+            gbasCart[elem] = [ [0, [alpha0_val, 1.]], [2, [alpha0_val, 1.]]]
+        else:
+            gbasCart[elem] = [ [l, [alpha0_val, 1.]] for l in range(gmax+1)]
+
+    gmolCart = pgto.M(atom=pmol.atom, basis=gbasCart, a=pmol.a, unit=pmol.unit, cart=True)
+    gmolSph  = pgto.M(atom=pmol.atom, basis=gbasSph,  a=pmol.a, unit=pmol.unit, cart=False)
+    return gmolCart, gmolSph, gmax
+
+
+def computeGOnR(gmol, Rgrid, gridIdx):
+    """The compensating-charge shape functions on WHATEVER grid it is handed.
+
+    gOnR[atomI][r, L] = g^atomI_L(Rgrid[gridIdx[atomI]][r]), shape (len(gridIdx[a]), nL).
+
+    The whole point of this being a separate function is that it is called TWICE with
+    two different grids and everything else in PAWdata shared between them:
+
+      * the uniform FFT grid, for the J build, get_nuc and vxc;
+      * the ISDF pivots only, for the exchange build.
+
+    Neither grid is a subset of the other and the index spaces are unrelated, so a
+    gOnR paired with the wrong gridIdx silently evaluates the shape functions at the
+    wrong points. See the grid_kind tagging in paw_jk.py for the guard against that.
+
+    Evaluation is per atom on a one-atom Mole rather than once on `gmol` with an
+    shls_slice, because Rgrid is globally shifted relative to the atom -- the comment
+    this replaces made that point and it still holds.
+    """
+    gOnR = []
+    for atomI in range(gmol._atm.shape[0]):
+        gmolAtom = pgto.M(atom=[gmol._atom[atomI]], basis=gmol.basis,
+                          a=gmol.lattice_vectors(), cart=gmol.cart, unit='B')
+        gOnR.append(gmolAtom.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]]))
+    return gOnR
+
+
 def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol, Rgrid, gridIdx):
     import time
     CG = ClebschGordan.RealCG
@@ -465,16 +528,31 @@ def compensatingChargeSph(pmol, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmol
             data_list.append((mpql, VPQL, VLL))
             atomData[atomZ] = data_list
 
-        # gOnR depends on Rgrid which is globally shifted relative to the atom, must compute per atom
-        t0 = time.time()
-        # gOnR.append(gmol.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]], shls_slice=(shellsB[0], shellsB[-1]+1)))
-        gOnR.append(gmolAtom.pbc_eval_gto('GTOval', Rgrid[gridIdx[atomI]]))
-        t_gonr += time.time() - t0
+
+    # gOnR last and in one call, so the SAME routine serves the uniform grid here and
+    # the ISDF pivots in paw_isdf.build_isdf_grid. It used to be inlined in the loop
+    # above, which is why gOnR is no longer accumulated there.
+    t0 = time.time()
+    gOnR = computeGOnR(gmol, Rgrid, gridIdx)
+    t_gonr += time.time() - t0
 
     print(f"      [Time breakdown] mpql: {t_mpql:.4f}s, vpql: {t_vpql:.4f}s, vll: {t_vll:.4f}s, gonr: {t_gonr:.4f}s")
     return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol
 
-def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False):
+def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic = False,
+                            gmols=None, Rgrid2=None):
+    """PAW compensating-charge data on `Rgrid`, and optionally a SECOND grid too.
+
+    `Rgrid2` exists for the ISDF exchange path, which needs the same shape functions
+    on the ISDF pivots while the J build, get_nuc and vxc need them on the uniform
+    FFT grid. It is built HERE rather than by the caller so that both grids go
+    through the same `L`, `alpha0`, `Rb` and `epsilon` -- which makes the two
+    augmentation-sphere radius lists identical by construction instead of by the
+    caller remembering to pass matching arguments. If the J and K spheres ever
+    disagreed, the two halves of the exchange would be augmenting different regions.
+
+    Returns the usual 7-tuple, plus (gridIdx2, gOnR2) when `Rgrid2` is given.
+    """
     import time
     print("\n--- Starting mergeCompensatingCharge ---")
     t0 = time.time()
@@ -489,20 +567,17 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
 
     ##introducing the compensating charge basis set
     # need both spherical and cartesian
-    gmax = int(L.max()*2)
-    gbasCart, gbasSph = {}, {}
-    for atomI in range(pmol._atm.shape[0]):
-        elem = pmol._atom[atomI][0]
-        alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
-        gbasSph[elem] = [ [l, [alpha0_val, 1.]] for l in range(gmax+1)]
-        if gmax < 2:
-            assert(gmax == 0)
-            gbasCart[elem] = [ [0, [alpha0_val, 1.]], [2, [alpha0_val, 1.]]]
-        else:
-            gbasCart[elem] = [ [l, [alpha0_val, 1.]] for l in range(gmax+1)]
-
-    gmolCart = pgto.M(atom=pmol.atom, basis=gbasCart, a=pmol.a, unit=pmol.unit, cart=True)
-    gmolSph = pgto.M(atom=pmol.atom, basis=gbasSph, a=pmol.a, unit=pmol.unit, cart=False)
+    #
+    # gmols: the caller may have built these already -- the ISDF exchange path needs
+    # gmolSph before the grid exists, so it passes the pair back in here rather than
+    # letting a second, independently-built copy drift from the one the pivots were
+    # selected against.
+    if gmols is None:
+        gmolCart, gmolSph, gmax = buildCompensatingBasis(pmol, alpha0, gmax=int(L.max()*2))
+    else:
+        gmolCart, gmolSph, gmax = gmols
+        assert gmax == int(L.max()*2), \
+            f'prebuilt gmol has gmax={gmax}, this pmol needs {int(L.max()*2)}'
     alphaG, atomsG, LG, MG = getAlphaAtomsL(gmolSph._bas, gmolSph._env, cart=gmolSph.cart)
 
     t2 = time.time()
@@ -541,10 +616,31 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
         )
         print(f"    [Time] compensatingChargeSph (Non-Periodic): {time.time() - t_non_periodic_start:.4f}s")
 
+    if Rgrid2 is None:
+        t_end = time.time()
+        print(f"--- Finished mergeCompensatingCharge (Total: {t_end - t0:.4f}s) ---\n")
+        return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
+
+    # Second grid, same everything else. makeAugmentationSphere_Fast derives each
+    # atom's radius from (alpha0[elem], L.max(), epsilon) alone, so Rs2 == Rs holds
+    # for free -- asserted rather than assumed, because it is the invariant that
+    # keeps the J and K augmentation regions the same region.
+    logger.debug(mol, 'Making augmentation sphere for second grid (ISDF pivots):')
+    t4 = time.time()
+    gridIdx2, _, _, Rs2 = makeAugmentationSphere_Fast(
+        Rgrid2, mol, L, alpha0, Rb=Rb, epsilon=epsilon, Periodic=Periodic)
+    assert numpy.allclose(Rs, Rs2), \
+        f'augmentation radii differ between the two grids: {Rs} vs {Rs2}'
+
+    if Periodic:
+        gOnR2 = getGOnR(pmolNuc, gmolCart, gmolSph, Rgrid2, gridIdx2, gmax)
+    else:
+        gOnR2 = computeGOnR(gmol, Rgrid2, gridIdx2)
+    print(f"  [Time] second-grid gridIdx + gOnR: {time.time() - t4:.4f}s")
+
     t_end = time.time()
     print(f"--- Finished mergeCompensatingCharge (Total: {t_end - t0:.4f}s) ---\n")
-
-    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs
+    return M_PQLarray, V_PQLarray, V_LLarray, gridIdx, gOnR, gmol, Rs, gridIdx2, gOnR2
 
 def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rs=None, Periodic=False, neighbor_list=None, rtol=1e-8):
     '''

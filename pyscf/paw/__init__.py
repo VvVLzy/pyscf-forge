@@ -15,6 +15,8 @@ import pyscf
 import numpy
 
 from . import PAWutils
+from . import paw_isdf
+from .paw_helper import PAWDataTuple
 
 import time
 
@@ -28,7 +30,9 @@ def getPAWdata(mol,
                with_multigrid=2,
                alpha0_lowmem=True,
                auto_box=False,
-               use_new_comp_charge=True):
+               use_new_comp_charge=True,
+               with_isdf_k=False,
+               isdf_args=None):
     t_start = time.time()
     mol.build()
     if (not Periodic):
@@ -60,11 +64,44 @@ def getPAWdata(mol,
     print(f"Time for getAlpha0: {time.time() - t_start:.4f}s")
     t_start = time.time()
 
-    # PAWData
+    # The ISDF exchange grid, if K was asked for.
+    #
+    # This sits HERE, after alpha0 and before the compensating charge, and the order
+    # is the point of the whole arrangement. The grid's smooth/sharp basis split is
+    # driven by alpha0, and its pivot selection is driven by the compensating-charge
+    # basis gmolSph -- so alpha0 has to be known first (it is, as of the line above)
+    # and gmolSph has to be built before setup_isdf runs. The old arrangement had the
+    # grid built first by the caller, which is why alpha0 had to be read back off it
+    # as grid.maxgto instead of being determined here.
+    #
+    # gmols is then handed to mergeCompensatingCharge so the gOnR it builds comes from
+    # the same gmolSph object the pivots were selected against.
+    gaussgrid, pivots, gmols = None, None, None
+    if with_isdf_k:
+        if Periodic:
+            raise NotImplementedError(
+                'ISDF exchange is molecular/gamma-point only (truncated Coulomb kernel)')
+        gmols = PAWutils.buildCompensatingBasis(pmol, alpha0)
+        # `mesh` is not just context here: it SETS the ISDF grid spacing. One grid
+        # density for J and K, with ke_cutoff the single knob -- see paw_isdf.
+        gaussgrid, pivots = paw_isdf.build_isdf_grid(
+            mol, alpha0, gmols[1], mesh, isdf_args=isdf_args, log_obj=mol)
+        print(f"Time for ISDF grid setup: {time.time() - t_start:.4f}s")
+        t_start = time.time()
+
+    # PAWData. With pivots, mergeCompensatingCharge returns a second (gridIdx, gOnR)
+    # on them -- same L, same alpha0, same Rb, so the same augmentation spheres.
+    gridIdx_p = gOnR_p = None
     if use_new_comp_charge:
-        M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = PAWutils.mergeCompensatingCharge(
-            pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
+        out = PAWutils.mergeCompensatingCharge(
+            pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic=Periodic,
+            gmols=gmols, Rgrid2=pivots)
+        if pivots is None:
+            M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = out
+        else:
+            M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs, gridIdx_p, gOnR_p = out
     else:
+        assert not with_isdf_k, 'the ISDF K path needs use_new_comp_charge=True'
         M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = PAWutils.compensatingCharge(
             pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
     print(f"Time for compensatingCharge: {time.time() - t_start:.4f}s")
@@ -88,11 +125,22 @@ def getPAWdata(mol,
     # Prepare PAW data
     result = PAWutils.separateNuclearElectron(
         pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr)
-    PAWdata = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4], gridIdx, gOnR)
+
+    # The first seven slots are grid-independent and SHARED; only (gridIdx, gOnR)
+    # differ. Tagged so that anything indexing those two slots fails loudly on the
+    # wrong tuple instead of quietly evaluating the shape functions at the wrong
+    # points -- see paw_helper.PAWDataTuple.
+    shared = (localIdx, F_PmuArr, Ftilde_PmuArr, *result[:4])
+    PAWdata = PAWDataTuple((*shared, gridIdx, gOnR), 'uniform')
+    PAWdata_K = None
+    if gridIdx_p is not None:
+        PAWdata_K = PAWDataTuple((*shared, gridIdx_p, gOnR_p), 'pivot')
+        paw_isdf.validate_k_pawdata(PAWdata_K, len(pivots))
     PAWNucdata = result[-3:]
     print(f"Time for separateNuclearElectron: {time.time() - t_start:.4f}s")
 
-    return PAWdata, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol, ctr_coeff, alpha0, Rs
+    return (PAWdata, PAWdata_K, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol,
+            ctr_coeff, alpha0, Rs, gaussgrid)
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
     if mydf.scf_iter == 0:
@@ -167,29 +215,14 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
             logger.timer(mydf, 'vj atom', *cpu0)
             vj = vj1 + vj2 + vj3
         if with_k:
-            is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
-            if is_unrestricted:
-                vk = []
-                for spin in range(2):
-                    dm_spin = dm[spin] * 2.0
-                    mo_occ_spin = dm.mo_occ[spin] * 2.0
-                    mo_coeff_spin = dm.mo_coeff[spin]
-                    dm_k = lib.tag_array(numpy.array([dm_spin]), mo_coeff=numpy.array([mo_coeff_spin]), mo_occ=numpy.array([mo_occ_spin]))
-                    vk_spin = PAWutils.getk_PAW_JAX(cell, dm_k,
-                                                mydf.aoOnR_tilde,
-                                                mydf.mesh,
-                                                mydf.PAWdata,
-                                                mydf.S,
-                                                Periodic=mydf.Periodic)
-                    vk.append(vk_spin / 2.0)
-                vk = numpy.array(vk)
-            else:
-                vk = PAWutils.getk_PAW_JAX(cell, dm,
-                                            mydf.aoOnR_tilde,
-                                            mydf.mesh,
-                                            mydf.PAWdata,
-                                            mydf.S,
-                                            Periodic=mydf.Periodic)
+            # No periodic K. The ISDF grid's Coulomb kernel is a truncated,
+            # non-periodic Green's function, and the getk_PAW_* kernels this used to
+            # call never existed on this branch (they referenced a mydf.S that was
+            # never assigned). Raising beats returning a silently wrong vk.
+            raise NotImplementedError(
+                'PAW exchange is molecular/gamma-point only; the ISDF grid uses a '
+                'truncated non-periodic Coulomb kernel. Use a pure functional, or '
+                'run the molecular path.')
     else:
         # TODO: implement this
         raise NotImplementedError('get J and K for kpts not implemented.')
@@ -269,29 +302,32 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         # print(f'Atom J takes {time.time() - start:.2f} sec')
         vj = vj1 + vj2 + vj3
     if with_k:
-        is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
-        if is_unrestricted:
-            vk = []
-            for spin in range(2):
-                dm_spin = dm[spin] * 2.0
-                mo_occ_spin = dm.mo_occ[spin] * 2.0
-                mo_coeff_spin = dm.mo_coeff[spin]
-                dm_k = lib.tag_array(numpy.array([dm_spin]), mo_coeff=numpy.array([mo_coeff_spin]), mo_occ=numpy.array([mo_occ_spin]))
-                vk_spin = PAWutils.getk_PAW_loop(cell, dm_k,
-                                            mydf.aoOnR_tilde,
-                                            mydf.mesh,
-                                            mydf.PAWdata,
-                                            mydf.S,
-                                            Periodic=mydf.Periodic)
-                vk.append(vk_spin / 2.0)
-            vk = numpy.array(vk)
-        else:
-            vk = PAWutils.getk_PAW_loop(cell, dm,
-                                        mydf.aoOnR_tilde,
-                                        mydf.mesh,
-                                        mydf.PAWdata,
-                                        mydf.S,
-                                        Periodic=mydf.Periodic)
+        if mydf.PAWdata_K is None:
+            raise RuntimeError(
+                'K was requested but no ISDF exchange grid was built. Construct the '
+                'PAW object with with_isdf_k=True (there is no other K path: the '
+                'former getk_PAW_* kernels are gone).')
+
+        # vk = vk1 + vk2 + vk3, mirroring vj above:
+        #   vk1  the smooth/grid exchange plus the grid-mediated augmentation coupling
+        #        (ISDF terms 1, 2/3 and 4) -- needs the PIVOT PAWdata
+        #   vk2  sharp-sharp one-center, analytic
+        #   vk3  smooth/mixed/compensating one-center, analytic
+        # vk2 and vk3 are grid-free and take PAWdata[:7], so either tuple reaches them
+        # safely; PAWdata_K is passed for symmetry with vk1.
+        nset = dm.shape[0]
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        vk_spins = []
+        for spin in range(nset):
+            vk_spins.append(
+                paw_isdf.getkSmoothISDF(cell, dm, mydf.gaussgrid, mydf.PAWdata_K,
+                                        Periodic=mydf.Periodic, spin=spin)
+                + PAWutils.getkSharpLocal(cell, dm, mydf.aoOnR_tilde, mydf.mesh,
+                                          mydf.PAWdata_K, Periodic=mydf.Periodic, spin=spin)
+                + PAWutils.getkSmoothLocal(cell, dm, mydf.aoOnR_tilde, mydf.mesh,
+                                           mydf.PAWdata_K, Periodic=mydf.Periodic, spin=spin))
+        logger.timer(mydf, 'vk ISDF', *cpu0)
+        vk = vk_spins[0] if nset == 1 else numpy.array(vk_spins)
     return vj, vk
 
 class PAW(FFTDF):
@@ -300,7 +336,8 @@ class PAW(FFTDF):
         'with_multigrid', 'use_merged_multigrid', 'alpha0_lowmem', 'auto_box',
         'use_new_comp_charge', 'Times_', 'smoothCell', 'mg_ni', 'aoOnR_tilde',
         'mesh', 'PAWdata', 'PAWNucdata', 'Rgrid', 'cell', 'pcell', 'gcell',
-        'ctr_coeff', 'alpha0', 'scf_iter', 'kmesh', 'method'
+        'ctr_coeff', 'alpha0', 'scf_iter', 'kmesh', 'method',
+        'with_isdf_k', 'isdf_args', 'PAWdata_K', 'gaussgrid'
     }
 
     def __init__(
@@ -317,7 +354,9 @@ class PAW(FFTDF):
             use_merged_multigrid=True,
             alpha0_lowmem=True,
             auto_box=True,
-            use_new_comp_charge=True
+            use_new_comp_charge=True,
+            with_isdf_k=False,
+            isdf_args=None
     ):
         
         self.scf_iter = 0
@@ -350,6 +389,8 @@ class PAW(FFTDF):
         self.alpha0_lowmem = alpha0_lowmem
         self.auto_box = auto_box
         self.use_new_comp_charge = use_new_comp_charge
+        self.with_isdf_k = with_isdf_k
+        self.isdf_args = isdf_args
         self.Times_ = {
             "Diagonalize":0.,
             "Exchange"   :0.,
@@ -377,6 +418,18 @@ class PAW(FFTDF):
         else:
             self.mg_ni = None
 
+        # pyscf's MOLECULAR df_jk._DFHF.get_jk calls
+        #     self.with_df.get_jk(dm, hermi, with_j, with_dfk, direct_scf_tol, omega)
+        # positionally, which does NOT line up with FFTDF's
+        #     (dm, hermi, kpts, kpts_band, with_j, with_k, omega, exxdiv).
+        # Left as the class method, the molecular path therefore lands with_j in
+        # `kpts`, direct_scf_tol (truthy) in `with_j` and omega (None, falsy) in
+        # `with_k` -- so J worked by accident and K could never be requested at all.
+        # Bind the matching function for the molecular case instead of trying to make
+        # one signature serve both.
+        if not self.Periodic:
+            self.get_jk = get_jk_molecule.__get__(self, type(self))
+
         ###
 
     def check_sanity(self):
@@ -394,7 +447,8 @@ class PAW(FFTDF):
 
     def initPAW(self, cell, alpha0):
         t0 = time.time()
-        PAWdata, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol, ctr_coeff, alpha0, Rs = getPAWdata(
+        (PAWdata, PAWdata_K, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol,
+         ctr_coeff, alpha0, Rs, gaussgrid) = getPAWdata(
             cell,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
@@ -404,7 +458,9 @@ class PAW(FFTDF):
             with_multigrid=self.with_multigrid,
             alpha0_lowmem=self.alpha0_lowmem,
             auto_box=self.auto_box,
-            use_new_comp_charge=self.use_new_comp_charge
+            use_new_comp_charge=self.use_new_comp_charge,
+            with_isdf_k=self.with_isdf_k,
+            isdf_args=self.isdf_args
         )
 
         self.augRadius = Rs
@@ -418,8 +474,13 @@ class PAW(FFTDF):
         self.Times_["1e-orbs"] += time.time()-t0
 
         self.aoOnR_tilde = aoOnR_tilde
+        # The REAL FFT mesh, always. The pawisdf branch overwrote this with
+        # (n_pivots,) once the pivots became its only grid, which is what disabled
+        # getnuc_PAW there; keeping the two grids separate keeps get_nuc working.
         self.mesh = mesh
         self.PAWdata = PAWdata
+        self.PAWdata_K = PAWdata_K
+        self.gaussgrid = gaussgrid
         self.PAWNucdata = PAWNucdata
         self.Rgrid = Rgrid
         self.cell = mol

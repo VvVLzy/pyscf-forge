@@ -26,6 +26,7 @@ def getj_PAW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
     # use list of numpy arrays instead of jax arrays
+    require_grid_kind(PAWdata, 'uniform', 'getjSmoothPW')
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
 
     nset = dm.shape[0]
@@ -72,6 +73,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
     if kpt is None:
         kpt = numpy.zeros((1,3))
     
+    require_grid_kind(PAWdata, 'uniform', 'get_vxc_and_j_smooth')
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
 
     nset = dm.shape[0]
@@ -229,6 +231,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
 
 def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
     t_start_total = time.time()
+    require_grid_kind(PAWdata, 'uniform', 'getjSmoothPW2')
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
 
     nset = dm.shape[0]
@@ -299,7 +302,11 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
 
 def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+    # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
+    # moments) and must never touch gridIdx/gOnR. Narrowed rather than
+    # unpacked so that staying grid-free is structural, not a convention --
+    # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
 
     nset = dm.shape[0]
     J_all = []
@@ -322,7 +329,11 @@ def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
 def getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
     # TODO: generalize to multiple k-points
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
+    # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
+    # moments) and must never touch gridIdx/gOnR. Narrowed rather than
+    # unpacked so that staying grid-free is structural, not a convention --
+    # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
 
     nset = dm.shape[0]
     J_all = []
@@ -363,6 +374,104 @@ def getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         J = J[0]
     return J
 
+# ---------------------------------------------------------------------------
+# One-center exchange. The counterparts of getjSharpLocal / getjSmoothLocal
+# above, ported from the pawisdf branch (PAWutils.py:1553-1615, where the pairwise
+# PQ,RS contraction replacing the 4-index intermediates was commit 9a5d443).
+#
+# Both are ANALYTIC -- VPQRSarray / V_PQLarr / V_LMarr / M_PQLarr are one-center
+# int2c2e and int3c2e moments -- so they take PAWdata[:7] and cannot reach
+# gridIdx/gOnR. That matters here more than on the J side: in a J+K run there are
+# two different gOnR, and either tuple may reach these functions. See
+# paw_helper.PAWDataTuple.
+#
+# The smooth grid part of K is NOT here; it is paw_isdf.getkSmoothISDF.
+# ---------------------------------------------------------------------------
+
+def _dm_channel(dm, spin):
+    """(dm for the kernel, scale to undo afterwards) for one spin channel.
+
+    `dm` is (nset, nk, nao, nao), gamma point only. Restricted (nset == 1) holds
+    BOTH electrons in one channel, so the kernel runs on dm/2 and its result is
+    doubled; unrestricted (nset == 2) already has one spin per channel, so there
+    is no factor. This is the same `nset == 2` test `get_jk_*` uses.
+
+    Halving and redoubling is exact in binary floating point and so changes
+    nothing for the analytic terms below, which are linear in dm. It is kept
+    because the ISDF path needs precisely this form: `prescreen` compares |D|
+    against absolute thresholds, so it is NOT linear in the scale of dm, and this
+    is the scale that path was validated at.
+    """
+    scale = 2.0 if dm.shape[0] == 1 else 1.0
+    return dm[spin, 0, :, :] / scale, scale
+
+
+def getkSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False, spin=0):
+    # Slots 0-6 ONLY -- analytic, must never touch gridIdx/gOnR.
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    dm_half, scale = _dm_channel(dm, spin)
+    K = numpy.zeros((cell.nao, cell.nao))
+    for atomI in range(cell._atm.shape[0]):
+        fpmu = F_Pmu[atomI]
+        localidx = localIdx[atomI]
+        vpqrs = VPQRSarray[atomI]
+
+        DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:, localidx])
+
+        # sharp-sharp
+        Katom = smart_einsum('Pm,PQ,Qn->mn', fpmu, smart_einsum('PQRS, QR->PS', vpqrs, DPQ), fpmu)
+
+        numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
+
+    return K * scale
+
+
+def getkSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False, spin=0):
+    # Slots 0-6 ONLY -- analytic, must never touch gridIdx/gOnR.
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    dm_half, scale = _dm_channel(dm, spin)
+    K = numpy.zeros((cell.nao, cell.nao))
+    for atomI in range(cell._atm.shape[0]):
+        fpmu = F_Pmu[atomI]
+        ftildepmu = Ftilde_Pmu[atomI]
+        localidx = localIdx[atomI]
+        vpqrs = VPQRSarray[atomI]
+        vpql = V_PQLarr[atomI]
+        mpql = M_PQLarr[atomI]
+        vlm = V_LMarr[atomI]
+
+        DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:, localidx])
+        DPQtilde = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm_half[localidx][:, localidx])
+
+        E_diffuse = smart_einsum('PQRS, QR->PS', vpqrs, DPQtilde)
+        tmp = smart_einsum('RSg, QR->QSg', mpql, DPQtilde)
+        E_diffuse -= smart_einsum('PQg, QSg->PS', vpql, tmp)
+        tmp = smart_einsum('RSg, QR->QSg', vpql, DPQtilde)
+        E_diffuse -= smart_einsum('PQg, QSg->PS', mpql, tmp)
+        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQtilde)
+        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+        E_diffuse += smart_einsum('PQg, QSg->PS', mpql, tmp2)
+        Katom = -smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_diffuse, ftildepmu)
+
+        DPQmixed = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm_half[localidx][:, localidx])
+        tmp = smart_einsum('RSg, QR->QSg', mpql, DPQmixed)
+        E_mixed = smart_einsum('PQg, QSg->PS', vpql, tmp)
+        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQmixed)
+        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+        E_mixed -= smart_einsum('PQg, QSg->PS', mpql, tmp2)
+        Ktemp = smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_mixed, fpmu)
+        Katom -= Ktemp + Ktemp.T
+
+        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQ)
+        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+        E_comp = smart_einsum('PQg, QSg->PS', mpql, tmp2)
+        Katom -= smart_einsum('Pm, PS, Sn->mn', fpmu, E_comp, fpmu)
+
+        numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
+
+    return K * scale
+
+
 # PAW nuclear
 def getnuc_PAW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, mg_ni, Periodic=False, with_multigrid=2):
     # cell, self.mesh, self.aoOnR_tilde, self.PAWdata, self.PAWNucdata, self.Periodic
@@ -382,6 +491,7 @@ def getnuc_PAW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, mg_ni, Periodic
 def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
     # TODO: generalize to multiple k-points
     
+    require_grid_kind(PAWElecdata, 'uniform', 'getNucPAWSmoothPW')
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWElecdata
     VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
 
@@ -414,6 +524,7 @@ def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic
 def getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic):
     # TODO: generalize to multiple k-points
     
+    require_grid_kind(PAWElecdata, 'uniform', 'getNucPAWSmoothPW2')
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWElecdata
     VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
 
@@ -450,7 +561,11 @@ def getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic):
     return numpy.array([nuc])
 
 def getNucPAWSharpLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWElecdata
+    # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
+    # moments) and must never touch gridIdx/gOnR. Narrowed rather than
+    # unpacked so that staying grid-free is structural, not a convention --
+    # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWElecdata[:7]
     VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
 
     nao = cell.nao
@@ -465,7 +580,11 @@ def getNucPAWSharpLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Period
     return numpy.array([nuc])
 
 def getNucPAWSmoothLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWElecdata
+    # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
+    # moments) and must never touch gridIdx/gOnR. Narrowed rather than
+    # unpacked so that staying grid-free is structural, not a convention --
+    # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
+    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWElecdata[:7]
     VPQRSArrNuc, M_PQLarrNuc, ZNucArr = PAWNucdata
 
     nao = cell.nao

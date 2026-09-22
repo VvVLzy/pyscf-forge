@@ -70,7 +70,13 @@ def prepareMolForPAW(mol, auto_box=False):
     else:
         raise ValueError("mol.a must be defined or auto_box must be True")
 
-    return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff, unit='A', max_memory=mol.max_memory)
+    # verbose is carried over deliberately. This Cell replaces the caller's for the
+    # rest of the run, so anything that logs against it -- getPAWdata's AO-eval timer,
+    # paw_isdf's grid diagnostics -- was silently muted at pyscf's default level 3
+    # while the user had asked for 4. precision and cart are NOT carried over: they
+    # change numbers rather than output, so adding them here is a separate decision.
+    return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff,
+                  unit='A', max_memory=mol.max_memory, verbose=mol.verbose)
 
 def addSharpGTO2Atom(mol):
     mol = mol.copy()
@@ -914,3 +920,73 @@ def get_neighbor_list(mol, epsilon=1e-8, Periodic=False):
         neighbor_list.append(neighbors)
         
     return neighbor_list
+
+# ---------------------------------------------------------------------------
+# Which grid is PAWdata's gOnR on?
+#
+# PAWdata is a 9-element tuple whose last two slots, (gridIdx, gOnR), are the
+# compensating-charge shape functions RESTRICTED TO ONE GRID. There are two such
+# grids in a J+K run and they are unrelated index spaces:
+#
+#   'uniform' -- the FFT grid, Rgrid = pmol.get_uniform_grids(wrap_around=False).
+#                What the J build, get_nuc and vxc need.
+#   'pivot'   -- the ISDF pivots only, grid.get_sparse_grid(). What the exchange
+#                build needs; pawexchange.py reads gridIdx[a] as offsets into the
+#                cell-major concatenated pivot array.
+#
+# Slots 0-6 are grid-independent and shared between the two, so the wrong tuple
+# still unpacks, still has the right dtypes, and still has plausible shapes. It
+# just evaluates the shape functions at the wrong points -- an error of a fraction
+# of a mHa with no traceback, which is the single worst failure mode in this merge.
+# Hence the tag, and hence require_grid_kind() at the top of everything that
+# actually indexes slots 7-8.
+# ---------------------------------------------------------------------------
+
+class PAWDataTuple(tuple):
+    '''A 9-element PAWdata tuple that remembers which grid its gOnR is on.
+
+    Still a plain tuple as far as any consumer is concerned: positional unpacking
+    works, and `pawexchange.compute_paw_exchange` (in the external Gausslets repo)
+    unpacks nine elements from it and packs them for its C kernel with no idea the
+    tag exists. Slicing drops the tag, which is what makes `PAWdata[:7]` the right
+    way for a grid-free consumer to say so.
+    '''
+    # No __slots__: CPython rejects a nonempty __slots__ on a variable-length
+    # immutable subtype, so the tag lives in the instance __dict__. One dict per
+    # PAWdata, of which there are at most two per PAW object.
+    KINDS = ('uniform', 'pivot')
+
+    def __new__(cls, items, grid_kind):
+        self = super().__new__(cls, items)
+        if len(self) != 9:
+            raise ValueError(f'PAWdata must have 9 elements, got {len(self)}')
+        if grid_kind not in cls.KINDS:
+            raise ValueError(f'grid_kind must be one of {cls.KINDS}, got {grid_kind!r}')
+        self.grid_kind = grid_kind
+        return self
+
+    # Plain tuple.__reduce_ex__ would rebuild this as a bare tuple and silently
+    # drop the tag, so a copied/pickled PAW object would lose the very guard this
+    # class exists to provide.
+    def __reduce__(self):
+        return (self.__class__, (tuple(self), self.grid_kind))
+
+    def __repr__(self):
+        return f'PAWDataTuple(<9 items>, grid_kind={self.grid_kind!r})'
+
+
+def require_grid_kind(PAWdata, expected, caller):
+    '''Raise unless PAWdata's gOnR is on the grid `caller` actually indexes.
+
+    An UNTAGGED tuple is treated as 'uniform': that is what every pre-existing
+    caller built, so the uniform consumers keep working unchanged, while anything
+    demanding 'pivot' has to be handed a deliberately tagged tuple.
+
+    ValueError rather than assert, so `python -O` cannot strip it.
+    '''
+    kind = getattr(PAWdata, 'grid_kind', 'uniform')
+    if kind != expected:
+        raise ValueError(
+            f"{caller} indexes PAWdata's gridIdx/gOnR and needs them on the "
+            f"'{expected}' grid, but was handed a '{kind}' PAWdata. "
+            f"Pass mydf.PAWdata for 'uniform' and mydf.PAWdata_K for 'pivot'.")
