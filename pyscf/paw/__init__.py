@@ -315,19 +315,93 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         #   vk3  smooth/mixed/compensating one-center, analytic
         # vk2 and vk3 are grid-free and take PAWdata[:7], so either tuple reaches them
         # safely; PAWdata_K is passed for symmetry with vk1.
+        #
+        # INCREMENTAL BUILD. All three terms are linear in dm, so
+        # K(D_n) = K(D_0) + sum_i dK(D_i - D_{i-1}) telescopes exactly. Only the
+        # ISDF screen is approximate; getkSmoothISDF says why it needs a second dm.
         nset = dm.shape[0]
+        freq = getattr(mydf, 'k_rebuild_freq', 1)
+        start = getattr(mydf, 'k_incremental_start', 0)
+        idx = mydf._k_build_index
+        # Shape test catches RHF -> UHF on one object, or a different basis.
+        have_cache = (mydf._k_vk_last is not None and mydf._k_dm_last is not None
+                      and mydf._k_dm_last.shape == dm.shape)
+
+        # Tail shutoff, on the PREVIOUS increment's |dE_K|: get_veff runs before
+        # energy_tot, so nothing about this build is known yet. Sticky and one-sided
+        # -- shutting off reverts to full builds, so a false trigger is harmless.
+        stop = mydf._k_stop_threshold()
+        if (not mydf._k_stopped) and stop > 0.0 and mydf._k_last_de is not None \
+                and mydf._k_last_de < stop:
+            mydf._k_stopped = True
+            logger.debug(mydf, 'vk: incremental off at build %d, |dE_K| %.3e < %.3e',
+                         idx, mydf._k_last_de, stop)
+
+        # Period runs from `start`, so the warmup does not eat the first incremental
+        # run. `idx > start` makes build `start` an increment -- the cache advances on
+        # every build, warmup included. start=0 collapses this to idx % freq == 0.
+        fresh = ((not have_cache) or freq <= 1 or idx < start or mydf._k_stopped
+                 or ((idx - start) % freq == 0 and idx > start))
+
+        if fresh:
+            dm_build, dm_screen = dm, None      # None: screen on what we build from
+        else:
+            dm_build = numpy.asarray(dm) - mydf._k_dm_last
+            # D_new, not D_prev: Q is linear, so <Q(D_new),Q(dD)> is the cross term
+            # plus ||Q(dD)||^2, both for one contraction.
+            dm_screen = dm
+
+        if getattr(mydf, 'k_dynamic_screen', False):
+            _s = mydf._apply_dynamic_screen()
+            if _s is not None:
+                logger.debug1(mydf, 'vk build %d: screen_error -> %.3e', idx, _s)
+
         cpu0 = (logger.process_clock(), logger.perf_counter())
         vk_spins = []
         for spin in range(nset):
             vk_spins.append(
-                paw_isdf.getkSmoothISDF(cell, dm, mydf.gaussgrid, mydf.PAWdata_K,
-                                        Periodic=mydf.Periodic, spin=spin)
-                + PAWutils.getkSharpLocal(cell, dm, mydf.aoOnR_tilde, mydf.mesh,
+                paw_isdf.getkSmoothISDF(cell, dm_build, mydf.gaussgrid, mydf.PAWdata_K,
+                                        Periodic=mydf.Periodic, spin=spin,
+                                        dm_screen=dm_screen)
+                + PAWutils.getkSharpLocal(cell, dm_build, mydf.aoOnR_tilde, mydf.mesh,
                                           mydf.PAWdata_K, Periodic=mydf.Periodic, spin=spin)
-                + PAWutils.getkSmoothLocal(cell, dm, mydf.aoOnR_tilde, mydf.mesh,
+                + PAWutils.getkSmoothLocal(cell, dm_build, mydf.aoOnR_tilde, mydf.mesh,
                                            mydf.PAWdata_K, Periodic=mydf.Periodic, spin=spin))
         logger.timer(mydf, 'vk ISDF', *cpu0)
-        vk = vk_spins[0] if nset == 1 else numpy.array(vk_spins)
+
+        # The cached K and D_prev are only worth their nao^2 buffers if a later build
+        # can read them: freq <= 1 never increments and the shutoff is sticky. When
+        # they are not wanted, skip the stack and the defensive copy below too.
+        # want_cache False implies fresh, so vk_full is never None where it is used.
+        want_cache = (freq > 1) and not mydf._k_stopped
+        vk_full = numpy.asarray(vk_spins) if want_cache else None
+
+        if not fresh:
+            # E_K = -1/4 tr(D K) restricted, -1/2 sum_s tr(D_s K_s) unrestricted.
+            mydf._k_last_de = abs((0.25 if nset == 1 else 0.5)
+                                  * float(numpy.einsum('sij,sji->',
+                                                       numpy.asarray(dm)[:, 0],
+                                                       vk_full)))
+            vk_full = vk_full + mydf._k_vk_last
+        logger.debug1(mydf, 'vk build %d: %s, |ddm| = %.3e', idx,
+                      'rebuild' if fresh else 'increment',
+                      0.0 if fresh else float(numpy.linalg.norm(dm_build)))
+
+        mydf._k_last_was_fresh = fresh          # so callers need not re-derive it
+        if want_cache:
+            # D_prev advances on EVERY build: the increment is against the previous
+            # iteration, not the last rebuild, so it shrinks as the SCF converges.
+            mydf._k_vk_last = vk_full
+            mydf._k_dm_last = numpy.array(dm)   # plain copy; drops tag_array tags
+        else:
+            mydf._k_vk_last = mydf._k_dm_last = None
+        mydf._k_build_index += 1
+
+        if want_cache:
+            # Copy: _k_vk_last is the running reference and must not alias the result.
+            vk = vk_full[0].copy() if nset == 1 else vk_full.copy()
+        else:
+            vk = vk_spins[0] if nset == 1 else numpy.asarray(vk_spins)
     return vj, vk
 
 class PAW(FFTDF):
@@ -337,7 +411,8 @@ class PAW(FFTDF):
         'use_new_comp_charge', 'Times_', 'smoothCell', 'mg_ni', 'aoOnR_tilde',
         'mesh', 'PAWdata', 'PAWNucdata', 'Rgrid', 'cell', 'pcell', 'gcell',
         'ctr_coeff', 'alpha0', 'scf_iter', 'kmesh', 'method',
-        'with_isdf_k', 'isdf_args', 'PAWdata_K', 'gaussgrid'
+        'with_isdf_k', 'isdf_args', 'PAWdata_K', 'gaussgrid', 'k_rebuild_freq',
+        'k_incremental_start', 'k_incremental_stop', 'k_dynamic_screen'
     }
 
     def __init__(
@@ -356,7 +431,11 @@ class PAW(FFTDF):
             auto_box=True,
             use_new_comp_charge=True,
             with_isdf_k=False,
-            isdf_args=None
+            isdf_args=None,
+            k_rebuild_freq=1,
+            k_incremental_start=3,
+            k_incremental_stop=0.0,
+            k_dynamic_screen=False
     ):
         
         self.scf_iter = 0
@@ -391,6 +470,54 @@ class PAW(FFTDF):
         self.use_new_comp_charge = use_new_comp_charge
         self.with_isdf_k = with_isdf_k
         self.isdf_args = isdf_args
+
+        # K builds between full rebuilds. DEFAULT 1 = incremental path OFF,
+        # reproducing the pre-incremental code bit for bit.
+        #
+        # Off because it was measured and does not pay. The screen works -- on C10H22
+        # it drops 43% of pairs and 31% of the K build per iteration, better than
+        # ORCA's 19.5% on the same molecule -- but the incremental K is not a function
+        # of D, so the converged energy jitters at ~isdf_tol and the SCF takes 11
+        # iterations against 9. The extra iterations cost more than the K saving.
+        # ORCA gets 1.23x here with no extra iterations because it screens on a
+        # rigorous Schwarz bound (~1e-10), where survivor churn stays under conv_tol.
+        # Raise this only with conv_tol raised too (10*isdf_tol or looser).
+        # Measurements: molecule-tests/incremental_k_bench.py.
+        if int(k_rebuild_freq) != k_rebuild_freq or k_rebuild_freq < 1:
+            raise ValueError('k_rebuild_freq must be an integer >= 1, got %r'
+                             % (k_rebuild_freq,))
+        self.k_rebuild_freq = int(k_rebuild_freq)
+
+        # Build index of the first build allowed to be an increment; earlier ones
+        # are full. Early dD is larger than D itself, so screening it keeps MORE pairs
+        # than screening the density would -- on w7, build 3 survived 4257 pairs as an
+        # increment against 3731 as a full build. 0 disables the warmup.
+        if int(k_incremental_start) != k_incremental_start or k_incremental_start < 0:
+            raise ValueError('k_incremental_start must be an integer >= 0, got %r'
+                             % (k_incremental_start,))
+        self.k_incremental_start = int(k_incremental_start)
+
+        # Hartree threshold on |dE_K| below which increments stop for the rest of
+        # the SCF. DEFAULT 0 = disabled (moot while k_rebuild_freq is 1). None
+        # resolves lazily to gaussgrid.screen2.
+        #
+        # If you enable increments, do NOT use the screen2 default: on C10 it fires at
+        # build 9 of 13 and costs 15 iterations against 9, worse than no shutoff,
+        # because switching to a full K near convergence kicks the density and DIIS
+        # re-converges against a contaminated subspace. 100*isdf_tol measured best.
+        if k_incremental_stop is not None and k_incremental_stop < 0:
+            raise ValueError('k_incremental_stop must be >= 0 or None, got %r'
+                             % (k_incremental_stop,))
+        self.k_incremental_stop = k_incremental_stop
+
+        # Retune the screen each build to min(s_input, 0.1*|dE_K|), holding the
+        # screening error under the energy change being resolved. Measured on C10 it
+        # changes nothing: it only binds once |dE_K| is already small, by which point
+        # the accumulated error is spent and survivors sit at the unscreenable
+        # near/p=8 floor. Kept as a switch because the screening error scales as only
+        # ~screen_error^0.42, which is a two-point fit.
+        self.k_dynamic_screen = bool(k_dynamic_screen)
+        self.clear_k_cache()
         self.Times_ = {
             "Diagonalize":0.,
             "Exchange"   :0.,
@@ -436,6 +563,60 @@ class PAW(FFTDF):
         lib.StreamObject.check_sanity(self)
         # Suppress FFTDF.check_sanity because PAW mathematically corrects 
         # the all-electron and ke_cutoff issues locally.
+        return self
+
+    def _k_stop_threshold(self):
+        '''|dE_K| below which increments stop, in Hartree. Resolved lazily because
+        initPAW has not run in __init__ and gaussgrid does not exist yet. 0 or a
+        missing grid means no shutoff.'''
+        thr = self.k_incremental_stop
+        if thr is not None:
+            return float(thr)
+        return float(getattr(self.gaussgrid, 'screen2', 0.0) or 0.0)
+
+    def _apply_dynamic_screen(self):
+        """Set the grid's thresholds from the last increment's |dE_K|.
+
+        All three are screen_error times their screen_model coefficient, so they move
+        together and stay calibrated. Floored at 1e-13: |dE_K| reaches zero once the
+        density stops moving, and an unfloored rule would admit every pair.
+        """
+        g = self.gaussgrid
+        if g is None or self._k_last_de is None:
+            return
+        if self._k_screen_error0 is None:
+            self._k_screen_error0 = float(g.screen_error)
+        s = min(self._k_screen_error0, 0.1 * float(self._k_last_de))
+        s = max(s, 1e-13)
+        model = g.screen_model
+        g.screen_error = s
+        g.sparse_cutoff = s * model['sparse_cutoff']
+        g.screen1 = s * model['screen1']
+        g.screen2 = s * model['screen2']
+        return s
+
+    def clear_k_cache(self):
+        '''Drop the incremental-K state; the next build will be a full one.
+
+        Call before any get_jk that is not the next step of the SCF sequence, e.g. a
+        post-SCF diagnostic on a different density. An increment off a stale density
+        is still correct, but it is screened against a difference that is not small.
+        '''
+        self._k_vk_last = None        # running K, (nset, nao, nao)
+        self._k_dm_last = None        # D_prev, (nset, nk, nao, nao)
+        self._k_build_index = 0       # monotone; drives the warmup and the period
+        self._k_stopped = False       # sticky: the shutoff never un-fires
+        self._k_last_de = None        # |dE_K| of the last increment
+        self._k_screen_error0 = None  # input screen_error, for the dynamic min()
+
+    def reset(self, cell=None):
+        # FFTDF.reset only swaps the cell and clears _rsh_df, which would leave both
+        # the K cache and the XC pass's vj1 cache keyed to the OLD geometry. _DFHF.reset
+        # does reach us (pyscf/df/df_jk.py), so this is the hook that matters.
+        super().reset(cell)
+        self.clear_k_cache()
+        self._cached_vj1 = None
+        self._cached_vj1_dm = None
         return self
 
     def get_jk(self, dm, hermi=1, kpts=None, kpts_band=None,

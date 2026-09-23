@@ -381,8 +381,9 @@ def build_isdf_grid(cell, alpha0, gmolSph, mesh, isdf_args=None, log_obj=None):
     return grid, numpy.asarray(pivots)
 
 
-def getkSmoothISDF(cell, dm, gaussgrid, PAWdata_K, Periodic=False, spin=0):
-    '''The smooth (grid) part of K, plus the grid-mediated augmentation coupling.
+def getkSmoothISDF(cell, dm, gaussgrid, PAWdata_K, Periodic=False, spin=0,
+                   dm_screen=None):
+    """The smooth (grid) part of K, plus the grid-mediated augmentation coupling.
 
     This is the whole ISDF exchange engine: compute_paw_exchange runs terms 1, 2/3
     and 4 -- the smooth-smooth pivot exchange and both compensating-charge couplings
@@ -392,7 +393,16 @@ def getkSmoothISDF(cell, dm, gaussgrid, PAWdata_K, Periodic=False, spin=0):
     Port of pawisdf's PAWutils.getkSmoothISDF, with the restricted-only
     `dm[0,0]/2 ... *2` replaced by _dm_channel so one spin channel of a UKS density
     matrix works too.
-    '''
+
+    `dm_screen` is the incremental path. None means screen on the matrix being built
+    from (the full build). Pass it and `dm` is a density DIFFERENCE consumed by the
+    arithmetic, while `dm_screen` is used only by Screen 1 and Screen 2 -- the screens
+    estimate an ENERGY, quadratic in the density, where K is linear, so a difference
+    in both slots would be judged by O(dD^2) and prune pairs that still matter.
+
+    Both go through _dm_channel: it halves a restricted dm, and halving only one
+    would move the screen's operating point by a factor of two.
+    """
     if Periodic:
         raise NotImplementedError(
             'ISDF exchange is gamma-point/molecular only: the grid uses a truncated, '
@@ -403,5 +413,9 @@ def getkSmoothISDF(cell, dm, gaussgrid, PAWdata_K, Periodic=False, spin=0):
     # covers the tuple PAW built at setup; this covers every call site thereafter.
     require_grid_kind(PAWdata_K, 'pivot', 'getkSmoothISDF')
     dm_k, scale = _dm_channel(dm, spin)
-    K = gaussgrid.compute_paw_exchange(dm_k, PAWdata_K)
+    if dm_screen is None:
+        K = gaussgrid.compute_paw_exchange(dm_k, PAWdata_K)
+    else:
+        dm_s, _ = _dm_channel(dm_screen, spin)
+        K = gaussgrid.compute_paw_exchange(dm_k, PAWdata_K, dm_screen=dm_s)
     return K * scale
