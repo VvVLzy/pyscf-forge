@@ -70,6 +70,19 @@ def prepareMolForPAW(mol, auto_box=False):
     else:
         raise ValueError("mol.a must be defined or auto_box must be True")
 
+    if not auto_box:
+        # A user-supplied box is kept as given, but the truncated Coulomb kernel is
+        # only exact if its sphere fits (see fit_truncated_coulomb_box).
+        lv = mol.lattice_vectors()
+        box_bohr = lv.diagonal()
+        if numpy.allclose(lv, numpy.diag(box_bohr)):
+            need, Rc, diameter, _ = fit_truncated_coulomb_box(mol, box_bohr)
+            if numpy.any(need > box_bohr + 1e-8):
+                logger.warn(mol, "PAW box %s Bohr is too small for the truncated Coulomb kernel "
+                            "(Rc = %.2f Bohr, density diameter %.2f Bohr): J and the nuclear "
+                            "term pick up periodic-image errors. Use at least %s Bohr, or auto_box=True.",
+                            box_bohr.round(2), box_bohr.max()/2., diameter, need.round(2))
+
     # verbose is carried over deliberately. This Cell replaces the caller's for the
     # rest of the run, so anything that logs against it -- getPAWdata's AO-eval timer,
     # paw_isdf's grid diagnostics -- was silently muted at pyscf's default level 3
@@ -283,16 +296,9 @@ def get_gaussian_radius(alpha, l, eps):
     if len(idx) == 0: return 0.0
     return r[idx[-1]]
 
-def estimate_box_size(mol, epsilon=1e-13):
-    """
-    Estimates the required box size to contain a molecule's basis functions
-    up to a threshold epsilon. Returns the box lengths in Angstrom.
-    """
-    coords = mol.atom_coords() # Returns coords in Bohr
-    natm = mol.natm
-    atom_radii = numpy.zeros(natm)
-    
-    # Find max radius for each atom
+def get_atom_radii(mol, epsilon):
+    '''Per-atom radius (Bohr) beyond which every primitive on the atom is below epsilon.'''
+    atom_radii = numpy.zeros(mol.natm)
     for ib in range(mol.nbas):
         ia = mol.bas_atom(ib)
         l = mol.bas_angular(ib)
@@ -300,14 +306,66 @@ def estimate_box_size(mol, epsilon=1e-13):
         alpha_min = numpy.min(mol.bas_exp(ib))
         r = get_gaussian_radius(alpha_min, l, epsilon)
         atom_radii[ia] = max(atom_radii[ia], r)
-    
+    return atom_radii
+
+def fit_truncated_coulomb_box(mol, box_lengths_bohr, rho_epsilon=1e-6):
+    '''
+    Grow an orthorhombic box (Bohr) until getFormFactor_Truncated is exact for the
+    molecule's density. Returns (box_lengths_bohr, Rc, diameter, extent).
+
+    getFormFactor_Truncated is the spherically truncated Coulomb kernel with
+    Rc = max(L)/2. On the periodic FFT box it reproduces the open-boundary Hartree
+    energy of a charge with diameter D and per-axis extent D_i iff
+        Rc >= D            every real pair lies inside the sphere, and
+        L_i >= Rc + D_i    no periodic image does.
+    auto_box alone only contains the AOs, so on a long molecule Rc = L_long/2
+    overtakes the short edges and every charge feels its own images (C21H44:
+    +981 Ha in E_J). The axis that is longest after the per-axis growth is set to
+    2*Rc so that max(L)/2 is the Rc assumed here.
+
+    The charge is the density, so each atom's extent is where its most diffuse
+    primitive squared falls to rho_epsilon. A pair the kernel gets wrong needs both
+    points out in the tails, so the energy error scales roughly as rho_epsilon**2:
+    a tail model of C5/C11/C21H44 gives ~1e-10 Ha at 1e-5 and 1e-6, 1e-7 Ha at 1e-4.
+    '''
+    box = numpy.array(box_lengths_bohr, dtype=float)
+    coords = mol.atom_coords()
+    radii = get_atom_radii(mol, numpy.sqrt(rho_epsilon))
+    extent = numpy.max(coords + radii[:, None], axis=0) - numpy.min(coords - radii[:, None], axis=0)
+    # Largest |r1 - r2| over the density: max over atom pairs of |Ra - Rb| + ra + rb.
+    # One row at a time keeps memory O(natm).
+    diameter = max(numpy.max(numpy.linalg.norm(coords - coords[a], axis=1) + radii) + radii[a]
+                   for a in range(mol.natm))
+    Rc = max(box.max()/2., diameter)
+    box = numpy.maximum(box, Rc + extent)
+    # Every entry is now <= 2*Rc, so this only ever grows the box.
+    box[numpy.argmax(box)] = 2.*Rc
+    return box, Rc, diameter, extent
+
+def estimate_box_size(mol, epsilon=1e-13, rho_epsilon=1e-6):
+    """
+    Estimates the required box size to contain a molecule's basis functions
+    up to a threshold epsilon, grown where needed so that the truncated Coulomb
+    kernel is exact for the density (see fit_truncated_coulomb_box).
+    Returns the box lengths in Angstrom.
+    """
+    coords = mol.atom_coords() # Returns coords in Bohr
+    atom_radii = get_atom_radii(mol, epsilon)
+
     # Calculate bounds in Bohr
     lower = numpy.min(coords - atom_radii[:, None], axis=0)
     upper = numpy.max(coords + atom_radii[:, None], axis=0)
-    
+
     # Add a small buffer (e.g., 1.0 Bohr)
-    box_lengths_bohr = (upper - lower) + 1.0
-    
+    ao_box_bohr = (upper - lower) + 1.0
+
+    box_lengths_bohr, Rc, diameter, extent = fit_truncated_coulomb_box(
+        mol, ao_box_bohr, rho_epsilon=rho_epsilon)
+    if numpy.any(box_lengths_bohr > ao_box_bohr + 1e-8):
+        logger.info(mol, "auto_box: AO box %s Bohr grown to %s Bohr so the truncated Coulomb "
+                    "sphere fits (Rc = %.2f Bohr, density diameter %.2f Bohr, extent %s Bohr)",
+                    ao_box_bohr.round(2), box_lengths_bohr.round(2), Rc, diameter, extent.round(2))
+
     # Convert to Angstrom for consistency with your script units
     from pyscf.data.nist import BOHR
     return box_lengths_bohr * BOHR
