@@ -343,13 +343,12 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         fresh = ((not have_cache) or freq <= 1 or idx < start or mydf._k_stopped
                  or ((idx - start) % freq == 0 and idx > start))
 
+        # The grid's density screen is linear in D, so an increment is screened on its
+        # own -- no second density rides along.
         if fresh:
-            dm_build, dm_screen = dm, None      # None: screen on what we build from
+            dm_build = dm
         else:
             dm_build = numpy.asarray(dm) - mydf._k_dm_last
-            # D_new, not D_prev: Q is linear, so <Q(D_new),Q(dD)> is the cross term
-            # plus ||Q(dD)||^2, both for one contraction.
-            dm_screen = dm
 
         if getattr(mydf, 'k_dynamic_screen', False):
             _s = mydf._apply_dynamic_screen()
@@ -361,8 +360,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         for spin in range(nset):
             vk_spins.append(
                 paw_isdf.getkSmoothISDF(cell, dm_build, mydf.gaussgrid, mydf.PAWdata_K,
-                                        Periodic=mydf.Periodic, spin=spin,
-                                        dm_screen=dm_screen)
+                                        Periodic=mydf.Periodic, spin=spin)
                 + PAWutils.getkSharpLocal(cell, dm_build, mydf.aoOnR_tilde, mydf.mesh,
                                           mydf.PAWdata_K, Periodic=mydf.Periodic, spin=spin)
                 + PAWutils.getkSmoothLocal(cell, dm_build, mydf.aoOnR_tilde, mydf.mesh,
@@ -499,11 +497,12 @@ class PAW(FFTDF):
 
         # Hartree threshold on |dE_K| below which increments stop for the rest of
         # the SCF. DEFAULT 0 = disabled (moot while k_rebuild_freq is 1). None
-        # resolves lazily to gaussgrid.screen2.
+        # resolves lazily to gaussgrid.screen_error.
         #
-        # If you enable increments, do NOT use the screen2 default: on C10 it fires at
-        # build 9 of 13 and costs 15 iterations against 9, worse than no shutoff,
-        # because switching to a full K near convergence kicks the density and DIIS
+        # If you enable increments, do NOT rely on a threshold that small: the old
+        # None default (gaussgrid.screen2, 5e-5 at the defaults) fired at build 9 of 13
+        # on C10 and cost 15 iterations against 9, worse than no shutoff, because
+        # switching to a full K near convergence kicks the density and DIIS
         # re-converges against a contaminated subspace. 100*isdf_tol measured best.
         if k_incremental_stop is not None and k_incremental_stop < 0:
             raise ValueError('k_incremental_stop must be >= 0 or None, got %r'
@@ -572,12 +571,12 @@ class PAW(FFTDF):
         thr = self.k_incremental_stop
         if thr is not None:
             return float(thr)
-        return float(getattr(self.gaussgrid, 'screen2', 0.0) or 0.0)
+        return float(getattr(self.gaussgrid, 'screen_error', 0.0) or 0.0)
 
     def _apply_dynamic_screen(self):
         """Set the grid's thresholds from the last increment's |dE_K|.
 
-        All three are screen_error times their screen_model coefficient, so they move
+        Both are screen_error times their screen_model coefficient, so they move
         together and stay calibrated. Floored at 1e-13: |dE_K| reaches zero once the
         density stops moving, and an unfloored rule would admit every pair.
         """
@@ -591,8 +590,7 @@ class PAW(FFTDF):
         model = g.screen_model
         g.screen_error = s
         g.sparse_cutoff = s * model['sparse_cutoff']
-        g.screen1 = s * model['screen1']
-        g.screen2 = s * model['screen2']
+        g.dm_screen = s * model['dm_screen']
         return s
 
     def clear_k_cache(self):
