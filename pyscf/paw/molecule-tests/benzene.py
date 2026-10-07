@@ -20,7 +20,7 @@ benzene = [[ 'C'  , ( 4.673795 ,   6.280948 , 0.00  ) ],
            [ 'H'  , ( 2.497289 ,   3.607068 , 0.00  ) ],
            [ 'H'  , ( 2.497289 ,   6.120281 , 0.00  ) ]]
 
-verbose = 4
+verbose = 3
 ke_cutoff = 100
 init_guess = '1e'
 
@@ -49,9 +49,14 @@ mf_mol_paw = scf.RKS(mol).density_fit()
 mf_mol_paw.xc = 'pbe'
 mf_mol_paw.init_guess = init_guess
 mydf = PAW.from_mf(mf_mol_paw, cell,
-                    alpha0=None, augRadius=None, with_multigrid=2,
+                    alpha0={'H': None}, augRadius=None, with_multigrid=2,
                     alpha0_lowmem=True, auto_box=True).build()
 mf_mol_paw.with_df = mydf
+print(f"alpha0      : {str(mydf.alpha0)}")
+print(f"Rb          : {np.max(mydf.augRadius):10.2f}")
+print(f"Nelection   : {np.sum(mydf.cell.nelec)}")
+print(f"Ngrid points: {np.prod(mydf.cell.mesh):10d}")
+print(f"delta-a     : {(mydf.cell.vol/np.prod(mydf.cell.mesh))**(1./3.):10.2f}")
 # pawnumint = PAWNumInt(mydf, mf_mol_paw, use_merged_multigrid=True)
 # mf_mol_paw._numint = pawnumint # this works but is no better than the default vxc
 mf_mol_paw.kernel()

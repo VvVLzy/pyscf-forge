@@ -1,0 +1,181 @@
+geometric-optimize called with the following command line:
+optimize_mp2.py --basis cc-pvtz --maxsteps 60 --only butane
+
+                                        [91m())))))))))))))))/[0m                     
+                                    [91m())))))))))))))))))))))))),[0m                
+                                [91m*)))))))))))))))))))))))))))))))))[0m             
+                        [94m#,[0m    [91m()))))))))/[0m                [91m.)))))))))),[0m          
+                      [94m#%%%%,[0m  [91m())))))[0m                        [91m.))))))))*[0m        
+                      [94m*%%%%%%,[0m  [91m))[0m              [93m..[0m              [91m,))))))).[0m      
+                        [94m*%%%%%%,[0m         [93m***************/.[0m        [91m.)))))))[0m     
+                [94m#%%/[0m      [94m(%%%%%%,[0m    [93m/*********************.[0m       [91m)))))))[0m    
+              [94m.%%%%%%#[0m      [94m*%%%%%%,[0m  [93m*******/,[0m     [93m**********,[0m      [91m.))))))[0m   
+                [94m.%%%%%%/[0m      [94m*%%%%%%,[0m  [93m**[0m              [93m********[0m      [91m.))))))[0m  
+          [94m##[0m      [94m.%%%%%%/[0m      [94m(%%%%%%,[0m                  [93m,******[0m      [91m/)))))[0m  
+        [94m%%%%%%[0m      [94m.%%%%%%#[0m      [94m*%%%%%%,[0m    [92m,/////.[0m       [93m******[0m      [91m))))))[0m 
+      [94m#%[0m      [94m%%[0m      [94m.%%%%%%/[0m      [94m*%%%%%%,[0m  [92m////////,[0m      [93m*****/[0m     [91m,)))))[0m 
+    [94m#%%[0m  [94m%%%[0m  [94m%%%#[0m      [94m.%%%%%%/[0m      [94m(%%%%%%,[0m  [92m///////.[0m     [93m/*****[0m      [91m))))).[0m
+  [94m#%%%%.[0m      [94m%%%%%#[0m      [94m/%%%%%%*[0m      [94m#%%%%%%[0m   [92m/////)[0m     [93m******[0m      [91m))))),[0m
+    [94m#%%%%##%[0m  [94m%%%#[0m      [94m.%%%%%%/[0m      [94m(%%%%%%,[0m  [92m///////.[0m     [93m/*****[0m      [91m))))).[0m
+      [94m##[0m     [94m%%%[0m      [94m.%%%%%%/[0m      [94m*%%%%%%,[0m  [92m////////.[0m      [93m*****/[0m     [91m,)))))[0m 
+        [94m#%%%%#[0m      [94m/%%%%%%/[0m      [94m(%%%%%%[0m      [92m/)/)//[0m       [93m******[0m      [91m))))))[0m 
+          [94m##[0m      [94m.%%%%%%/[0m      [94m(%%%%%%,[0m                  [93m*******[0m      [91m))))))[0m  
+                [94m.%%%%%%/[0m      [94m*%%%%%%,[0m  [93m**.[0m             [93m/*******[0m      [91m.))))))[0m  
+              [94m*%%%%%%/[0m      [94m(%%%%%%[0m   [93m********/*..,*/*********[0m       [91m*))))))[0m   
+                [94m#%%/[0m      [94m(%%%%%%,[0m    [93m*********************/[0m        [91m)))))))[0m    
+                        [94m*%%%%%%,[0m         [93m,**************/[0m         [91m,))))))/[0m     
+                      [94m(%%%%%%[0m   [91m()[0m                              [91m))))))))[0m       
+                      [94m#%%%%,[0m  [91m())))))[0m                        [91m,)))))))),[0m        
+                        [94m#,[0m    [91m())))))))))[0m                [91m,)))))))))).[0m          
+                                 [91m()))))))))))))))))))))))))))))))/[0m             
+                                    [91m())))))))))))))))))))))))).[0m                
+                                         [91m())))))))))))))),[0m                     
+
+-=# [1;94m geomeTRIC started. Version: 1.1.1 [0m #=-
+Current date and time: 2026-08-18 23:54:44
+#========================================================#
+#| [92m    Arguments passed to driver run_optimizer():     [0m |#
+#========================================================#
+customengine              <pyscf.geomopt.geometric_solver.PySCFEngine object at 0x753b74639ca0> 
+input                     /tmp/pyscf-468/tmpmhrz3tks/fb70e6d4-5a19-45ee-9c54-ba8ed91357ff 
+logIni                    /home/htuckman/gaussenv/lib/python3.12/site-packages/pyscf/geomopt/log.ini 
+maxiter                   60 
+----------------------------------------------------------
+Custom engine selected.
+Bonds will be generated from interatomic distances less than 1.20 times sum of covalent radii
+42 internal coordinates being used (instead of 42 Cartesians)
+Internal coordinate system (atoms numbered from 1):
+Distance 1-2
+Distance 1-5
+Distance 1-6
+Distance 1-7
+Distance 2-3
+Distance 2-8
+Distance 2-9
+Distance 3-4
+Distance 3-10
+Distance 3-11
+Distance 4-12
+Distance 4-13
+Distance 4-14
+Angle 2-1-5
+Angle 2-1-6
+Angle 2-1-7
+Angle 5-1-6
+Angle 5-1-7
+Angle 6-1-7
+Angle 1-2-3
+Angle 1-2-8
+Angle 1-2-9
+Angle 3-2-8
+Angle 3-2-9
+Angle 8-2-9
+Angle 2-3-4
+Angle 2-3-10
+Angle 2-3-11
+Angle 4-3-10
+Angle 4-3-11
+Angle 10-3-11
+Angle 3-4-12
+Angle 3-4-13
+Angle 3-4-14
+Angle 12-4-13
+Angle 12-4-14
+Angle 13-4-14
+Dihedral 5-1-2-3
+Dihedral 5-1-2-8
+Dihedral 5-1-2-9
+Dihedral 6-1-2-3
+Dihedral 6-1-2-8
+Dihedral 6-1-2-9
+Dihedral 7-1-2-3
+Dihedral 7-1-2-8
+Dihedral 7-1-2-9
+Dihedral 1-2-3-4
+Dihedral 1-2-3-10
+Dihedral 1-2-3-11
+Dihedral 8-2-3-4
+Dihedral 8-2-3-10
+Dihedral 8-2-3-11
+Dihedral 9-2-3-4
+Dihedral 9-2-3-10
+Dihedral 9-2-3-11
+Dihedral 2-3-4-12
+Dihedral 2-3-4-13
+Dihedral 2-3-4-14
+Dihedral 10-3-4-12
+Dihedral 10-3-4-13
+Dihedral 10-3-4-14
+Dihedral 11-3-4-12
+Dihedral 11-3-4-13
+Dihedral 11-3-4-14
+Translation-X 1-14
+Translation-Y 1-14
+Translation-Z 1-14
+Rotation-A 1-14
+Rotation-B 1-14
+Rotation-C 1-14
+<class 'geometric.internal.Distance'> : 13
+<class 'geometric.internal.Angle'> : 24
+<class 'geometric.internal.Dihedral'> : 27
+<class 'geometric.internal.TranslationX'> : 1
+<class 'geometric.internal.TranslationY'> : 1
+<class 'geometric.internal.TranslationZ'> : 1
+<class 'geometric.internal.RotationA'> : 1
+<class 'geometric.internal.RotationB'> : 1
+<class 'geometric.internal.RotationC'> : 1
+> ===== Optimization Info: ====
+> Job type: Energy minimization
+> Maximum number of optimization cycles: 60
+> Initial / maximum trust radius (Angstrom): 0.100 / 0.300
+> Convergence Criteria:
+> Will converge when all 5 criteria are reached:
+>  |Delta-E| < 1.00e-06
+>  RMS-Grad  < 3.00e-04
+>  Max-Grad  < 4.50e-04
+>  RMS-Disp  < 1.20e-03
+>  Max-Disp  < 1.80e-03
+> === End Optimization Info ===
+Step    0 : Gradient = 4.000e-03/4.960e-03 (rms/max) Energy = -158.0733667944
+Hessian Eigenvalues: 2.30000e-02 2.30000e-02 2.30000e-02 ... 3.41284e-01 3.41284e-01 3.41284e-01
+Step    1 : Displace = [0m1.275e-02[0m/[0m1.732e-02[0m (rms/max) Trust = 1.000e-01 (=) Grad = [0m8.939e-04[0m/[0m1.986e-03[0m (rms/max) E (change) = -158.0739017067 ([0m-5.349e-04[0m) Quality = [0m1.026[0m
+Hessian Eigenvalues: 2.30000e-02 2.30000e-02 2.30000e-02 ... 3.41284e-01 3.41284e-01 3.67925e-01
+Step    2 : Displace = [0m2.114e-03[0m/[0m2.870e-03[0m (rms/max) Trust = 1.414e-01 ([92m+[0m) Grad = [92m2.672e-04[0m/[0m5.756e-04[0m (rms/max) E (change) = -158.0739184621 ([0m-1.676e-05[0m) Quality = [0m1.167[0m
+Hessian Eigenvalues: 2.30000e-02 2.30000e-02 2.30000e-02 ... 3.41284e-01 3.43376e-01 3.49560e-01
+Step    3 : Displace = [92m4.993e-04[0m/[92m7.073e-04[0m (rms/max) Trust = 2.000e-01 ([92m+[0m) Grad = [92m4.939e-05[0m/[92m9.235e-05[0m (rms/max) E (change) = -158.0739198241 ([0m-1.362e-06[0m) Quality = [0m1.024[0m
+Hessian Eigenvalues: 2.30000e-02 2.30000e-02 2.30000e-02 ... 3.41284e-01 3.42960e-01 3.59313e-01
+Step    4 : Displace = [92m7.686e-05[0m/[92m1.268e-04[0m (rms/max) Trust = 2.828e-01 ([92m+[0m) Grad = [92m1.574e-05[0m/[92m2.845e-05[0m (rms/max) E (change) = -158.0739197869 ([92m+3.716e-08[0m) Quality = [91m-1.310[0m
+Hessian Eigenvalues: 2.30000e-02 2.30000e-02 2.30000e-02 ... 3.41284e-01 3.42960e-01 3.59313e-01
+Converged! =D
+
+    #==========================================================================#
+    #| If this code has benefited your research, please support us by citing: |#
+    #|                                                                        |#
+    #| Wang, L.-P.; Song, C.C. (2016) "Geometry optimization made simple with |#
+    #| translation and rotation coordinates", J. Chem, Phys. 144, 214108.     |#
+    #| http://dx.doi.org/10.1063/1.4952956                                    |#
+    #==========================================================================#
+    Time elapsed since start of run_optimizer: 302.355 seconds
+	Command being timed: "python optimize_mp2.py --basis cc-pvtz --maxsteps 60 --only butane"
+	User time (seconds): 2360.35
+	System time (seconds): 250.31
+	Percent of CPU this job got: 708%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 6:08.43
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 20540652
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 30041
+	Minor (reclaiming a frame) page faults: 3394875
+	Voluntary context switches: 51270
+	Involuntary context switches: 68935
+	Swaps: 0
+	File system inputs: 909248
+	File system outputs: 273384
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

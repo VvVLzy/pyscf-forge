@@ -21,7 +21,7 @@ L = 20
 rscales = [1.]
 
 # other params
-verbose     = 4
+verbose     = 0
 aa          = L
 a           = np.eye(3) * aa
 
@@ -51,14 +51,22 @@ def get_systems(zeta, ke_cutoff):
     return mol, cell
 
 def single_point(mol, cell):
+    # exact calculation
+    mf_mol_exact = scf.RKS(mol)
+    mf_mol_exact.xc = xc
+    mf_mol_exact.init_guess = init_guess
+    mf_mol_exact.kernel()
+    
     # paw calculation
     mf_mol_paw = scf.RKS(mol).density_fit()
     mf_mol_paw.xc = xc
     mf_mol_paw.init_guess = init_guess
     mydf = PAW.from_mf(mf_mol_paw, cell,
-                        alpha0=None, augRadius=None, with_multigrid=2).build()
+                        alpha0={'N': 10}, augRadius=None, with_multigrid=2).build()
     mf_mol_paw.with_df = mydf
-    print(mydf.alpha0)
+    mf_mol_paw.kernel()
+    
+    print(mf_mol_exact.e_tot - mf_mol_paw.e_tot)
 
 
 def exact_paw_diff(mol, cell, ke_cutoff):
@@ -308,4 +316,6 @@ def main():
                 alpha0_j_scan(mol, cell, zeta, ke_cutoff, args.alpha0_list)
 
 if __name__ == '__main__':
-    main()
+    # main()
+    mol, cell = get_systems('dz', 150)
+    single_point(mol, cell)

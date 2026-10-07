@@ -1,0 +1,36 @@
+ 
+:: initializing oneAPI environment ...
+   slurm_script: BASH_VERSION = 5.2.21(1)-release
+   args: Using "$@" for setvars.sh arguments: 
+:: advisor -- latest
+:: ccl -- latest
+:: compiler -- latest
+:: dal -- latest
+:: debugger -- latest
+:: dev-utilities -- latest
+:: dnnl -- latest
+:: dpcpp-ct -- latest
+:: dpl -- latest
+:: ipp -- latest
+:: ippcp -- latest
+:: mkl -- latest
+:: mpi -- latest
+:: tbb -- latest
+:: tcm -- latest
+:: umf -- latest
+:: vtune -- latest
+:: oneAPI environment initialized ::
+ 
+host      : Fermion35
+job       : 458  partition=main
+threads   : 8  (cores available: 8, logical CPUs: 16)
+python    : /home/htuckman/gaussenv/bin/python
+started   : 2026-08-18T11:51:38-07:00
+-----------------------------------------------------------------
+1 molecules, MP2(FC)/cc-pvtz, frozen core = True
+[1/1] neon (1 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/neon.log
+E = -128.796184  single point (no d.o.f.)  0s
+
+done: 1 optimized, 0 failed
+-----------------------------------------------------------------
+finished  : 2026-08-18T11:51:38-07:00

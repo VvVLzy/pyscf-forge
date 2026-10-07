@@ -676,32 +676,36 @@ def calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0_input, PWAccuracy, Periodic,
             L_inv = numpy.linalg.inv(L)
             
         for el in elements:
-            if el in alpha0_input:
-                val = alpha0_input[el]
-                if val is None and neighbor_list is not None and mol is not None:
-                    # Calculate min distance
-                    type_indices = [i for i in range(mol.natm) if mol.atom_symbol(i) == el]
-                    min_dist = float('inf')
-                    for i in type_indices:
-                        for j in neighbor_list[i]:
-                            if i == j or mol.atom_symbol(j) not in alpha0_input: continue
-                            diff = coords[i] - coords[j]
-                            if Periodic:
-                                frac_diff = numpy.dot(diff, L_inv)
-                                frac_diff -= numpy.round(frac_diff)
-                                diff = numpy.dot(frac_diff, L)
-                            dist = numpy.linalg.norm(diff)
-                            if dist < min_dist:
-                                min_dist = dist
-                    
-                    if min_dist != float('inf'):
-                        print(f"Smallest nearest neighbor distance for element {el}: {min_dist:.4f} Bohr")
-                        val = solve_alpha(min_dist / 2.0)
-                        print(f"Calculated alpha0 for {el} based on Rb={min_dist/2.0:.4f}: {val:.4f}")
-                    else:
-                        val = alpha0_ref # Fallback if no neighbors found
-            else:
+            if not el in alpha0_input:
+                # val = alpha0_input[el]
+                # if val is None and neighbor_list is not None and mol is not None:
+                assert(neighbor_list is not None and mol is not None)
+                # Calculate min distance
+                type_indices = [i for i in range(mol.natm) if mol.atom_symbol(i) == el]
+                min_dist = float('inf')
+                for i in type_indices:
+                    for j in neighbor_list[i]:
+                        if i == j or mol.atom_symbol(j) in alpha0_input: continue
+                        diff = coords[i] - coords[j]
+                        if Periodic:
+                            frac_diff = numpy.dot(diff, L_inv)
+                            frac_diff -= numpy.round(frac_diff)
+                            diff = numpy.dot(frac_diff, L)
+                        dist = numpy.linalg.norm(diff)
+                        if dist < min_dist:
+                            min_dist = dist
+                
+                if min_dist != float('inf'):
+                    print(f"Smallest nearest neighbor distance for element {el}: {min_dist:.4f} Bohr")
+                    val = solve_alpha(min_dist / 2.0)
+                    print(f"Calculated alpha0 for {el} based on Rb={min_dist/2.0:.4f}: {val:.4f}")
+                else:
+                    val = alpha0_ref # Fallback if no neighbors found
+            elif alpha0_input[el] is None:
                 val = alpha0_ref
+            else:
+                val = alpha0_input[el]
+                assert(isinstance(val, float))
                 
             alpha0_dict[el] = val
             if val > alpha0_ref:

@@ -1,0 +1,76 @@
+ 
+:: initializing oneAPI environment ...
+   slurm_script: BASH_VERSION = 5.2.21(1)-release
+   args: Using "$@" for setvars.sh arguments: 
+:: advisor -- latest
+:: ccl -- latest
+:: compiler -- latest
+:: dal -- latest
+:: debugger -- latest
+:: dev-utilities -- latest
+:: dnnl -- latest
+:: dpcpp-ct -- latest
+:: dpl -- latest
+:: ipp -- latest
+:: ippcp -- latest
+:: mkl -- latest
+:: mpi -- latest
+:: tbb -- latest
+:: tcm -- latest
+:: umf -- latest
+:: vtune -- latest
+:: oneAPI environment initialized ::
+ 
+host      : Fermion35
+job       : 457  partition=main
+threads   : 8  (cores available: 8, logical CPUs: 16)
+python    : /home/htuckman/gaussenv/bin/python
+started   : 2026-08-18T11:18:43-07:00
+-----------------------------------------------------------------
+21 molecules, MP2(FC)/cc-pvtz, frozen core = True
+[1/21] hydrogen_cyanide (3 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/hydrogen_cyanide.log
+E = -93.253589  4 steps  |g|max = 4.2e-06  3s
+[2/21] acetylene (4 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/acetylene.log
+E = -77.159196  3 steps  |g|max = 1.0e-05  4s
+[3/21] formaldehyde (4 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/formaldehyde.log
+E = -114.307198  6 steps  |g|max = 1.6e-05  8s
+[4/21] fluoromethane (5 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/fluoromethane.log
+E = -139.528578  4 steps  |g|max = 2.0e-06  10s
+[5/21] formic_acid (5 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/formic_acid.log
+E = -189.471134  6 steps  |g|max = 1.0e-04  27s
+[6/21] methanimine (5 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/methanimine.log
+E = -94.438795  6 steps  |g|max = 1.1e-05  14s
+[7/21] methyl_chloride (5 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/methyl_chloride.log
+E = -499.520239  3 steps  |g|max = 2.8e-04  10s
+[8/21] ethylene (6 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/ethylene.log
+E = -78.399306  5 steps  |g|max = 1.0e-06  18s
+[9/21] formamide (6 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/formamide.log
+E = -169.605449  7 steps  |g|max = 4.0e-05  45s
+[10/21] methanol (6 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/methanol.log
+E = -115.517475  5 steps  |g|max = 4.1e-05  19s
+[11/21] vinyl_fluoride (6 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/vinyl_fluoride.log
+E = -177.529174  7 steps  |g|max = 4.9e-05  46s
+[12/21] methylamine (7 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/methylamine.log
+E = -95.657699  5 steps  |g|max = 1.3e-04  31s
+[13/21] nitromethane (7 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/nitromethane.log
+E = -244.621097  6 steps  |g|max = 2.4e-05  99s
+[14/21] oxirane (7 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/oxirane.log
+E = -153.501120  5 steps  |g|max = 8.7e-05  51s
+[15/21] cyclobutadiene (8 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/cyclobutadiene.log
+E = -154.328522  5 steps  |g|max = 1.0e-04  107s
+[16/21] ethane (8 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/ethane.log
+E = -79.629908  4 steps  |g|max = 8.4e-06  36s
+[17/21] methyl_formate (8 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/methyl_formate.log
+E = -228.676395  7 steps  |g|max = 7.3e-05  109s
+[18/21] dimethyl_ether (9 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/dimethyl_ether.log
+E = -154.724567  4 steps  |g|max = 6.5e-05  86s
+[19/21] acetone (10 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/acetone.log
+E = -192.774850  6 steps  |g|max = 2.1e-05  169s
+[20/21] dimethyl_peroxide (10 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/dimethyl_peroxide.log
+E = -229.753530  7 steps  |g|max = 3.1e-05  193s
+[21/21] benzene (12 atoms) ... output file: /home/htuckman/Documents/refactor/Gausslets/Tuning/finalGeom/logs/benzene.log
+E = -231.729480  3 steps  |g|max = 4.6e-06  281s
+
+done: 21 optimized, 0 failed
+-----------------------------------------------------------------
+finished  : 2026-08-18T11:41:29-07:00
