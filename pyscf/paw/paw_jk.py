@@ -16,14 +16,14 @@ from functools import partial
 smart_einsum = partial(numpy.einsum, optimize='optimal')
 
 
-def getj_PAW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    J1 = getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
+def getj_PAW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False, coulomb_kernel=None):
+    J1 = getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic, coulomb_kernel=coulomb_kernel)
     J2 = getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
     J3 = getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=Periodic)
 
     return J1+J2+J3
 
-def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
+def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False, coulomb_kernel=None):
     # TODO: generalize to multiple k-points
     # use list of numpy arrays instead of jax arrays
     require_grid_kind(PAWdata, 'uniform', 'getjSmoothPW')
@@ -36,7 +36,6 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
 
         Ng = numpy.prod(mesh)
         dv = (cell.vol/Ng)
-        FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
         density = smart_einsum('ra,ab,rb->r', aoOnR_tilde.conj(), dm_val, aoOnR_tilde).real
 
         for atomI in range(cell._atm.shape[0]):
@@ -45,7 +44,7 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
             DPQtilde = smart_einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
             zg = smart_einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
             numpy.add.at(density, gridIdx[atomI], smart_einsum('L,rL->r', zg, gOnR[atomI]))
-        potential = numpy.fft.ifftn( FF * numpy.fft.fftn(density.reshape(mesh))).real.flatten()
+        potential, _ = solve_poisson(density, mesh, cell, Periodic, coulomb_kernel)
 
         Ji = smart_einsum('ra,r,rb->ab', aoOnR_tilde.conj(), potential, aoOnR_tilde)*dv
         assert(Ji.shape[0] == cell.nao)
@@ -67,7 +66,8 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         J = J[0]
     return J
 
-def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False, hermi=1, kpt=None):
+def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False, hermi=1, kpt=None,
+                         coulomb_kernel=None):
     GGA_METHOD = getattr(__config__, 'pbc_dft_multigrid_gga_method', 'FFT')
 
     if kpt is None:
@@ -147,7 +147,6 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
             vxc_G *= weight
 
     # Hartree Evaluation on pseudo-density + compensating charges
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
     
     J_all = []
     ecoul_total = 0.
@@ -171,11 +170,9 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         # print(f'Density augmentation takes {time.time() - start: .2f} seconds')
 
         # start = time.time()
-        rhoG_Ji = numpy.fft.fftn(rhoR_Ji.reshape(mesh)).flatten()
-        vG_Ji = rhoG_Ji * FF.flatten()
-        
-        # Use real-space integration for ecoul to ensure consistent scaling
-        potential_Ji = numpy.fft.ifftn(vG_Ji.reshape(mesh)).real.flatten()
+        potential_Ji, vG_Ji = solve_poisson(rhoR_Ji, mesh, cell, Periodic, coulomb_kernel)
+        vG_Ji = vG_Ji.flatten()
+        # ecoul by real-space integration, for consistent scaling
         # print(f'Poisson solve takes {time.time() - start: .2f} seconds')
         ecoul_total += 0.5 * numpy.dot(rhoR_Ji, potential_Ji) * dv
         
@@ -229,7 +226,7 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
 
     return nelec, excsum, ecoul_total, vxc_mat, vj_mat
 
-def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
+def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False, coulomb_kernel=None):
     t_start_total = time.time()
     require_grid_kind(PAWdata, 'uniform', 'getjSmoothPW2')
     localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR = PAWdata
@@ -237,7 +234,6 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
     nset = dm.shape[0]
     Ng = numpy.prod(mesh)
     dv = cell.vol / Ng
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
 
     # Pass 1: AO -> Grid (Smooth Density)
     # t0 = time.time()
@@ -263,8 +259,7 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
 
         # Poisson in G-space
         # t0 = time.time()
-        rhoG_total = numpy.fft.fftn(rhoR.reshape(mesh))
-        vG = rhoG_total * FF
+        potential, vG = solve_poisson(rhoR, mesh, cell, Periodic, coulomb_kernel)
         # print(f"[getjSmoothPW2] Set {i}: fftn for rhoG_total takes: {time.time() - t0:.4f} seconds")
         
         # Pass 2: Grid -> Matrix (Smooth Potential Integration)
@@ -277,7 +272,6 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False):
         
         # Local Matrix Corrections (zg2 terms)
         # t0 = time.time()
-        potential = numpy.fft.ifftn(vG).real.flatten()
         # print(f"[getjSmoothPW2] Set {i}: ifftn for potential takes: {time.time() - t0:.4f} seconds")
         
         # t0 = time.time()
@@ -473,22 +467,23 @@ def getkSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False, spin=0
 
 
 # PAW nuclear
-def getnuc_PAW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, mg_ni, Periodic=False, with_multigrid=2):
+def getnuc_PAW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, mg_ni, Periodic=False, with_multigrid=2,
+               coulomb_kernel=None):
     # cell, self.mesh, self.aoOnR_tilde, self.PAWdata, self.PAWNucdata, self.Periodic
     # nuc1 = getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic=Periodic)
                             #  cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic
     if with_multigrid > 0:
-        nuc1 = getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic)
+        nuc1 = getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic, coulomb_kernel=coulomb_kernel)
     else:
         assert(with_multigrid == 0)
-        nuc1 = getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic)
+        nuc1 = getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic, coulomb_kernel=coulomb_kernel)
     nuc2 = getNucPAWSharpLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic=Periodic)
     nuc3 = getNucPAWSmoothLocal(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic=Periodic)
 
     return nuc1+nuc2+nuc3
 
 
-def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic):
+def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic, coulomb_kernel=None):
     # TODO: generalize to multiple k-points
     
     require_grid_kind(PAWElecdata, 'uniform', 'getNucPAWSmoothPW')
@@ -497,13 +492,12 @@ def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic
 
     Ng = numpy.prod(mesh)
     f = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
     density = numpy.zeros((Ng,))
 
     for atomI in range(cell._atm.shape[0]):
         update = smart_einsum('g,rg->r', M_PQLarrNuc[atomI], gOnR[atomI])*ZNucArr[atomI]
         numpy.add.at(density, gridIdx[atomI], update)
-    potential = numpy.fft.ifftn( FF * numpy.fft.fftn(density.reshape(mesh))).real.flatten()
+    potential, _ = solve_poisson(density, mesh, cell, Periodic, coulomb_kernel)
 
     nuc = smart_einsum('ra,r,rb->ab', aoOnR_tilde, potential, aoOnR_tilde)*f
     assert(nuc.shape[0] == cell.nao)
@@ -521,7 +515,7 @@ def getNucPAWSmoothPW(cell, mesh, aoOnR_tilde, PAWElecdata, PAWNucdata, Periodic
     
     return numpy.array([nuc])
 
-def getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic):
+def getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic, coulomb_kernel=None):
     # TODO: generalize to multiple k-points
     
     require_grid_kind(PAWElecdata, 'uniform', 'getNucPAWSmoothPW2')
@@ -530,15 +524,13 @@ def getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic):
 
     Ng = numpy.prod(mesh)
     dv = (cell.vol/Ng)
-    FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
     rhoR = numpy.zeros((Ng,))
 
     for atomI in range(cell._atm.shape[0]):
         update = smart_einsum('g,rg->r', M_PQLarrNuc[atomI], gOnR[atomI])*ZNucArr[atomI]
         numpy.add.at(rhoR, gridIdx[atomI], update)
 
-    rhoG_total = numpy.fft.fftn(rhoR.reshape(mesh))
-    vG = rhoG_total * FF
+    potential, vG = solve_poisson(rhoR, mesh, cell, Periodic, coulomb_kernel)
     
     # Pass 2: Grid -> Matrix (Smooth Potential Integration)
     # Note: _get_j_pass2 expects vG * weight
@@ -547,7 +539,6 @@ def getNucPAWSmoothPW2(cell, mesh, mg_ni, PAWElecdata, PAWNucdata, Periodic):
     while nuc.ndim > 2:
         nuc = nuc[0]
 
-    potential = numpy.fft.ifftn(vG).real.flatten()
     for atomI in range(cell._atm.shape[0]):
         # compnuc-compOnA
         zg2 = smart_einsum('r,rL->L', potential[gridIdx[atomI]], gOnR[atomI])*dv

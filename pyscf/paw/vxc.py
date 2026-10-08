@@ -255,7 +255,8 @@ class PAWNumInt(NumInt):
                 # Call combined Hartree and XC multigrid pass
                 nelec1, exc1, ecoul1, vxc1, vj1 = get_vxc_and_j_smooth(
                     self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata, 
-                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt
+                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt,
+                    coulomb_kernel=getattr(self.mf.with_df, 'coulomb_kernel', None)
                 )
                 
                 # Cache vj1 for NewPAW.get_jk
@@ -399,7 +400,8 @@ class PAWNumInt(NumInt):
                 # Call combined Hartree and XC multigrid pass
                 nelec1, exc1, ecoul1, vxc1, vj1 = get_vxc_and_j_smooth(
                     self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata, 
-                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt
+                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt,
+                    coulomb_kernel=getattr(self.mf.with_df, 'coulomb_kernel', None)
                 )
                 
                 # Cache vj1 for NewPAW.get_jk

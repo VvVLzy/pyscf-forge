@@ -1,4 +1,5 @@
 import itertools
+import time
 import numpy
 import scipy
 
@@ -42,9 +43,240 @@ def getFormFactor(nmesh,cell):
     FF[idx] = 4. * numpy.pi /G2[idx]
     return FF
 
-def prepareMolForPAW(mol, auto_box=False):
+def getCoulombFF(mesh, cell, Periodic=False):
+    '''
+    The Coulomb form factor of a CELL-periodic Poisson solve, shaped like `mesh`:
+    potential = ifftn(FF * fftn(rho)), any volume factor already inside FF.
+
+    Periodic: 4 pi/G^2 with G = 0 removed. Otherwise the sphere-truncated kernel
+    (Rc = max(L)/2), which is exact only when the charge fits well inside the cell --
+    used for the alpha0 probe in its 10 Bohr mini-cell. Molecular J and V_nuc do not
+    use this: they go through solve_poisson and the open-boundary kernel.
+    '''
+    if Periodic:
+        return getFormFactor(mesh, cell).reshape(mesh)
+    return getFormFactor_Truncated(mesh, cell).reshape(mesh)
+
+def solve_poisson(rhoR, mesh, cell, Periodic=False, coulomb_kernel=None):
+    '''
+    Hartree potential of rhoR (e/Bohr^3 on the PAW mesh, flat or mesh-shaped).
+
+    Returns (potential, vG): the real-space potential (Ha/e) as a flat array, and
+    vG = fftn(potential) on the PAW mesh, which times dv is what
+    multigrid_pair._get_j_pass2 integrates against the AO pairs.
+      Periodic:  vG = fftn(rho) * 4 pi/G^2 (G = 0 removed) on the cell, as always.
+      Molecular: coulomb_kernel.potential(rho), the open-boundary solve on the
+                 2x zero-padded box (OpenBoundaryCoulomb, cached as PAW.coulomb_kernel),
+                 then one fftn on the PAW mesh for vG. The potential is not periodic on
+                 the PAW box; pass 2 only needs its Fourier coefficients there, which
+                 Parseval makes exact for AO pairs that vanish at the box faces.
+    '''
+    if Periodic:
+        vG = numpy.fft.fftn(numpy.reshape(rhoR, mesh)) * getCoulombFF(mesh, cell, Periodic=True)
+        return numpy.fft.ifftn(vG).real.flatten(), vG
+    if coulomb_kernel is None:
+        raise ValueError('a molecular Coulomb solve needs the open-boundary kernel '
+                         '(PAW.coulomb_kernel, from build_open_boundary_kernel)')
+    potential = coulomb_kernel.potential(rhoR)
+    return potential.ravel(), numpy.fft.fftn(potential)
+
+# ---------------------------------------------------------------------------------
+# Open-boundary Coulomb solve: medium (PAW) mesh, zero-padded 2x, Ewald-split kernel
+# ---------------------------------------------------------------------------------
+
+# omega = EWALD_OMEGA_LMIN / L_min puts the short-range part's periodic copies, at least
+# L_min away on the 2x box, at erfc(6) ~ 2e-17 relative: double precision.
+EWALD_OMEGA_LMIN = 6.0
+# Grid resolution of the long-range part: exp(-(pi/h)^2 / (4 omega^2)) <= 1e-16.
+_LN_INV_EPS = numpy.log(1e16)
+
+
+def _minimum_image(npoints):
+    '''Signed displacement held by each index of a periodic axis of npoints points.'''
+    index = numpy.arange(npoints)
+    return numpy.where(index < npoints // 2, index, index - npoints)
+
+
+def _wavevectors(mesh, h):
+    '''(kx, ky^2 + kz^2 on the rfft half-plane) for an orthorhombic mesh of spacing h.'''
+    kx = 2. * numpy.pi * numpy.fft.fftfreq(mesh[0], d=h[0])
+    ky = 2. * numpy.pi * numpy.fft.fftfreq(mesh[1], d=h[1])
+    kz = 2. * numpy.pi * numpy.fft.rfftfreq(mesh[2], d=h[2])
+    return kx, ky[:, None]**2 + kz[None, :]**2
+
+
+class OpenBoundaryCoulomb:
+    '''Free-space Coulomb potential of a density on the PAW mesh.
+
+    The PAW mesh (the "medium" box, n_i points, spacing h_i) is zero-padded into a
+    "large" box of P_i = 2 next_fast_len(n_i) points per axis and convolved there with a
+    cached kernel by FFT; the potential is sliced back to the medium box. A cyclic
+    convolution on the large box only ever pairs points of the medium box, whose
+    displacements |j_i| <= n_i - 1 each own one slot of the large box, so no periodic
+    image of the density is ever seen and the kernel only has to be right at those
+    displacements.
+
+    method='ewald' (default) splits 1/r = erf(w r)/r + erfc(w r)/r with
+    w = EWALD_OMEGA_LMIN / L_min (L_min: shortest edge of the medium box):
+      * erf(w r)/r is smooth and is written straight into the large box at every
+        minimum-image displacement (2w/sqrt(pi) at r = 0). Its transform at the mesh's
+        highest frequency, exp(-(pi/h)^2/4w^2), is below 1e-16, so the samples are exact.
+      * erfc(w r)/r is short-ranged and is applied exactly in G-space,
+        4 pi (1 - exp(-G^2/4w^2))/G^2, finite everywhere (pi/w^2 at G = 0). Its
+        periodic copies on the large box sit at least L_min away, where
+        erfc(w L_min) = erfc(6) ~ 2e-17.
+      There is no auxiliary grid. Both conditions hold iff L_min/h_max >= 2 ln(1e16)/pi
+      (~23.5 points on the shortest edge); otherwise ValueError.
+    method='exact' (validation only) is the analytic sphere-truncated kernel,
+    Rc = the medium box's diagonal, sampled on an auxiliary grid of n_i + Rc/h_i points
+    per axis and cut to the large box. Exact like the Ewald kernel, but its auxiliary
+    grid spans about the box diagonal on every axis.
+
+    kernel_hat is the real rfft half-spectrum of the large-box kernel with the volume
+    element folded in, so potential = irfftn(rfftn(padded rho) * kernel_hat).
+    '''
+
+    def __init__(self, mesh, h, method='ewald', nthreads=None):
+        from scipy.fft import next_fast_len
+        self.mesh = tuple(int(n) for n in mesh)
+        self.h = tuple(float(x) for x in h)
+        self.dv = float(numpy.prod(self.h))
+        self.method = method
+        self.nthreads = int(nthreads or lib.num_threads())
+        self.large = tuple(2 * next_fast_len(n) for n in self.mesh)
+        self.L_min = min(n * x for n, x in zip(self.mesh, self.h))
+        self.omega = self.Rc = self.aux = None
+        t0 = time.time()
+        if method == 'ewald':
+            self.omega = EWALD_OMEGA_LMIN / self.L_min
+            omega_max = numpy.pi / (2. * max(self.h) * numpy.sqrt(_LN_INV_EPS))
+            if self.omega > omega_max:
+                raise ValueError(
+                    'Ewald Coulomb kernel: the shortest box edge %.2f Bohr spans %.1f '
+                    'points of the coarsest spacing %.4f Bohr, fewer than the %.1f needed '
+                    'for omega = %g/L_min = %.4f to stay below the grid limit %.4f /Bohr.'
+                    % (self.L_min, self.L_min / max(self.h), max(self.h),
+                       2. * _LN_INV_EPS / numpy.pi, EWALD_OMEGA_LMIN, self.omega, omega_max))
+            self.kernel_hat = self._ewald_kernel()
+        elif method == 'exact':
+            self.Rc = numpy.sqrt(sum((n * x)**2 for n, x in zip(self.mesh, self.h))) + 1e-5
+            self.kernel_hat = self._exact_kernel()
+        else:
+            raise ValueError("method must be 'ewald' or 'exact', got %r" % (method,))
+        self.build_time = time.time() - t0
+
+    def _check_real(self, spectrum):
+        imag = numpy.abs(spectrum.imag).max()
+        if imag > 1e-12 * numpy.abs(spectrum.real).max():
+            raise RuntimeError('open-boundary Coulomb kernel is not even: |Im| = %.3e' % imag)
+
+    def _ewald_kernel(self):
+        import scipy.fft
+        import scipy.special
+        P, omega = self.large, self.omega
+        disp = [_minimum_image(n) * x for n, x in zip(P, self.h)]
+        r = numpy.empty(P)
+        numpy.add(disp[0][:, None, None]**2, disp[1][None, :, None]**2, out=r)
+        r += disp[2][None, None, :]**2
+        numpy.sqrt(r, out=r)
+        r[0, 0, 0] = 1.
+        kernel = numpy.multiply(r, omega)
+        scipy.special.erf(kernel, out=kernel)
+        kernel /= r
+        del r
+        kernel[0, 0, 0] = 2. * omega / numpy.sqrt(numpy.pi)
+        spectrum = scipy.fft.rfftn(kernel, workers=self.nthreads)
+        del kernel
+        self._check_real(spectrum)
+        kernel_hat = spectrum.real * self.dv
+        del spectrum
+        kx, kyz2 = _wavevectors(P, self.h)
+        inv_4w2 = 1. / (4. * omega**2)
+        for ix in range(P[0]):
+            G2 = kx[ix]**2 + kyz2
+            if ix == 0:
+                G2[0, 0] = 1.
+            short = 4. * numpy.pi * -numpy.expm1(-G2 * inv_4w2) / G2
+            if ix == 0:
+                short[0, 0] = numpy.pi / omega**2
+            kernel_hat[ix] += short
+        return kernel_hat
+
+    def _exact_kernel(self):
+        import scipy.fft
+        from scipy.fft import next_fast_len
+        P, Rc = self.large, self.Rc
+        self.aux = tuple(next_fast_len(n + int(numpy.ceil(Rc / x)) + 1)
+                         for n, x in zip(self.mesh, self.h))
+        # Where each large-box displacement lives on the auxiliary grid.
+        window = [_minimum_image(n) % a for n, a in zip(P, self.aux)]
+        kx, kyz2 = _wavevectors(self.aux, self.h)
+        inv_dv = 1. / self.dv
+        # irfftn of the analytic transform, axis by axis, keeping only the window rows,
+        # so the full auxiliary grid is never held in real space.
+        partial = numpy.empty((self.aux[0], len(window[1]), kyz2.shape[1]), dtype=complex)
+        for ix in range(self.aux[0]):
+            G2 = kx[ix]**2 + kyz2
+            if ix == 0:
+                G2[0, 0] = 1.
+            slab = (4. * numpy.pi / G2) * (1. - numpy.cos(numpy.sqrt(G2) * Rc))
+            if ix == 0:
+                slab[0, 0] = 2. * numpy.pi * Rc**2
+            partial[ix] = scipy.fft.ifft(slab * inv_dv, axis=0, workers=self.nthreads)[window[1]]
+        partial = scipy.fft.ifft(partial, axis=0, workers=self.nthreads, overwrite_x=True)[window[0]]
+        kernel = scipy.fft.irfft(partial, n=self.aux[2], axis=2, workers=self.nthreads)[:, :, window[2]]
+        del partial
+        spectrum = scipy.fft.rfftn(kernel, workers=self.nthreads)
+        del kernel
+        self._check_real(spectrum)
+        return spectrum.real * self.dv
+
+    def potential(self, rho):
+        '''V (Ha/e) on the medium mesh for rho (e/Bohr^3) on it, flat or mesh-shaped; a
+        leading batch axis is looped. Pruned transforms: only the nonzero lines of the
+        padded density go forward, only the medium-box corner comes back.'''
+        rho = numpy.asarray(rho, dtype=numpy.float64)
+        npoints = int(numpy.prod(self.mesh))
+        if rho.size != npoints:
+            batch = rho.reshape((-1,) + self.mesh)
+            return numpy.stack([self.potential(one) for one in batch])
+        import scipy.fft
+        n, P, w = self.mesh, self.large, self.nthreads
+        spectrum = scipy.fft.rfft(rho.reshape(n), n=P[2], axis=2, workers=w)
+        spectrum = scipy.fft.fft(spectrum, n=P[1], axis=1, workers=w, overwrite_x=True)
+        spectrum = scipy.fft.fft(spectrum, n=P[0], axis=0, workers=w, overwrite_x=True)
+        spectrum *= self.kernel_hat
+        spectrum = scipy.fft.ifft(spectrum, axis=0, workers=w, overwrite_x=True)[:n[0]]
+        spectrum = scipy.fft.ifft(spectrum, axis=1, workers=w, overwrite_x=True)[:, :n[1]]
+        potential = scipy.fft.irfft(spectrum, n=P[2], axis=2, workers=w)[:, :, :n[2]]
+        return numpy.ascontiguousarray(potential)
+
+    def summary(self):
+        detail = ('omega = %g/L_min = %.4f /Bohr' % (EWALD_OMEGA_LMIN, self.omega)
+                  if self.method == 'ewald' else 'Rc = %.2f Bohr, aux grid %s' % (self.Rc, list(self.aux)))
+        return ('%s open-boundary Coulomb kernel: %s; medium mesh %s, large box %s, L_min = %.2f Bohr, '
+                'kernel %.3f GB, built in %.2f s'
+                % (self.method, detail, list(self.mesh), list(self.large), self.L_min,
+                   self.kernel_hat.nbytes / 1e9, self.build_time))
+
+
+def build_open_boundary_kernel(mesh, cell, method='ewald'):
+    '''OpenBoundaryCoulomb for the PAW mesh of an orthorhombic cell.'''
+    lattice = numpy.asarray(cell.lattice_vectors())
+    if not numpy.allclose(lattice, numpy.diag(numpy.diag(lattice))):
+        raise NotImplementedError('the open-boundary Coulomb solve needs an orthorhombic box')
+    h = numpy.diag(lattice) / numpy.asarray(mesh)
+    kernel = OpenBoundaryCoulomb(mesh, h, method=method)
+    logger.info(cell, '%s', kernel.summary())
+    print(kernel.summary(), flush=True)
+    return kernel
+
+def prepareMolForPAW(mol, auto_box=False, ao_box_cutoff=1e-13):
+    '''Centre the molecule in its box (mol.a, or the AO box when auto_box) and return the
+    PAW Cell. ao_box_cutoff is the AO value at which auto_box cuts each atom's radius
+    (estimate_box_size's epsilon).'''
     if auto_box:
-        box_lengths = estimate_box_size(mol)
+        box_lengths = estimate_box_size(mol, epsilon=ao_box_cutoff)
         logger.info(mol, "Estimated rectangular box size (A): %s", box_lengths)
         if mol.unit[0].capitalize() == 'A':
             mol.a = numpy.diag(box_lengths)
@@ -70,18 +302,8 @@ def prepareMolForPAW(mol, auto_box=False):
     else:
         raise ValueError("mol.a must be defined or auto_box must be True")
 
-    if not auto_box:
-        # A user-supplied box is kept as given, but the truncated Coulomb kernel is
-        # only exact if its sphere fits (see fit_truncated_coulomb_box).
-        lv = mol.lattice_vectors()
-        box_bohr = lv.diagonal()
-        if numpy.allclose(lv, numpy.diag(box_bohr)):
-            need, Rc, diameter, _ = fit_truncated_coulomb_box(mol, box_bohr)
-            if numpy.any(need > box_bohr + 1e-8):
-                logger.warn(mol, "PAW box %s Bohr is too small for the truncated Coulomb kernel "
-                            "(Rc = %.2f Bohr, density diameter %.2f Bohr): J and the nuclear "
-                            "term pick up periodic-image errors. Use at least %s Bohr, or auto_box=True.",
-                            box_bohr.round(2), box_bohr.max()/2., diameter, need.round(2))
+    # A user-supplied box is kept as given. The molecular Coulomb solve zero-pads it
+    # 2x (OpenBoundaryCoulomb), so it is exact in any box that holds the density.
 
     # verbose is carried over deliberately. This Cell replaces the caller's for the
     # rest of the run, so anything that logs against it -- getPAWdata's AO-eval timer,
@@ -296,9 +518,22 @@ def get_gaussian_radius(alpha, l, eps):
     if len(idx) == 0: return 0.0
     return r[idx[-1]]
 
-def get_atom_radii(mol, epsilon):
-    '''Per-atom radius (Bohr) beyond which every primitive on the atom is below epsilon.'''
-    atom_radii = numpy.zeros(mol.natm)
+def estimate_box_size(mol, epsilon=1e-13):
+    """
+    Estimates the required box size to contain a molecule's basis functions
+    up to a threshold epsilon. Returns the box lengths in Angstrom.
+
+    The AO box: per shell, the radius where the most diffuse normalised primitive
+    falls to epsilon (PAW's ao_box_cutoff, default 1e-13), plus 1.0 Bohr. Restored as
+    it was before commit 2851356 grew the box for the Coulomb kernel; the open-boundary
+    solve (OpenBoundaryCoulomb) pads the box itself, so nothing here depends on the
+    Coulomb kernel any more.
+    """
+    coords = mol.atom_coords() # Returns coords in Bohr
+    natm = mol.natm
+    atom_radii = numpy.zeros(natm)
+    
+    # Find max radius for each atom
     for ib in range(mol.nbas):
         ia = mol.bas_atom(ib)
         l = mol.bas_angular(ib)
@@ -306,66 +541,14 @@ def get_atom_radii(mol, epsilon):
         alpha_min = numpy.min(mol.bas_exp(ib))
         r = get_gaussian_radius(alpha_min, l, epsilon)
         atom_radii[ia] = max(atom_radii[ia], r)
-    return atom_radii
-
-def fit_truncated_coulomb_box(mol, box_lengths_bohr, rho_epsilon=1e-6):
-    '''
-    Grow an orthorhombic box (Bohr) until getFormFactor_Truncated is exact for the
-    molecule's density. Returns (box_lengths_bohr, Rc, diameter, extent).
-
-    getFormFactor_Truncated is the spherically truncated Coulomb kernel with
-    Rc = max(L)/2. On the periodic FFT box it reproduces the open-boundary Hartree
-    energy of a charge with diameter D and per-axis extent D_i iff
-        Rc >= D            every real pair lies inside the sphere, and
-        L_i >= Rc + D_i    no periodic image does.
-    auto_box alone only contains the AOs, so on a long molecule Rc = L_long/2
-    overtakes the short edges and every charge feels its own images (C21H44:
-    +981 Ha in E_J). The axis that is longest after the per-axis growth is set to
-    2*Rc so that max(L)/2 is the Rc assumed here.
-
-    The charge is the density, so each atom's extent is where its most diffuse
-    primitive squared falls to rho_epsilon. A pair the kernel gets wrong needs both
-    points out in the tails, so the energy error scales roughly as rho_epsilon**2:
-    a tail model of C5/C11/C21H44 gives ~1e-10 Ha at 1e-5 and 1e-6, 1e-7 Ha at 1e-4.
-    '''
-    box = numpy.array(box_lengths_bohr, dtype=float)
-    coords = mol.atom_coords()
-    radii = get_atom_radii(mol, numpy.sqrt(rho_epsilon))
-    extent = numpy.max(coords + radii[:, None], axis=0) - numpy.min(coords - radii[:, None], axis=0)
-    # Largest |r1 - r2| over the density: max over atom pairs of |Ra - Rb| + ra + rb.
-    # One row at a time keeps memory O(natm).
-    diameter = max(numpy.max(numpy.linalg.norm(coords - coords[a], axis=1) + radii) + radii[a]
-                   for a in range(mol.natm))
-    Rc = max(box.max()/2., diameter)
-    box = numpy.maximum(box, Rc + extent)
-    # Every entry is now <= 2*Rc, so this only ever grows the box.
-    box[numpy.argmax(box)] = 2.*Rc
-    return box, Rc, diameter, extent
-
-def estimate_box_size(mol, epsilon=1e-13, rho_epsilon=1e-6):
-    """
-    Estimates the required box size to contain a molecule's basis functions
-    up to a threshold epsilon, grown where needed so that the truncated Coulomb
-    kernel is exact for the density (see fit_truncated_coulomb_box).
-    Returns the box lengths in Angstrom.
-    """
-    coords = mol.atom_coords() # Returns coords in Bohr
-    atom_radii = get_atom_radii(mol, epsilon)
-
+    
     # Calculate bounds in Bohr
     lower = numpy.min(coords - atom_radii[:, None], axis=0)
     upper = numpy.max(coords + atom_radii[:, None], axis=0)
-
+    
     # Add a small buffer (e.g., 1.0 Bohr)
-    ao_box_bohr = (upper - lower) + 1.0
-
-    box_lengths_bohr, Rc, diameter, extent = fit_truncated_coulomb_box(
-        mol, ao_box_bohr, rho_epsilon=rho_epsilon)
-    if numpy.any(box_lengths_bohr > ao_box_bohr + 1e-8):
-        logger.info(mol, "auto_box: AO box %s Bohr grown to %s Bohr so the truncated Coulomb "
-                    "sphere fits (Rc = %.2f Bohr, density diameter %.2f Bohr, extent %s Bohr)",
-                    ao_box_bohr.round(2), box_lengths_bohr.round(2), Rc, diameter, extent.round(2))
-
+    box_lengths_bohr = (upper - lower) + 1.0
+    
     # Convert to Angstrom for consistency with your script units
     from pyscf.data.nist import BOHR
     return box_lengths_bohr * BOHR
@@ -593,9 +776,13 @@ def getIntegralDiff(dmol, L, Rgrid, mesh, FF, Ng, f, Periodic=False, diag=True, 
 
     # calculate numerical integral
     density_L = aoOnR.T
-    potential_L = numpy.fft.ifftn(density_L.reshape(L, *mesh), axes=(-3, -2, -1))
-    potential_L = numpy.fft.fftn(potential_L * FF, axes=(-3,-2,-1))
-    potential_L = potential_L.real.reshape(L, Ng)
+    if isinstance(FF, OpenBoundaryCoulomb):
+        # the molecule's own box: the open-boundary solve (alpha0_lowmem=False)
+        potential_L = FF.potential(density_L.reshape(L, *mesh)).reshape(L, Ng)
+    else:
+        potential_L = numpy.fft.ifftn(density_L.reshape(L, *mesh), axes=(-3, -2, -1))
+        potential_L = numpy.fft.fftn(potential_L * FF, axes=(-3,-2,-1))
+        potential_L = potential_L.real.reshape(L, Ng)
 
     if gridIdx is not None:
         potential_L = potential_L[gridIdx]
@@ -679,13 +866,18 @@ def fineGrainAlpha0(maxSoftAlpha, minSharpAlpha, pmol, Rgrid, mesh, FF, Ng, f, t
 
     return alpha0, alpha0_wf + 1e-5 # just to make sure the edge case works
 
-def getAlpha0(pmol, Rgrid, mesh, Periodic=False, tol=1e-3):
+def getAlpha0(pmol, Rgrid, mesh, Periodic=False, tol=1e-3, coulomb_kernel=None):
     '''
     Get alpha0 (compensating charge), and the threshold (alpha0_wf) below which
-    the GTOs are treated as diffuse (on PWs)
+    the GTOs are treated as diffuse (on PWs). With coulomb_kernel (an
+    OpenBoundaryCoulomb, molecular boxes) the probe potentials are open-boundary;
+    without it the cell's form factor (getCoulombFF) is used.
     '''
     alpha, atoms, _, _ = getAlphaAtomsL(pmol._bas, pmol._env)
-    FF = getFormFactor(mesh, pmol).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, pmol).reshape(mesh)
+    if coulomb_kernel is not None and not Periodic:
+        FF = coulomb_kernel
+    else:
+        FF = getCoulombFF(mesh, pmol, Periodic)
     Ng = numpy.prod(mesh)
     f = (pmol.vol/Ng)
 
@@ -698,7 +890,7 @@ def getAlpha0(pmol, Rgrid, mesh, Periodic=False, tol=1e-3):
     logger.info(pmol, "Recommended alpha0 for the given PW cutoff: %s", alpha0)
     return alpha0, alpha0_wf
 
-def calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0_input, PWAccuracy, Periodic, alpha0_lowmem, mol=None, neighbor_list=None):
+def calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0_input, PWAccuracy, Periodic, alpha0_lowmem, mol=None, neighbor_list=None, coulomb_kernel=None):
     """
     Calculates and constructs a dictionary of alpha0 values for each element.
     If alpha0_input is None, it computes the reference alpha0.
@@ -724,7 +916,10 @@ def calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0_input, PWAccuracy, Periodic,
         t_Rgrid = t_pmol.get_uniform_grids(mesh=t_mesh)
         alpha0_ref, alpha0_wf_ref = getAlpha0(t_pmol, t_Rgrid, t_mesh, Periodic=Periodic, tol=PWAccuracy)
     else:
-        alpha0_ref, alpha0_wf_ref = getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy)
+        # The molecule's own box, so the molecule's open-boundary solve (the mini-cell
+        # above is a 10 Bohr cube the sphere-truncated kernel always fits).
+        alpha0_ref, alpha0_wf_ref = getAlpha0(pmol, Rgrid, mesh, Periodic=Periodic, tol=PWAccuracy,
+                                              coulomb_kernel=coulomb_kernel)
 
     elements = list(pmol._basis.keys())
     alpha0_dict = {}

@@ -30,13 +30,16 @@ def getPAWdata(mol,
                with_multigrid=2,
                alpha0_lowmem=True,
                auto_box=False,
+               ao_box_cutoff=1e-13,
                use_new_comp_charge=True,
                with_isdf_k=False,
-               isdf_args=None):
+               isdf_args=None,
+               coulomb_method='ewald'):
     t_start = time.time()
     mol.build()
     if (not Periodic):
-        mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box)
+        mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box,
+                                                                 ao_box_cutoff=ao_box_cutoff)
     print(f"Time for mol.build and prepareMolForPAW: {time.time() - t_start:.4f}s")
     t_start = time.time()
 
@@ -52,12 +55,23 @@ def getPAWdata(mol,
     print(f"Time for grids init: {time.time() - t_start:.4f}s")
     t_start = time.time()
 
+    # The molecular Coulomb solve: the PAW mesh zero-padded 2x per axis and convolved
+    # with a cached open-boundary kernel (Ewald split, omega = 6/L_min; 'exact' is the
+    # sphere-truncated kernel on an auxiliary grid, for validation) -- see
+    # paw_helper.OpenBoundaryCoulomb. None when periodic. Built before alpha0, because
+    # alpha0_lowmem=False probes alpha0 in this same box.
+    coulomb_kernel = (None if Periodic else
+                      PAWutils.build_open_boundary_kernel(mesh, pmol, method=coulomb_method))
+    print(f"Time for Coulomb kernel: {time.time() - t_start:.4f}s")
+    t_start = time.time()
+
     t_neigh = time.time()
     neighbor_list = PAWutils.get_neighbor_list(mol, epsilon=PAWorbitalCutOff, Periodic=Periodic)
     print(f"Time for get_neighbor_list: {time.time() - t_neigh:.4f}s")
 
     # get alpha0
-    alpha0_dict = PAWutils.calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0, PWAccuracy, Periodic, alpha0_lowmem, mol=mol, neighbor_list=neighbor_list)
+    alpha0_dict = PAWutils.calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0, PWAccuracy, Periodic, alpha0_lowmem, mol=mol, neighbor_list=neighbor_list,
+                                                 coulomb_kernel=coulomb_kernel)
 
     alpha0 = alpha0_dict
     alpha0_wf = alpha0 # must be this!
@@ -140,7 +154,7 @@ def getPAWdata(mol,
     print(f"Time for separateNuclearElectron: {time.time() - t_start:.4f}s")
 
     return (PAWdata, PAWdata_K, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol,
-            ctr_coeff, alpha0, Rs, gaussgrid)
+            ctr_coeff, alpha0, Rs, gaussgrid, coulomb_kernel)
 
 def tag_dm(mydf, dm, cell, kpts, nk, nao):
     if mydf.scf_iter == 0:
@@ -275,7 +289,8 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                              mydf.mg_ni,
                                              mydf.mesh,
                                              mydf.PAWdata,
-                                             Periodic=mydf.Periodic)
+                                             Periodic=mydf.Periodic,
+                                             coulomb_kernel=mydf.coulomb_kernel)
         else:
             assert(mydf.with_multigrid == 0)
 
@@ -283,7 +298,8 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                         mydf.aoOnR_tilde,
                                         mydf.mesh,
                                         mydf.PAWdata,
-                                        Periodic=mydf.Periodic)
+                                        Periodic=mydf.Periodic,
+                                        coulomb_kernel=mydf.coulomb_kernel)
         logger.timer(mydf, 'vj PW', *cpu0)
         # print(f'PW J takes {time.time() - start:.2f} sec')
         cpu0 = (logger.process_clock(), logger.perf_counter())
@@ -405,12 +421,13 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
 class PAW(FFTDF):
     _keys = {
         'PAWorbitalCutOff', 'PWAccuracy', 'Periodic', 'augRadius', 'gdfNuc',
-        'with_multigrid', 'use_merged_multigrid', 'alpha0_lowmem', 'auto_box',
+        'with_multigrid', 'use_merged_multigrid', 'alpha0_lowmem', 'auto_box', 'ao_box_cutoff',
         'use_new_comp_charge', 'Times_', 'smoothCell', 'mg_ni', 'aoOnR_tilde',
         'mesh', 'PAWdata', 'PAWNucdata', 'Rgrid', 'cell', 'pcell', 'gcell',
         'ctr_coeff', 'alpha0', 'scf_iter', 'kmesh', 'method',
         'with_isdf_k', 'isdf_args', 'PAWdata_K', 'gaussgrid', 'k_rebuild_freq',
-        'k_incremental_start', 'k_incremental_stop', 'k_dynamic_screen'
+        'k_incremental_start', 'k_incremental_stop', 'k_dynamic_screen', 'coulomb_kernel',
+        'coulomb_method'
     }
 
     def __init__(
@@ -427,13 +444,15 @@ class PAW(FFTDF):
             use_merged_multigrid=True,
             alpha0_lowmem=True,
             auto_box=True,
+            ao_box_cutoff=1e-13,
             use_new_comp_charge=True,
             with_isdf_k=False,
             isdf_args=None,
             k_rebuild_freq=1,
             k_incremental_start=3,
             k_incremental_stop=0.0,
-            k_dynamic_screen=False
+            k_dynamic_screen=False,
+            coulomb_method='ewald'
     ):
         
         self.scf_iter = 0
@@ -465,9 +484,18 @@ class PAW(FFTDF):
         self.use_merged_multigrid = use_merged_multigrid
         self.alpha0_lowmem = alpha0_lowmem
         self.auto_box = auto_box
+        # AO value at which auto_box cuts each atom's radius (paw_helper.estimate_box_size).
+        if not ao_box_cutoff > 0:
+            raise ValueError('ao_box_cutoff must be > 0, got %r' % (ao_box_cutoff,))
+        self.ao_box_cutoff = ao_box_cutoff
         self.use_new_comp_charge = use_new_comp_charge
         self.with_isdf_k = with_isdf_k
         self.isdf_args = isdf_args
+        # Molecular Coulomb kernel: 'ewald' (default) or 'exact' (validation only, its
+        # auxiliary grid spans the box diagonal on every axis). See OpenBoundaryCoulomb.
+        if coulomb_method not in ('ewald', 'exact'):
+            raise ValueError("coulomb_method must be 'ewald' or 'exact', got %r" % (coulomb_method,))
+        self.coulomb_method = coulomb_method
 
         # K builds between full rebuilds. DEFAULT 1 = incremental path OFF,
         # reproducing the pre-incremental code bit for bit.
@@ -627,7 +655,7 @@ class PAW(FFTDF):
     def initPAW(self, cell, alpha0):
         t0 = time.time()
         (PAWdata, PAWdata_K, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol,
-         ctr_coeff, alpha0, Rs, gaussgrid) = getPAWdata(
+         ctr_coeff, alpha0, Rs, gaussgrid, coulomb_kernel) = getPAWdata(
             cell,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
@@ -637,9 +665,11 @@ class PAW(FFTDF):
             with_multigrid=self.with_multigrid,
             alpha0_lowmem=self.alpha0_lowmem,
             auto_box=self.auto_box,
+            ao_box_cutoff=self.ao_box_cutoff,
             use_new_comp_charge=self.use_new_comp_charge,
             with_isdf_k=self.with_isdf_k,
-            isdf_args=self.isdf_args
+            isdf_args=self.isdf_args,
+            coulomb_method=self.coulomb_method
         )
 
         self.augRadius = Rs
@@ -657,6 +687,9 @@ class PAW(FFTDF):
         # (n_pivots,) once the pivots became its only grid, which is what disabled
         # getnuc_PAW there; keeping the two grids separate keeps get_nuc working.
         self.mesh = mesh
+        # The open-boundary Coulomb solve (paw_helper.OpenBoundaryCoulomb); None when
+        # periodic. Every non-periodic Poisson solve goes through it.
+        self.coulomb_kernel = coulomb_kernel
         self.PAWdata = PAWdata
         self.PAWdata_K = PAWdata_K
         self.gaussgrid = gaussgrid
@@ -686,7 +719,8 @@ class PAW(FFTDF):
             nuc = dfbuilder.get_nuc()
         else:
             nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                      self.PAWNucdata, self.mg_ni, self.Periodic, self.with_multigrid)
+                                      self.PAWNucdata, self.mg_ni, self.Periodic, self.with_multigrid,
+                                      coulomb_kernel=self.coulomb_kernel)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
@@ -699,7 +733,7 @@ class PAW(FFTDF):
         kpts, is_single_kpt = _check_kpts(self, kpts)
         
         nuc = PAWutils.getNucPAWSmoothPW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
-                                 self.PAWNucdata, self.Periodic)
+                                 self.PAWNucdata, self.Periodic, coulomb_kernel=self.coulomb_kernel)
         if is_single_kpt:
             nuc = nuc[0]
         return nuc
@@ -765,7 +799,8 @@ class PAW(FFTDF):
         # if with_k:
         if with_j or with_k:
             dm = tag_dm(self, dm, cell, kpts, nk, nao)
-        J1 = PAWutils.getjSmoothPW2(self.cell, dm, self.mg_ni, self.mesh, self.PAWdata, Periodic=self.Periodic)
+        J1 = PAWutils.getjSmoothPW2(self.cell, dm, self.mg_ni, self.mesh, self.PAWdata, Periodic=self.Periodic,
+                                    coulomb_kernel=self.coulomb_kernel)
         
         return J1
     
