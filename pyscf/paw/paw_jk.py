@@ -8,6 +8,7 @@ jax.config.update('jax_platform_name', 'cpu')
 from pyscf.pbc.dft.multigrid import multigrid_pair
 from pyscf.pbc.dft.multigrid import _backend_c as backend
 from pyscf import __config__
+from pyscf.lib import logger
 import pyscf
 
 from .paw_helper import *
@@ -66,7 +67,18 @@ def getjSmoothPW(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
         J = J[0]
     return J
 
-def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False, hermi=1, kpt=None):
+def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False, hermi=1, kpt=None,
+                         merge_j=False):
+    '''Smooth Vxc and Hartree (J) matrices from one multigrid density pass.
+
+    If merge_j is True, the smooth J potential is added to the XC potential in
+    G space and both are integrated onto the AO pairs in a single grid pass.
+    The returned vxc_mat then contains Vxc + J (smooth part, including the
+    local compensation-charge corrections) for each spin, and vj_mat is None.
+
+    Returns:
+        nelec, excsum, ecoul, vxc_mat, vj_mat
+    '''
     GGA_METHOD = getattr(__config__, 'pbc_dft_multigrid_gga_method', 'FFT')
 
     if kpt is None:
@@ -84,22 +96,33 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         deriv = 1
     else:
         raise NotImplementedError(f'xctype {xctype} not implemented in PAW multigrid')
-        
+
+    # Sub-timers (Wall time)
+    t_rho = 0.0
+    t_fft_rho = 0.0
+    t_xc = 0.0
+    t_fft_vxc = 0.0
+    t_aug = 0.0
+    t_poisson = 0.0
+    t_vj_mat = 0.0
+    t_vj_local = 0.0
+    t_vxc_mat = 0.0
+
     # Pass 1: AO -> Grid (Smooth Density)
     # eval_rhoG processes the nset dimension natively
-    # start = time.time()
+    t0 = logger.perf_counter()
     rhoG = multigrid_pair._eval_rhoG(mg_ni, dm, hermi=hermi, kpts=kpt, deriv=deriv)
-    # print(f'Eval density on grid takes {time.time() - start : .1f} seconds')
-    
+    t_rho += logger.perf_counter() - t0
+
     Ng = numpy.prod(mesh)
     dv = cell.vol / Ng
     weight = dv
-    
-    # start = time.time()
+
     # XC Evaluation on pseudo-density only
+    t0 = logger.perf_counter()
     rhoR = numpy.fft.ifftn(rhoG.reshape(nset, -1, *mesh), axes=(2,3,4)).real.reshape(nset, -1, Ng) * (1./weight)
-    # print(f'First FFT from G to R takes {time.time() - start: .2f} seconds')
-    
+    t_fft_rho += logger.perf_counter() - t0
+
     if xctype == 'HF': # No XC part
         if is_uks:
             nelec = numpy.array([numpy.sum(rhoR[0,0]) * weight, numpy.sum(rhoR[1,0]) * weight])
@@ -117,10 +140,11 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         else:
             rho_eval = rhoR
         
-        # start = time.time()
+        t0 = logger.perf_counter()
         exc, vxcR = mg_ni.eval_xc_eff(xc_code, rho_eval, deriv=1, xctype=xctype, spin=spin)[:2]
-        # print(f'Eval XC on grid takes {time.time() - start: .2f} seconds')
-        
+        t_xc += logger.perf_counter() - t0
+
+        t0 = logger.perf_counter()
         if is_uks:
             nelec = numpy.array([numpy.sum(rhoR[0,0]) * weight, numpy.sum(rhoR[1,0]) * weight])
             # vxcR for UKS is shape (2, deriv, Ng). Or list of length 2? 
@@ -143,17 +167,26 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
                 vxc_G = backend.get_gga_vrho_gs(vxc_G[0, 0:1], vxc_G[0, 1:4], Gv, weight, Ng, 1.)[numpy.newaxis, ...]
         else:
             vxc_G *= weight
+        t_fft_vxc += logger.perf_counter() - t0
 
     # Hartree Evaluation on pseudo-density + compensating charges
+    t0 = logger.perf_counter()
     FF = getFormFactor(mesh, cell).reshape(mesh) if Periodic else getFormFactor_Truncated(mesh, cell).reshape(mesh)
-    
+    t_poisson += logger.perf_counter() - t0
+
+    # J can only be merged when Vxc is integrated as a plain scalar potential
+    merge = merge_j and not (xctype == 'GGA' and GGA_METHOD.upper() != 'FFT')
+
+    nao = dm.shape[-1]
     J_all = []
-    ecoul_total = 0.
+    vG_J = 0          # total smooth J potential in G space (merged mode)
+    rhoR_J = 0        # total smooth + compensation density
+    potential_J = 0   # total smooth J potential in real space
     for i in range(nset):
         dm_val = dm[i, 0, :, :]
         rhoR_Ji = rhoR[i, 0].copy()
 
-        # start = time.time()
+        t0 = logger.perf_counter()
         for atomI in range(cell._atm.shape[0]):
             submat = dm_val[localIdx[atomI]][:, localIdx[atomI]]
             # Use @ for faster matrix multiplication
@@ -166,25 +199,31 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
             
             # rhoR_J += zg @ gOnR^T
             rhoR_Ji[gridIdx[atomI]] += gOnR[atomI] @ zg
-        # print(f'Density augmentation takes {time.time() - start: .2f} seconds')
+        t_aug += logger.perf_counter() - t0
 
-        # start = time.time()
+        t0 = logger.perf_counter()
         rhoG_Ji = numpy.fft.fftn(rhoR_Ji.reshape(mesh)).flatten()
         vG_Ji = rhoG_Ji * FF.flatten()
-        
+
         # Use real-space integration for ecoul to ensure consistent scaling
         potential_Ji = numpy.fft.ifftn(vG_Ji.reshape(mesh)).real.flatten()
-        # print(f'Poisson solve takes {time.time() - start: .2f} seconds')
-        ecoul_total += 0.5 * numpy.dot(rhoR_Ji, potential_Ji) * dv
-        
+        rhoR_J = rhoR_J + rhoR_Ji
+        potential_J = potential_J + potential_Ji
+        t_poisson += logger.perf_counter() - t0
+
         # Pass 2: Grid -> Matrix
-        # start = time.time()
-        vj_mat_i = multigrid_pair._get_j_pass2(mg_ni, vG_Ji * weight, kpts=kpt, hermi=hermi)
-        while vj_mat_i.ndim > 2: vj_mat_i = vj_mat_i[0]
-        # print(f'Pass 2 integration takes {time.time() - start: .2f} seconds')
-        
+        t0 = logger.perf_counter()
+        if merge:
+            # integrated together with Vxc below; only collect local corrections here
+            vG_J = vG_J + vG_Ji
+            vj_mat_i = numpy.zeros((nao, nao))
+        else:
+            vj_mat_i = multigrid_pair._get_j_pass2(mg_ni, vG_Ji * weight, kpts=kpt, hermi=hermi)
+            while vj_mat_i.ndim > 2: vj_mat_i = vj_mat_i[0]
+        t_vj_mat += logger.perf_counter() - t0
+
         # Local Hartree Corrections
-        # start = time.time()
+        t0 = logger.perf_counter()
         for atomI in range(cell._atm.shape[0]):
             # zg2 = \int v(r) g_L(r) dr
             zg2 = potential_Ji[gridIdx[atomI]] @ gOnR[atomI] * dv
@@ -197,26 +236,41 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
             vj_mat_i[numpy.ix_(localIdx[atomI], localIdx[atomI])] += \
                 F_Pmu[atomI].T @ GL @ F_Pmu[atomI] - \
                 Ftilde_Pmu[atomI].T @ GL @ Ftilde_Pmu[atomI]
-        # print(f'Local corrections takes {time.time() - start: .2f} seconds')
+        t_vj_local += logger.perf_counter() - t0
         J_all.append(vj_mat_i)
+
+    # Coulomb energy of the total (all spins) smooth + compensation density
+    ecoul_total = 0.5 * numpy.dot(rhoR_J, potential_J) * dv
 
     vj_mat = numpy.stack(J_all)
     if not is_uks:
         vj_mat = vj_mat[0]
 
-    # Pass 2: Grid -> Matrix (Vxc)
-    # start = time.time()
+    # Pass 2: Grid -> Matrix (Vxc, plus J if merged)
+    t0 = logger.perf_counter()
     if xctype == 'GGA' and GGA_METHOD.upper() != 'FFT':
         # multigrid_pair._get_gga_pass2 processes the nset dimension
         vxc_mat = multigrid_pair._get_gga_pass2(mg_ni, vxc_G, kpts=kpt, hermi=hermi)
     else:
         # _get_j_pass2 natively expects (nset, nkpts, Ng) but since it's just a dot product, it works fine
-        if vxc_G.ndim == 3 and vxc_G.shape[1] == 1:
-            vxc_G_input = vxc_G[:, 0, :]
-        else:
-            vxc_G_input = vxc_G
+        vxc_G_input = vxc_G.reshape(nset, Ng)
+        if merge:
+            # every spin feels the J potential of the total density
+            vxc_G_input = vxc_G_input + vG_J * weight
         vxc_mat = multigrid_pair._get_j_pass2(mg_ni, vxc_G_input, kpts=kpt, hermi=hermi)
-    # print(f'Eval matrix from potential takes: {time.time() - start: .2f} seconds')
+    t_vxc_mat += logger.perf_counter() - t0
+
+    logger.info(cell, 'Smooth Vxc+J Multigrid Wall-Time Profiling (nset=%d):', nset)
+    logger.info(cell, '  - Density Collocate (rhoG):  %10.4f s', t_rho)
+    logger.info(cell, '  - FFT rho G->R:              %10.4f s', t_fft_rho)
+    logger.info(cell, '  - XC Evaluation:             %10.4f s', t_xc)
+    logger.info(cell, '  - FFT vxc R->G (+GGA):       %10.4f s', t_fft_vxc)
+    logger.info(cell, '  - J Density Augmentation:    %10.4f s', t_aug)
+    logger.info(cell, '  - J Poisson Solve:           %10.4f s', t_poisson)
+    logger.info(cell, '  - J Matrix Integrate:        %10.4f s', t_vj_mat)
+    logger.info(cell, '  - J Local Corrections:       %10.4f s', t_vj_local)
+    logger.info(cell, '  - Vxc%s Matrix Integrate:  %10.4f s', '(+J)' if merge else '    ', t_vxc_mat)
+
     # Squeeze J and Vxc appropriately
     if not is_uks:
         while vxc_mat.ndim > 2: vxc_mat = vxc_mat[0]
@@ -224,6 +278,11 @@ def get_vxc_and_j_smooth(cell, dm, mg_ni, mesh, PAWdata, xc_code, Periodic=False
         # For UKS, vxc_mat should end up as (2, nao, nao)
         if vxc_mat.shape[1] == 1: # if (2, 1, nao, nao)
             vxc_mat = vxc_mat[:, 0]
+
+    if merge_j:
+        # vj_mat holds the local corrections if merged, the full smooth J otherwise
+        vxc_mat = vxc_mat + (vj_mat.sum(axis=0) if is_uks else vj_mat)
+        vj_mat = None
 
     return nelec, excsum, ecoul_total, vxc_mat, vj_mat
 

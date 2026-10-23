@@ -153,19 +153,7 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
                                             mydf.PAWdata,
                                             Periodic=mydf.Periodic)
             logger.timer(mydf, 'vj PW', *cpu0)
-            cpu0 = (logger.process_clock(), logger.perf_counter())
-            vj2 = PAWutils.getjSharpLocal(cell, dm, 
-                                        mydf.aoOnR_tilde,
-                                        mydf.mesh,
-                                        mydf.PAWdata,
-                                        Periodic=mydf.Periodic)
-            vj3 = PAWutils.getjSmoothLocal(cell, dm, 
-                                        mydf.aoOnR_tilde,
-                                        mydf.mesh,
-                                        mydf.PAWdata,
-                                        Periodic=mydf.Periodic)
-            logger.timer(mydf, 'vj atom', *cpu0)
-            vj = vj1 + vj2 + vj3
+            vj = vj1 + mydf.get_j_atomic(dm)
         if with_k:
             is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
             if is_unrestricted:
@@ -253,21 +241,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
                                         Periodic=mydf.Periodic)
         logger.timer(mydf, 'vj PW', *cpu0)
         # print(f'PW J takes {time.time() - start:.2f} sec')
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        # start = time.time()
-        vj2 = PAWutils.getjSharpLocal(cell, dm, 
-                                    mydf.aoOnR_tilde,
-                                    mydf.mesh,
-                                    mydf.PAWdata,
-                                    Periodic=mydf.Periodic)
-        vj3 = PAWutils.getjSmoothLocal(cell, dm, 
-                                    mydf.aoOnR_tilde,
-                                    mydf.mesh,
-                                    mydf.PAWdata,
-                                    Periodic=mydf.Periodic)
-        logger.timer(mydf, 'vj atom', *cpu0)
-        # print(f'Atom J takes {time.time() - start:.2f} sec')
-        vj = vj1 + vj2 + vj3
+        vj = vj1 + mydf.get_j_atomic(dm)
     if with_k:
         is_unrestricted = getattr(dm, 'ndim', 0) == 4 and dm.shape[0] == 2
         if is_unrestricted:
@@ -368,11 +342,11 @@ class PAW(FFTDF):
             if self.with_multigrid == 1:
                 raise NotImplementedError('MultiGridNumInt1 not integrated with PAW yet')
             elif self.with_multigrid == 2:
-                self.smoothCell.precision = min(self.cell.precision, 1e-10)
+                self.smoothCell.precision = min(self.cell.precision, 1e-8) # TEMP: 1e-8 for cp2k comparison (was 1e-10)
                 self.mg_ni = MultiGridNumInt2(self.smoothCell)
                 self.mg_ni.mesh = self.grids.mesh
                 self.mg_ni.xc_with_j = False
-                self.mg_ni.ntasks = 5 # consider making this a user input
+                self.mg_ni.ntasks = 1 # consider making this a user input
                 self.mg_ni.build()
         else:
             self.mg_ni = None
@@ -391,6 +365,25 @@ class PAW(FFTDF):
             return get_jk_periodic(self, dm, hermi, kpts, kpts_band, with_j, with_k, omega, exxdiv)
         else:
             return get_jk_molecule(self, dm, hermi, with_j, with_k, omega=omega)
+
+    def get_j_atomic(self, dm):
+        '''One-center (atomic) Hartree corrections: sharp minus smooth local J.
+
+        dm has the shape used by get_jk, i.e. (nset, nkpts, nao, nao).
+        '''
+        cpu0 = (logger.process_clock(), logger.perf_counter())
+        vj2 = PAWutils.getjSharpLocal(self.cell, dm,
+                                      self.aoOnR_tilde,
+                                      self.mesh,
+                                      self.PAWdata,
+                                      Periodic=self.Periodic)
+        vj3 = PAWutils.getjSmoothLocal(self.cell, dm,
+                                       self.aoOnR_tilde,
+                                       self.mesh,
+                                       self.PAWdata,
+                                       Periodic=self.Periodic)
+        logger.timer(self, 'vj atom', *cpu0)
+        return vj2 + vj3
 
     def initPAW(self, cell, alpha0):
         t0 = time.time()

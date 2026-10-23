@@ -1,7 +1,10 @@
+import types
 import numpy
 from pyscf import lib
 from concurrent.futures import ThreadPoolExecutor
 from pyscf.pbc.dft.numint import NumInt, KNumInt, nr_rks, nr_uks
+from pyscf.pbc.dft import rks as pbc_rks
+from pyscf.pbc.dft import uks as pbc_uks
 from pyscf.pbc.dft.gen_grid import BeckeGrids
 from pyscf.dft.gen_grid import Grids
 from pyscf.lib import logger
@@ -81,8 +84,62 @@ def smoothCell2(mol, alpha0):
     smoothMol._bas = new_bas
     return smoothMol
 
+def get_veff(ks, cell=None, dm=None, dm_last=0, vhf_last=0, hermi=1,
+             kpt=None, kpts_band=None):
+    '''Coulomb + XC for PAW when J is evaluated inside PAWNumInt (xc_with_j).
+
+    Mirrors pyscf.pbc.dft.rks/uks.get_veff with j_in_xc=True: the full J
+    (smooth part merged with Vxc in one multigrid pass, plus the one-center
+    corrections) and ecoul come from ni.nr_rks/nr_uks, so get_jk is only
+    called for exact exchange.
+    '''
+    is_uks = isinstance(ks, pbc_uks.UKS)
+    if kpts_band is not None or not getattr(ks._numint, 'xc_with_j', False):
+        # band-structure Vxc goes through KNumInt, which does not include J;
+        # also fall back if ks._numint was replaced by one that does not include J
+        pyscf_get_veff = pbc_uks.get_veff if is_uks else pbc_rks.get_veff
+        return pyscf_get_veff(ks, cell, dm, dm_last, vhf_last, hermi, kpt, kpts_band)
+
+    if cell is None: cell = ks.cell
+    if dm is None: dm = ks.make_rdm1()
+    if kpt is None: kpt = ks.kpt
+    t0 = (logger.process_clock(), logger.perf_counter())
+
+    if ks.do_nlc():
+        raise NotImplementedError(f'PAW with J in XC for NLC functional {ks.xc} + {ks.nlc}')
+    if is_uks:
+        dm = numpy.asarray(dm)
+        if dm.ndim == 2:  # RHF DM
+            dm = numpy.asarray((dm*.5,dm*.5))
+
+    ni = ks._numint
+    ks.initialize_grids(cell, dm, kpt)
+    max_memory = ks.max_memory - lib.current_memory()[0]
+    if is_uks:
+        n, exc, vxc = ni.nr_uks(cell, ks.grids, ks.xc, dm, 0, hermi,
+                                kpt, None, max_memory=max_memory)
+    else:
+        n, exc, vxc = ni.nr_rks(cell, ks.grids, ks.xc, dm, 0, hermi,
+                                kpt, None, max_memory=max_memory)
+    logger.info(ks, 'nelec by numeric integration = %s', n)
+    t0 = logger.timer(ks, 'vxc', *t0)
+
+    ecoul = vxc.ecoul
+    vj, vk = pbc_rks._get_jk(ks, cell, dm, hermi, kpt, None, with_j=False)
+    if ni.libxc.is_hybrid_xc(ks.xc):
+        if is_uks:
+            vxc -= vk
+            exc -= numpy.einsum('nij,nji->', dm, vk).real * .5
+        else:
+            vxc -= .5 * vk
+            exc -= numpy.einsum('ij,ji->', dm, vk).real * .25
+    vxc = lib.tag_array(vxc, ecoul=ecoul, exc=exc, vj=None, vk=None)
+    logger.timer(ks, 'veff', *t0)
+    return vxc
+
 class PAWNumInt(NumInt):
-    def __init__(self, mydf, mf, uniform=True, with_multigrid=0, use_merged_multigrid=False):
+    def __init__(self, mydf, mf, uniform=True, with_multigrid=0, use_merged_multigrid=False,
+                 merge_j=True):
         self.mf = mf
         self.cell = mydf.cell
         self.smoothCell = smoothCell2(self.cell, mydf.alpha0)
@@ -108,7 +165,7 @@ class PAWNumInt(NumInt):
             # Initialize Multigrid (pair version) for the smooth component
             # Ensure smoothCell has enough precision for multigrid_pair (version 2)
             # which lacks the internal EXPDROP safeguard present in version 1.
-            self.smoothCell.precision = min(self.cell.precision, 1e-10)
+            self.smoothCell.precision = min(self.cell.precision, 1e-8) # TEMP: 1e-8 for cp2k comparison (was 1e-10)
             self.mg_ni = MultiGridNumInt2(self.smoothCell)
             self.mg_ni.mesh = mydf.grids.mesh
             self.mg_ni.xc_with_j = False
@@ -127,6 +184,14 @@ class PAWNumInt(NumInt):
         self.F_PmuArr = mydf.PAWdata[1]
         self.Ftilde_PmuArr = mydf.PAWdata[2]
         super().__init__()
+
+        # With the merged multigrid pass, evaluate the full J inside nr_rks/nr_uks
+        # (smooth J and Vxc share one grid integration) and let get_veff skip J
+        # in get_jk, like PySCF's multigrid xc_with_j.
+        self.xc_with_j = bool(merge_j and self.with_multigrid and self.use_merged_multigrid
+                              and isinstance(mf, (pbc_rks.RKS, pbc_uks.UKS)))
+        if self.xc_with_j:
+            mf.get_veff = types.MethodType(get_veff, mf)
 
     def prepareAtomicData(self, alpha0, augRadius):
         pcellAtoms = []
@@ -254,14 +319,20 @@ class PAWNumInt(NumInt):
 
                 # Call combined Hartree and XC multigrid pass
                 nelec1, exc1, ecoul1, vxc1, vj1 = get_vxc_and_j_smooth(
-                    self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata, 
-                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt
+                    self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata,
+                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt,
+                    merge_j=self.xc_with_j
                 )
-                
-                # Cache vj1 for NewPAW.get_jk
-                self.mf.with_df._cached_vj1 = vj1
-                self.mf.with_df._cached_vj1_dm = dms
-                
+
+                if self.xc_with_j:
+                    # vxc1 already contains the smooth J
+                    self.mf.with_df._cached_vj1 = None
+                    self.mf.with_df._cached_vj1_dm = None
+                else:
+                    # Cache vj1 for NewPAW.get_jk
+                    self.mf.with_df._cached_vj1 = vj1
+                    self.mf.with_df._cached_vj1_dm = dms
+
                 vxc1 = lib.tag_array(vxc1, ecoul=ecoul1, exc=exc1, vj=vj1, vk=None)
                 
                 return nelec1, exc1, vxc1
@@ -398,18 +469,24 @@ class PAWNumInt(NumInt):
             if self.use_merged_multigrid:
                 # Call combined Hartree and XC multigrid pass
                 nelec1, exc1, ecoul1, vxc1, vj1 = get_vxc_and_j_smooth(
-                    self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata, 
-                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt
+                    self.cell, dm_multigrid, self.mg_ni, self.mg_ni.mesh, self.mf.with_df.PAWdata,
+                    xc_code, Periodic=self.mf.with_df.Periodic, hermi=hermi, kpt=kpt,
+                    merge_j=self.xc_with_j
                 )
-                
-                # Cache vj1 for NewPAW.get_jk
-                # get_vxc_and_j_smooth now returns vj1 as (2, nao, nao) for UKS
-                
-                # As requested: store total DM for cache key
-                dm_total = dms[0] + dms[1]
-                dm_total_tagged = dm_total.reshape(-1, nk, nao, nao)
-                self.mf.with_df._cached_vj1_dm = dm_total_tagged
-                self.mf.with_df._cached_vj1 = vj1[0] + vj1[1]
+
+                if self.xc_with_j:
+                    # vxc1 already contains the smooth J of the total density
+                    self.mf.with_df._cached_vj1 = None
+                    self.mf.with_df._cached_vj1_dm = None
+                else:
+                    # Cache vj1 for NewPAW.get_jk
+                    # get_vxc_and_j_smooth now returns vj1 as (2, nao, nao) for UKS
+
+                    # As requested: store total DM for cache key
+                    dm_total = dms[0] + dms[1]
+                    dm_total_tagged = dm_total.reshape(-1, nk, nao, nao)
+                    self.mf.with_df._cached_vj1_dm = dm_total_tagged
+                    self.mf.with_df._cached_vj1 = vj1[0] + vj1[1]
                 
                 vxc1 = lib.tag_array(vxc1, ecoul=ecoul1, exc=exc1, vj=vj1, vk=None)
                 
@@ -588,6 +665,14 @@ class PAWNumInt(NumInt):
         nelec = nelec1 + nelec2 - nelec3
         exc = exc1 + exc2 - exc3
         vxc = vxc1 + vxc2 - vxc3
+        if self.xc_with_j:
+            # vxc1 holds the smooth J; add the one-center J corrections
+            nao = self.cell.nao
+            dms = numpy.asarray(dms)
+            vj_atom = self.mf.with_df.get_j_atomic(dms.reshape(-1, 1, nao, nao))
+            vxc = vxc + vj_atom
+            ecoul = vxc1.ecoul + numpy.einsum('ij,ji', dms, vj_atom).real * .5
+            vxc = lib.tag_array(vxc, ecoul=ecoul)
         return nelec, exc, vxc
 
     @lib.with_doc(nr_uks.__doc__)
@@ -631,4 +716,13 @@ class PAWNumInt(NumInt):
         nelec = nelec1 + nelec2 - nelec3
         exc = exc1 + exc2 - exc3
         vxc = vxc1 + vxc2 - vxc3
+        if self.xc_with_j:
+            # vxc1 holds the smooth J; add the one-center J of the total density
+            nao = self.cell.nao
+            dms = numpy.asarray(dms)
+            vj_atom = self.mf.with_df.get_j_atomic(dms.reshape(-1, 1, nao, nao))
+            vj_atom = vj_atom[0] + vj_atom[1]
+            vxc = vxc + vj_atom
+            ecoul = vxc1.ecoul + numpy.einsum('nij,ji->', dms, vj_atom).real * .5
+            vxc = lib.tag_array(vxc, ecoul=ecoul)
         return nelec, exc, vxc
