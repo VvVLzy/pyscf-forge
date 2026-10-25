@@ -17,11 +17,11 @@ import numpy
 from . import PAWutils
 from . import paw_isdf
 from .paw_helper import PAWDataTuple
-
-import time
+from .paw_timing import PAWTimingMixin
 
 
 def getPAWdata(mol,
+               timer,
                PAWorbitalCutOff=1.e-8,
                PWAccuracy=1e-5,
                Periodic = False,
@@ -35,48 +35,41 @@ def getPAWdata(mol,
                with_isdf_k=False,
                isdf_args=None,
                coulomb_method='ewald'):
-    t_start = time.time()
-    mol.build()
-    if (not Periodic):
-        mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box,
-                                                                 ao_box_cutoff=ao_box_cutoff)
-    print(f"Time for mol.build and prepareMolForPAW: {time.time() - t_start:.4f}s")
-    t_start = time.time()
+    with timer.timing_block('Molecule and Box', report=True):
+        mol.build()
+        if (not Periodic):
+            mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box,
+                                                                     ao_box_cutoff=ao_box_cutoff)
 
     # uncontract basis
-    pmol, ctr_coeff = mol.decontract_basis()
-    pmol._basis = PAWutils.modifyMolBasis(pmol._basis)
-    print(f"Time for decontract_basis: {time.time() - t_start:.4f}s")
-    t_start = time.time()
+    with timer.timing_block('Basis Decontraction', report=True):
+        pmol, ctr_coeff = mol.decontract_basis()
+        pmol._basis = PAWutils.modifyMolBasis(pmol._basis)
 
     # initialize grids
-    mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
-    Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
-    print(f"Time for grids init: {time.time() - t_start:.4f}s")
-    t_start = time.time()
+    with timer.timing_block('Uniform Grid', report=True):
+        mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
+        Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
 
     # The molecular Coulomb solve: the PAW mesh zero-padded 2x per axis and convolved
     # with a cached open-boundary kernel (Ewald split, omega = 6/L_min; 'exact' is the
     # sphere-truncated kernel on an auxiliary grid, for validation) -- see
     # paw_helper.OpenBoundaryCoulomb. None when periodic. Built before alpha0, because
     # alpha0_lowmem=False probes alpha0 in this same box.
-    coulomb_kernel = (None if Periodic else
-                      PAWutils.build_open_boundary_kernel(mesh, pmol, method=coulomb_method))
-    print(f"Time for Coulomb kernel: {time.time() - t_start:.4f}s")
-    t_start = time.time()
+    with timer.timing_block('Coulomb Kernel', report=True):
+        coulomb_kernel = (None if Periodic else
+                          PAWutils.build_open_boundary_kernel(mesh, pmol, method=coulomb_method))
 
-    t_neigh = time.time()
-    neighbor_list = PAWutils.get_neighbor_list(mol, epsilon=PAWorbitalCutOff, Periodic=Periodic)
-    print(f"Time for get_neighbor_list: {time.time() - t_neigh:.4f}s")
+    with timer.timing_block('Neighbor List', report=True):
+        neighbor_list = PAWutils.get_neighbor_list(mol, epsilon=PAWorbitalCutOff, Periodic=Periodic)
 
     # get alpha0
-    alpha0_dict = PAWutils.calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0, PWAccuracy, Periodic, alpha0_lowmem, mol=mol, neighbor_list=neighbor_list,
-                                                 coulomb_kernel=coulomb_kernel)
+    with timer.timing_block('Alpha0', report=True):
+        alpha0_dict = PAWutils.calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0, PWAccuracy, Periodic, alpha0_lowmem, mol=mol, neighbor_list=neighbor_list,
+                                                     coulomb_kernel=coulomb_kernel)
 
     alpha0 = alpha0_dict
     alpha0_wf = alpha0 # must be this!
-    print(f"Time for getAlpha0: {time.time() - t_start:.4f}s")
-    t_start = time.time()
 
     # The ISDF exchange grid, if K was asked for.
     #
@@ -95,50 +88,44 @@ def getPAWdata(mol,
         if Periodic:
             raise NotImplementedError(
                 'ISDF exchange is molecular/gamma-point only (truncated Coulomb kernel)')
-        gmols = PAWutils.buildCompensatingBasis(pmol, alpha0)
-        # `mesh` is not just context here: it SETS the ISDF grid spacing. One grid
-        # density for J and K, with ke_cutoff the single knob -- see paw_isdf.
-        gaussgrid, pivots = paw_isdf.build_isdf_grid(
-            mol, alpha0, gmols[1], mesh, isdf_args=isdf_args, log_obj=mol)
-        print(f"Time for ISDF grid setup: {time.time() - t_start:.4f}s")
-        t_start = time.time()
+        with timer.timing_block('ISDF Grid', report=True):
+            gmols = PAWutils.buildCompensatingBasis(pmol, alpha0)
+            # `mesh` is not just context here: it SETS the ISDF grid spacing. One grid
+            # density for J and K, with ke_cutoff the single knob -- see paw_isdf.
+            gaussgrid, pivots = paw_isdf.build_isdf_grid(
+                mol, alpha0, gmols[1], mesh, isdf_args=isdf_args, log_obj=mol)
 
     # PAWData. With pivots, mergeCompensatingCharge returns a second (gridIdx, gOnR)
     # on them -- same L, same alpha0, same Rb, so the same augmentation spheres.
     gridIdx_p = gOnR_p = None
-    if use_new_comp_charge:
-        out = PAWutils.mergeCompensatingCharge(
-            pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic=Periodic,
-            gmols=gmols, Rgrid2=pivots)
-        if pivots is None:
-            M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = out
+    with timer.timing_block('Compensating Charge', report=True):
+        if use_new_comp_charge:
+            out = PAWutils.mergeCompensatingCharge(
+                pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic=Periodic,
+                gmols=gmols, Rgrid2=pivots)
+            if pivots is None:
+                M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = out
+            else:
+                M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs, gridIdx_p, gOnR_p = out
         else:
-            M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs, gridIdx_p, gOnR_p = out
-    else:
-        assert not with_isdf_k, 'the ISDF K path needs use_new_comp_charge=True'
-        M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = PAWutils.compensatingCharge(
-            pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
-    print(f"Time for compensatingCharge: {time.time() - t_start:.4f}s")
-    t_start = time.time()
-        
-    localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
-        pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rs=Rs, Periodic=Periodic, neighbor_list=neighbor_list, rtol=1e-8)
-    print(f"Time for obtainLocalFnsNewer: {time.time() - t_start:.4f}s")
-    t_start = time.time()
+            assert not with_isdf_k, 'the ISDF K path needs use_new_comp_charge=True'
+            M_PQLarr, V_PQLarr, V_LMarr, gridIdx, gOnR, gmol, Rs = PAWutils.compensatingCharge(
+                pmol, mol, alpha0, Rgrid, PAWorbitalCutOff, Rb=augRadius, Periodic = Periodic)
+
+    with timer.timing_block('Local Functions', report=True):
+        localIdx, F_PmuArr, Ftilde_PmuArr, VPQRSArr, SArr = PAWutils.obtainLocalFnsNewer(
+            pmol, mol, ctr_coeff, alpha0, epsilon=PAWorbitalCutOff, Rs=Rs, Periodic=Periodic, neighbor_list=neighbor_list, rtol=1e-8)
 
     # Evaluate AOs on uniform grid
-    start = time.time()
+    aoOnR_tilde = 0
     if with_multigrid == 0: # store AO incore to speed up J
-        _, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
-    else:
-        aoOnR_tilde = 0
-    logger.info(mol, 'AO eval on all grids take %.2e seconds', time.time() - start)
-    print(f"Time for AO evaluation (partitionAOs): {time.time() - t_start:.4f}s")
-    t_start = time.time()
+        with timer.timing_block('AO Evaluation', report=True):
+            _, aoOnR_tilde = PAWutils.partitionAOs(mol, pmol, Rgrid, ctr_coeff, alpha0_wf)
 
     # Prepare PAW data
-    result = PAWutils.separateNuclearElectron(
-        pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr)
+    with timer.timing_block('Nuclear-Electron Split', report=True):
+        result = PAWutils.separateNuclearElectron(
+            pmol, VPQRSArr, M_PQLarr, V_PQLarr, V_LMarr)
 
     # The first seven slots are grid-independent and SHARED; only (gridIdx, gOnR)
     # differ. Tagged so that anything indexing those two slots fails loudly on the
@@ -151,7 +138,6 @@ def getPAWdata(mol,
         PAWdata_K = PAWDataTuple((*shared, gridIdx_p, gOnR_p), 'pivot')
         paw_isdf.validate_k_pawdata(PAWdata_K, len(pivots))
     PAWNucdata = result[-3:]
-    print(f"Time for separateNuclearElectron: {time.time() - t_start:.4f}s")
 
     return (PAWdata, PAWdata_K, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol,
             ctr_coeff, alpha0, Rs, gaussgrid, coulomb_kernel)
@@ -167,6 +153,45 @@ def tag_dm(mydf, dm, cell, kpts, nk, nao):
         mo_occ = numpy.asarray(dm.mo_occ).reshape(-1, nk, nao)
         dm = lib.tag_array(dm.reshape(-1, nk, nao, nao), mo_coeff=mo_coeff, mo_occ=mo_occ)
     return dm
+
+def get_j(mydf, cell, dm):
+    '''vj = the smooth plane-wave J plus the sharp and smooth one-center corrections.'''
+    with mydf.build_timer('J') as lap:
+        cached_dm = getattr(mydf, '_cached_vj1_dm', None)
+        if (mydf.with_multigrid > 0 and cached_dm is not None
+                and numpy.allclose(dm, cached_dm)):
+            with lap('Smooth PW (from XC)'):
+                vj1 = mydf._cached_vj1      # computed in the XC pass (PAWNumInt)
+        else:
+            with lap('Smooth PW'):
+                if mydf.with_multigrid > 0:
+                    vj1 = PAWutils.getjSmoothPW2(cell, dm,
+                                                 mydf.mg_ni,
+                                                 mydf.mesh,
+                                                 mydf.PAWdata,
+                                                 Periodic=mydf.Periodic,
+                                                 coulomb_kernel=mydf.coulomb_kernel)
+                else:
+                    assert(mydf.with_multigrid == 0)
+                    vj1 = PAWutils.getjSmoothPW(cell, dm,
+                                                mydf.aoOnR_tilde,
+                                                mydf.mesh,
+                                                mydf.PAWdata,
+                                                Periodic=mydf.Periodic,
+                                                coulomb_kernel=mydf.coulomb_kernel)
+        with lap('Sharp Local'):
+            vj2 = PAWutils.getjSharpLocal(cell, dm,
+                                          mydf.aoOnR_tilde,
+                                          mydf.mesh,
+                                          mydf.PAWdata,
+                                          Periodic=mydf.Periodic)
+        with lap('Smooth Local'):
+            vj3 = PAWutils.getjSmoothLocal(cell, dm,
+                                           mydf.aoOnR_tilde,
+                                           mydf.mesh,
+                                           mydf.PAWdata,
+                                           Periodic=mydf.Periodic)
+        return vj1 + vj2 + vj3
 
 def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
                     with_j=True, with_k=True, omega=None, exxdiv=None):
@@ -194,40 +219,7 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
         # TODO: test paw jk here
         vj = vk = None
         if with_j:
-            cpu0 = (logger.process_clock(), logger.perf_counter())
-            if mydf.with_multigrid > 0:
-                # Check if vj1 is already cached from the XC pass
-                cached_dm = getattr(mydf, '_cached_vj1_dm', None)
-                if cached_dm is not None and numpy.allclose(dm, cached_dm):
-                    vj1 = mydf._cached_vj1
-                else:
-                    vj1 = PAWutils.getjSmoothPW2(cell, dm,
-                                                 mydf.mg_ni,
-                                                mydf.mesh,
-                                                mydf.PAWdata,
-                                                Periodic=mydf.Periodic)
-            else:
-                assert(mydf.with_multigrid == 0)
-
-                vj1 = PAWutils.getjSmoothPW(cell, dm, 
-                                            mydf.aoOnR_tilde,
-                                            mydf.mesh,
-                                            mydf.PAWdata,
-                                            Periodic=mydf.Periodic)
-            logger.timer(mydf, 'vj PW', *cpu0)
-            cpu0 = (logger.process_clock(), logger.perf_counter())
-            vj2 = PAWutils.getjSharpLocal(cell, dm, 
-                                        mydf.aoOnR_tilde,
-                                        mydf.mesh,
-                                        mydf.PAWdata,
-                                        Periodic=mydf.Periodic)
-            vj3 = PAWutils.getjSmoothLocal(cell, dm, 
-                                        mydf.aoOnR_tilde,
-                                        mydf.mesh,
-                                        mydf.PAWdata,
-                                        Periodic=mydf.Periodic)
-            logger.timer(mydf, 'vj atom', *cpu0)
-            vj = vj1 + vj2 + vj3
+            vj = get_j(mydf, cell, dm)
         if with_k:
             # No periodic K. The ISDF grid's Coulomb kernel is a truncated,
             # non-periodic Green's function, and the getk_PAW_* kernels this used to
@@ -247,6 +239,7 @@ def get_jk_periodic(mydf, dm, hermi=1, kpts=None, kpts_band=None,
             vj = fft_jk.get_j_kpts(mydf, dm, hermi, kpts, kpts_band)
 
     mydf.scf_iter += 1
+    mydf._print_fock_build()
 
     return vj, vk
 
@@ -277,46 +270,7 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
 
     vj = vk = None
     if with_j:
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        # start = time.time()
-        if getattr(mydf, 'with_multigrid', 0) > 0:
-            # Check if vj1 is already cached from the XC pass
-            cached_dm = getattr(mydf, '_cached_vj1_dm', None)
-            if cached_dm is not None and numpy.allclose(dm, cached_dm):
-                vj1 = mydf._cached_vj1
-            else:
-                vj1 = PAWutils.getjSmoothPW2(cell, dm,
-                                             mydf.mg_ni,
-                                             mydf.mesh,
-                                             mydf.PAWdata,
-                                             Periodic=mydf.Periodic,
-                                             coulomb_kernel=mydf.coulomb_kernel)
-        else:
-            assert(mydf.with_multigrid == 0)
-
-            vj1 = PAWutils.getjSmoothPW(cell, dm, 
-                                        mydf.aoOnR_tilde,
-                                        mydf.mesh,
-                                        mydf.PAWdata,
-                                        Periodic=mydf.Periodic,
-                                        coulomb_kernel=mydf.coulomb_kernel)
-        logger.timer(mydf, 'vj PW', *cpu0)
-        # print(f'PW J takes {time.time() - start:.2f} sec')
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        # start = time.time()
-        vj2 = PAWutils.getjSharpLocal(cell, dm, 
-                                    mydf.aoOnR_tilde,
-                                    mydf.mesh,
-                                    mydf.PAWdata,
-                                    Periodic=mydf.Periodic)
-        vj3 = PAWutils.getjSmoothLocal(cell, dm, 
-                                    mydf.aoOnR_tilde,
-                                    mydf.mesh,
-                                    mydf.PAWdata,
-                                    Periodic=mydf.Periodic)
-        logger.timer(mydf, 'vj atom', *cpu0)
-        # print(f'Atom J takes {time.time() - start:.2f} sec')
-        vj = vj1 + vj2 + vj3
+        vj = get_j(mydf, cell, dm)
     if with_k:
         if mydf.PAWdata_K is None:
             raise RuntimeError(
@@ -335,99 +289,105 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
         # INCREMENTAL BUILD. All three terms are linear in dm, so
         # K(D_n) = K(D_0) + sum_i dK(D_i - D_{i-1}) telescopes exactly. Only the
         # ISDF screen is approximate; getkSmoothISDF says why it needs a second dm.
-        nset = dm.shape[0]
-        freq = getattr(mydf, 'k_rebuild_freq', 1)
-        start = getattr(mydf, 'k_incremental_start', 0)
-        idx = mydf._k_build_index
-        # Shape test catches RHF -> UHF on one object, or a different basis.
-        have_cache = (mydf._k_vk_last is not None and mydf._k_dm_last is not None
-                      and mydf._k_dm_last.shape == dm.shape)
+        with mydf.build_timer('K') as lap:
+            nset = dm.shape[0]
+            freq = getattr(mydf, 'k_rebuild_freq', 1)
+            start = getattr(mydf, 'k_incremental_start', 0)
+            idx = mydf._k_build_index
+            # Shape test catches RHF -> UHF on one object, or a different basis.
+            have_cache = (mydf._k_vk_last is not None and mydf._k_dm_last is not None
+                          and mydf._k_dm_last.shape == dm.shape)
 
-        # Tail shutoff, on the PREVIOUS increment's |dE_K|: get_veff runs before
-        # energy_tot, so nothing about this build is known yet. Sticky and one-sided
-        # -- shutting off reverts to full builds, so a false trigger is harmless.
-        stop = mydf._k_stop_threshold()
-        if (not mydf._k_stopped) and stop > 0.0 and mydf._k_last_de is not None \
-                and mydf._k_last_de < stop:
-            mydf._k_stopped = True
-            logger.debug(mydf, 'vk: incremental off at build %d, |dE_K| %.3e < %.3e',
-                         idx, mydf._k_last_de, stop)
+            # Tail shutoff, on the PREVIOUS increment's |dE_K|: get_veff runs before
+            # energy_tot, so nothing about this build is known yet. Sticky and one-sided
+            # -- shutting off reverts to full builds, so a false trigger is harmless.
+            stop = mydf._k_stop_threshold()
+            if (not mydf._k_stopped) and stop > 0.0 and mydf._k_last_de is not None \
+                    and mydf._k_last_de < stop:
+                mydf._k_stopped = True
+                logger.debug(mydf, 'vk: incremental off at build %d, |dE_K| %.3e < %.3e',
+                             idx, mydf._k_last_de, stop)
 
-        # Period runs from `start`, so the warmup does not eat the first incremental
-        # run. `idx > start` makes build `start` an increment -- the cache advances on
-        # every build, warmup included. start=0 collapses this to idx % freq == 0.
-        fresh = ((not have_cache) or freq <= 1 or idx < start or mydf._k_stopped
-                 or ((idx - start) % freq == 0 and idx > start))
+            # Period runs from `start`, so the warmup does not eat the first incremental
+            # run. `idx > start` makes build `start` an increment -- the cache advances on
+            # every build, warmup included. start=0 collapses this to idx % freq == 0.
+            fresh = ((not have_cache) or freq <= 1 or idx < start or mydf._k_stopped
+                     or ((idx - start) % freq == 0 and idx > start))
 
-        # The grid's density screen is linear in D, so an increment is screened on its
-        # own -- no second density rides along.
-        if fresh:
-            dm_build = dm
-        else:
-            dm_build = numpy.asarray(dm) - mydf._k_dm_last
+            # The grid's density screen is linear in D, so an increment is screened on its
+            # own -- no second density rides along.
+            if fresh:
+                dm_build = dm
+            else:
+                dm_build = numpy.asarray(dm) - mydf._k_dm_last
 
-        if getattr(mydf, 'k_dynamic_screen', False):
-            _s = mydf._apply_dynamic_screen()
-            if _s is not None:
-                logger.debug1(mydf, 'vk build %d: screen_error -> %.3e', idx, _s)
+            if getattr(mydf, 'k_dynamic_screen', False):
+                _s = mydf._apply_dynamic_screen()
+                if _s is not None:
+                    logger.debug1(mydf, 'vk build %d: screen_error -> %.3e', idx, _s)
 
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        vk_spins = []
-        for spin in range(nset):
-            vk_spins.append(
-                paw_isdf.getkSmoothISDF(cell, dm_build, mydf.gaussgrid, mydf.PAWdata_K,
-                                        Periodic=mydf.Periodic, spin=spin)
-                + PAWutils.getkSharpLocal(cell, dm_build, mydf.aoOnR_tilde, mydf.mesh,
-                                          mydf.PAWdata_K, Periodic=mydf.Periodic, spin=spin)
-                + PAWutils.getkSmoothLocal(cell, dm_build, mydf.aoOnR_tilde, mydf.mesh,
-                                           mydf.PAWdata_K, Periodic=mydf.Periodic, spin=spin))
-        logger.timer(mydf, 'vk ISDF', *cpu0)
+            vk_spins = []
+            for spin in range(nset):
+                with lap('Smooth ISDF'):
+                    vk1 = paw_isdf.getkSmoothISDF(cell, dm_build, mydf.gaussgrid,
+                                                  mydf.PAWdata_K, Periodic=mydf.Periodic,
+                                                  spin=spin)
+                with lap('Sharp Local'):
+                    vk2 = PAWutils.getkSharpLocal(cell, dm_build, mydf.aoOnR_tilde,
+                                                  mydf.mesh, mydf.PAWdata_K,
+                                                  Periodic=mydf.Periodic, spin=spin)
+                with lap('Smooth Local'):
+                    vk3 = PAWutils.getkSmoothLocal(cell, dm_build, mydf.aoOnR_tilde,
+                                                   mydf.mesh, mydf.PAWdata_K,
+                                                   Periodic=mydf.Periodic, spin=spin)
+                vk_spins.append(vk1 + vk2 + vk3)
 
-        # The cached K and D_prev are only worth their nao^2 buffers if a later build
-        # can read them: freq <= 1 never increments and the shutoff is sticky. When
-        # they are not wanted, skip the stack and the defensive copy below too.
-        # want_cache False implies fresh, so vk_full is never None where it is used.
-        want_cache = (freq > 1) and not mydf._k_stopped
-        vk_full = numpy.asarray(vk_spins) if want_cache else None
+            # The cached K and D_prev are only worth their nao^2 buffers if a later build
+            # can read them: freq <= 1 never increments and the shutoff is sticky. When
+            # they are not wanted, skip the stack and the defensive copy below too.
+            # want_cache False implies fresh, so vk_full is never None where it is used.
+            want_cache = (freq > 1) and not mydf._k_stopped
+            vk_full = numpy.asarray(vk_spins) if want_cache else None
 
-        if not fresh:
-            # E_K = -1/4 tr(D K) restricted, -1/2 sum_s tr(D_s K_s) unrestricted.
-            mydf._k_last_de = abs((0.25 if nset == 1 else 0.5)
-                                  * float(numpy.einsum('sij,sji->',
-                                                       numpy.asarray(dm)[:, 0],
-                                                       vk_full)))
-            vk_full = vk_full + mydf._k_vk_last
-        logger.debug1(mydf, 'vk build %d: %s, |ddm| = %.3e', idx,
-                      'rebuild' if fresh else 'increment',
-                      0.0 if fresh else float(numpy.linalg.norm(dm_build)))
+            if not fresh:
+                # E_K = -1/4 tr(D K) restricted, -1/2 sum_s tr(D_s K_s) unrestricted.
+                mydf._k_last_de = abs((0.25 if nset == 1 else 0.5)
+                                      * float(numpy.einsum('sij,sji->',
+                                                           numpy.asarray(dm)[:, 0],
+                                                           vk_full)))
+                vk_full = vk_full + mydf._k_vk_last
+            logger.debug1(mydf, 'vk build %d: %s, |ddm| = %.3e', idx,
+                          'rebuild' if fresh else 'increment',
+                          0.0 if fresh else float(numpy.linalg.norm(dm_build)))
 
-        mydf._k_last_was_fresh = fresh          # so callers need not re-derive it
-        if want_cache:
-            # D_prev advances on EVERY build: the increment is against the previous
-            # iteration, not the last rebuild, so it shrinks as the SCF converges.
-            mydf._k_vk_last = vk_full
-            mydf._k_dm_last = numpy.array(dm)   # plain copy; drops tag_array tags
-        else:
-            mydf._k_vk_last = mydf._k_dm_last = None
-        mydf._k_build_index += 1
+            mydf._k_last_was_fresh = fresh          # so callers need not re-derive it
+            if want_cache:
+                # D_prev advances on EVERY build: the increment is against the previous
+                # iteration, not the last rebuild, so it shrinks as the SCF converges.
+                mydf._k_vk_last = vk_full
+                mydf._k_dm_last = numpy.array(dm)   # plain copy; drops tag_array tags
+            else:
+                mydf._k_vk_last = mydf._k_dm_last = None
+            mydf._k_build_index += 1
 
-        if want_cache:
-            # Copy: _k_vk_last is the running reference and must not alias the result.
-            vk = vk_full[0].copy() if nset == 1 else vk_full.copy()
-        else:
-            vk = vk_spins[0] if nset == 1 else numpy.asarray(vk_spins)
+            if want_cache:
+                # Copy: _k_vk_last is the running reference and must not alias the result.
+                vk = vk_full[0].copy() if nset == 1 else vk_full.copy()
+            else:
+                vk = vk_spins[0] if nset == 1 else numpy.asarray(vk_spins)
+    mydf._print_fock_build()
     return vj, vk
 
-class PAW(FFTDF):
+class PAW(PAWTimingMixin, FFTDF):
     _keys = {
         'PAWorbitalCutOff', 'PWAccuracy', 'Periodic', 'augRadius', 'gdfNuc',
         'with_multigrid', 'use_merged_multigrid', 'alpha0_lowmem', 'auto_box', 'ao_box_cutoff',
-        'use_new_comp_charge', 'Times_', 'smoothCell', 'mg_ni', 'aoOnR_tilde',
+        'use_new_comp_charge', 'smoothCell', 'mg_ni', 'aoOnR_tilde',
         'mesh', 'PAWdata', 'PAWNucdata', 'Rgrid', 'cell', 'pcell', 'gcell',
         'ctr_coeff', 'alpha0', 'scf_iter', 'kmesh', 'method',
         'with_isdf_k', 'isdf_args', 'PAWdata_K', 'gaussgrid', 'k_rebuild_freq',
         'k_incremental_start', 'k_incremental_stop', 'k_dynamic_screen', 'coulomb_kernel',
-        'coulomb_method'
+        'coulomb_method', 'timings', 'timing_starts', 'scf_runs'
     }
 
     def __init__(
@@ -545,32 +505,27 @@ class PAW(FFTDF):
         # ~screen_error^0.42, which is a two-point fit.
         self.k_dynamic_screen = bool(k_dynamic_screen)
         self.clear_k_cache()
-        self.Times_ = {
-            "Diagonalize":0.,
-            "Exchange"   :0.,
-            "Direct"     :0.,
-            "1e-orbs"    :0.,
-            "PAWinit"    :0.,
-            "AOs"        :0.,
-            "Fock"       :0.
-        }
+        self._init_timing()
 
-        self.initPAW(cell, alpha0)
+        with self.timing_block('PAW Setup', report=True):
+            self.initPAW(cell, alpha0)
 
-        if self.with_multigrid > 0:
-            # Initialize Multigrid for optimized Hartree/XC integration
-            self.smoothCell = smoothCell2(self.cell, self.alpha0)
-            if self.with_multigrid == 1:
-                raise NotImplementedError('MultiGridNumInt1 not integrated with PAW yet')
-            elif self.with_multigrid == 2:
-                self.smoothCell.precision = min(self.cell.precision, 1e-10)
-                self.mg_ni = MultiGridNumInt2(self.smoothCell)
-                self.mg_ni.mesh = self.grids.mesh
-                self.mg_ni.xc_with_j = False
-                self.mg_ni.ntasks = 5 # consider making this a user input
-                self.mg_ni.build()
-        else:
-            self.mg_ni = None
+            if self.with_multigrid > 0:
+                # Initialize Multigrid for optimized Hartree/XC integration
+                with self.timing_block('Multigrid Init', report=True):
+                    self.smoothCell = smoothCell2(self.cell, self.alpha0)
+                    if self.with_multigrid == 1:
+                        raise NotImplementedError(
+                            'MultiGridNumInt1 not integrated with PAW yet')
+                    elif self.with_multigrid == 2:
+                        self.smoothCell.precision = min(self.cell.precision, 1e-10)
+                        self.mg_ni = MultiGridNumInt2(self.smoothCell)
+                        self.mg_ni.mesh = self.grids.mesh
+                        self.mg_ni.xc_with_j = False
+                        self.mg_ni.ntasks = 5 # consider making this a user input
+                        self.mg_ni.build()
+            else:
+                self.mg_ni = None
 
         # pyscf's MOLECULAR df_jk._DFHF.get_jk calls
         #     self.with_df.get_jk(dm, hermi, with_j, with_dfk, direct_scf_tol, omega)
@@ -653,10 +608,10 @@ class PAW(FFTDF):
             return get_jk_molecule(self, dm, hermi, with_j, with_k, omega=omega)
 
     def initPAW(self, cell, alpha0):
-        t0 = time.time()
         (PAWdata, PAWdata_K, PAWNucdata, mesh, Rgrid, aoOnR_tilde, mol, pmol, gmol,
          ctr_coeff, alpha0, Rs, gaussgrid, coulomb_kernel) = getPAWdata(
             cell,
+            self,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
             PWAccuracy=self.PWAccuracy,
             Periodic=self.Periodic,
@@ -674,13 +629,7 @@ class PAW(FFTDF):
 
         self.augRadius = Rs
 
-        
-        self.Times_["PAWinit"] += time.time()-t0
-
         nelec, nao = cell.nelectron, cell.nao
-
-        t0 = time.time()
-        self.Times_["1e-orbs"] += time.time()-t0
 
         self.aoOnR_tilde = aoOnR_tilde
         # The REAL FFT mesh, always. The pawisdf branch overwrote this with
@@ -925,6 +874,7 @@ class PAW(FFTDF):
             # molecular
             occri = cls(cell, Periodic=False, **kwargs)
         occri.method = method
+        occri.time_scf(mf)
 
         # cell will be modified for molecular case
         

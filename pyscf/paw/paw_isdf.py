@@ -116,13 +116,13 @@ def assert_geometry_handoff(grid, cell, log_obj=None):
     Every one of these failures is otherwise silent: a wrong-by-a-translation grid
     puts each atom-local correction on the wrong nucleus and still converges.
     '''
-    if getattr(grid, 'box_auto', False):
+    if grid.init_args['L'] is None:
         raise ValueError(
-            'ISDFGrid sized its own box and translated the molecule (box_auto=True). '
+            'ISDFGrid sized its own box and translated the molecule (L=None). '
             'PAW owns the geometry here, so L must be passed explicitly.')
 
     paw_coords = cell.atom_coords()                  # Bohr
-    grid_coords = numpy.asarray(grid.shifted_coords())
+    grid_coords = numpy.asarray(grid.mol.atom_coords())
 
     if grid_coords.shape != paw_coords.shape:
         raise ValueError(f'atom count mismatch: grid has {grid_coords.shape[0]}, '
@@ -198,7 +198,7 @@ def validate_k_pawdata(PAWdata_K, n_pivots):
 # ISDFGrid.__init__ is the caller's to set through isdf_args.
 PAW_OWNED = {
     'L': 'L comes from the cell PAW built',
-    'maxgto': "maxgto is PAW's alpha0, per element",
+    'alpha0': "PAW's alpha0, per element",
     'd': "d is PAW's own grid spacing, set by ke_cutoff -- one grid density for J "
          "and K. Change ke_cutoff to change it",
 }
@@ -214,7 +214,7 @@ def _check_isdf_args(grid_cls, isdf_args):
 
     Two things it does catch. A PAW-owned argument is rejected with the reason,
     because silently honouring `d` would break the single grid density and silently
-    honouring `L` or `maxgto` would put the grid on a different geometry or a
+    honouring `L` or `alpha0` would put the grid on a different geometry or a
     different basis split than the augmentation. And a misspelling is reported
     against the real signature: ISDFGrid has no **kwargs, so it would raise
     TypeError on its own, but by then the message is about a constructor the caller
@@ -291,8 +291,7 @@ def _seed_box_for_cells(grid_cls, L, d, isdf_args):
     """
     import inspect
     params = inspect.signature(grid_cls.__init__).parameters
-    Nmax = isdf_args.get('Nmax', params['Nmax'].default)
-    block_size = int(numpy.floor(float(Nmax) ** (1. / 3.)))
+    block_size = int(isdf_args.get('block_size', params['block_size'].default))
     if block_size <= 1:
         return numpy.asarray(L, dtype=float)    # every nx is a multiple; nothing to do
     pitch = block_size * d
@@ -303,7 +302,7 @@ def _seed_box_for_cells(grid_cls, L, d, isdf_args):
 def build_isdf_grid(cell, alpha0, gmolSph, mesh, isdf_args=None, log_obj=None):
     '''Build an ISDFGrid on PAW's geometry and return (grid, pivot coordinates).
 
-    `alpha0` is passed straight through as ISDFGrid's `maxgto`, dict and all: the
+    `alpha0` is passed straight through as ISDFGrid's `alpha0`, dict and all: the
     grid's smooth/sharp split and PAW's augmentation have to agree shell by shell
     about which primitives each owns, so collapsing a per-element dict to one number
     here would be exactly the disagreement both docstrings warn about.
@@ -316,7 +315,7 @@ def build_isdf_grid(cell, alpha0, gmolSph, mesh, isdf_args=None, log_obj=None):
     paw_grid_spacing and the module docstring.
 
     `isdf_args` is forwarded verbatim to ISDFGrid, so every accuracy and algorithm
-    knob it has stays reachable (isdf_tol, Nmax, ao_thresh, screen_error,
+    knob it has stays reachable (isdf_tol, block_size, ao_thresh, screen_error,
     matrix_free, the fmm_* family, ...). The exceptions are the three PAW determines
     itself -- see PAW_OWNED -- which are rejected rather than overridden.
     '''
@@ -331,7 +330,7 @@ def build_isdf_grid(cell, alpha0, gmolSph, mesh, isdf_args=None, log_obj=None):
     d = paw_grid_spacing(cell, mesh)
     L_seed, L_want = _seed_box_for_cells(ISDFGrid, L_paw, d, opts)
 
-    grid = ISDFGrid(_MfShim(mol), L=L_seed, maxgto=alpha0, d=d, **opts)
+    grid = ISDFGrid(_MfShim(mol), L=L_seed, alpha0=alpha0, d=d, **opts)
     assert_geometry_handoff(grid, cell, log_obj=log_obj)
 
     # ISDFGrid should have rounded the seed back up to the box we actually wanted,
@@ -359,7 +358,7 @@ def build_isdf_grid(cell, alpha0, gmolSph, mesh, isdf_args=None, log_obj=None):
                     numpy.array2string(L_paw, precision=3))
 
     grid.setup_isdf(gmol=gmolSph)
-    pivots = grid.get_sparse_grid()
+    pivots = grid.get_pivot_coordinates()
     if pivots is None:
         raise RuntimeError('setup_isdf produced no pivots')
 

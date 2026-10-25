@@ -1183,7 +1183,7 @@ def get_neighbor_list(mol, epsilon=1e-8, Periodic=False):
 #
 #   'uniform' -- the FFT grid, Rgrid = pmol.get_uniform_grids(wrap_around=False).
 #                What the J build, get_nuc and vxc need.
-#   'pivot'   -- the ISDF pivots only, grid.get_sparse_grid(). What the exchange
+#   'pivot'   -- the ISDF pivots only, grid.get_pivot_coordinates(). What the exchange
 #                build needs; pawexchange.py reads gridIdx[a] as offsets into the
 #                cell-major concatenated pivot array.
 #

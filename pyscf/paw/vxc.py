@@ -89,40 +89,41 @@ class PAWNumInt(NumInt):
         self.pcell = mydf.pcell
         self.max_memory = mydf.max_memory
 
-        self.with_multigrid = with_multigrid
-        self.use_merged_multigrid = use_merged_multigrid
+        with mydf.timing_block('XC Setup', report=True):
+            self.with_multigrid = with_multigrid
+            self.use_merged_multigrid = use_merged_multigrid
         
-        # Prefer reusing mg_ni from the density fitting object (mydf)
-        if getattr(mydf, 'mg_ni', None) is not None:
-            self.mg_ni = mydf.mg_ni
-            self.smoothCell = getattr(mydf, 'smoothCell', self.smoothCell)
-            self.with_multigrid = mydf.with_multigrid
-            self.use_merged_multigrid = mydf.use_merged_multigrid
-        elif with_multigrid == 1:
-            # Initialize Multigrid (pair version) for the smooth component
-            self.mg_ni = MultiGridNumInt(self.smoothCell)
-            self.mg_ni.mesh = mydf.grids.mesh
-            self.mg_ni.xc_with_j = False
-            self.mg_ni.build()
-        elif with_multigrid == 2:
-            # Initialize Multigrid (pair version) for the smooth component
-            # Ensure smoothCell has enough precision for multigrid_pair (version 2)
-            # which lacks the internal EXPDROP safeguard present in version 1.
-            self.smoothCell.precision = min(self.cell.precision, 1e-10)
-            self.mg_ni = MultiGridNumInt2(self.smoothCell)
-            self.mg_ni.mesh = mydf.grids.mesh
-            self.mg_ni.xc_with_j = False
-            self.mg_ni.ntasks = 5
-            self.mg_ni.build()
-        else:
-            self.mg_ni = None
+            # Prefer reusing mg_ni from the density fitting object (mydf)
+            if getattr(mydf, 'mg_ni', None) is not None:
+                self.mg_ni = mydf.mg_ni
+                self.smoothCell = getattr(mydf, 'smoothCell', self.smoothCell)
+                self.with_multigrid = mydf.with_multigrid
+                self.use_merged_multigrid = mydf.use_merged_multigrid
+            elif with_multigrid == 1:
+                # Initialize Multigrid (pair version) for the smooth component
+                self.mg_ni = MultiGridNumInt(self.smoothCell)
+                self.mg_ni.mesh = mydf.grids.mesh
+                self.mg_ni.xc_with_j = False
+                self.mg_ni.build()
+            elif with_multigrid == 2:
+                # Initialize Multigrid (pair version) for the smooth component
+                # Ensure smoothCell has enough precision for multigrid_pair (version 2)
+                # which lacks the internal EXPDROP safeguard present in version 1.
+                self.smoothCell.precision = min(self.cell.precision, 1e-10)
+                self.mg_ni = MultiGridNumInt2(self.smoothCell)
+                self.mg_ni.mesh = mydf.grids.mesh
+                self.mg_ni.xc_with_j = False
+                self.mg_ni.ntasks = 5
+                self.mg_ni.build()
+            else:
+                self.mg_ni = None
 
-        if uniform:
-            self.uniform_grid = mydf.grids 
-            self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = self.prepareAtomicData(mydf.alpha0, getattr(mydf, 'augRadius', None))
-        else:
-            self.uniform_grid = BeckeGrids(self.pcell).build()
-            self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = [], [], []
+            if uniform:
+                self.uniform_grid = mydf.grids 
+                self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = self.prepareAtomicData(mydf.alpha0, getattr(mydf, 'augRadius', None))
+            else:
+                self.uniform_grid = BeckeGrids(self.pcell).build()
+                self.pcellAtoms, self.smoothPcellAtoms, self.atomicGrids = [], [], []
         self.localIdx = mydf.PAWdata[0]
         self.F_PmuArr = mydf.PAWdata[1]
         self.Ftilde_PmuArr = mydf.PAWdata[2]
@@ -568,21 +569,21 @@ class PAWNumInt(NumInt):
                              hermi, kpt.reshape(1,3), kpts_band, max_memory, verbose)
         spin = 0
         
-        # uniform grid
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        nelec1, exc1, vxc1 = self.nr_rks_uniform_smooth(
-            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
-        )
-        logger.timer(self.mf.with_df, 'vxc uniform', *cpu0)
-        # atomic grid
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        nelec2, exc2, vxc2 = self.nr_rks_atomic_sharp(
-            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
-        )
-        nelec3, exc3, vxc3 = self.nr_rks_atomic_smooth(
-            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
-        )
-        logger.timer(self.mf.with_df, 'vxc atomic', *cpu0)
+        with self.mf.with_df.build_timer('XC') as lap:
+            # uniform grid
+            with lap('Smooth Uniform'):
+                nelec1, exc1, vxc1 = self.nr_rks_uniform_smooth(
+                    xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+                )
+            # atomic grid
+            with lap('Sharp Atomic'):
+                nelec2, exc2, vxc2 = self.nr_rks_atomic_sharp(
+                    xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+                )
+            with lap('Smooth Atomic'):
+                nelec3, exc3, vxc3 = self.nr_rks_atomic_smooth(
+                    xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+                )
         logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec1)
         logger.info(self.mf, 'all nelec with atomic grids = %s', nelec2)
         logger.info(self.mf, 'smooth nelec with atomic grids = %s', nelec3)
@@ -613,19 +614,19 @@ class PAWNumInt(NumInt):
                              hermi, kpt, kpts_band, max_memory, verbose)
         spin = 1
         
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        nelec1, exc1, vxc1 = self.nr_uks_uniform_smooth(
-            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
-        )
-        logger.timer(self.mf.with_df, 'vxc uniform', *cpu0)
-        cpu0 = (logger.process_clock(), logger.perf_counter())
-        nelec2, exc2, vxc2 = self.nr_uks_atomic_sharp(
-            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
-        )
-        nelec3, exc3, vxc3 = self.nr_uks_atomic_smooth(
-            xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
-        )
-        logger.timer(self.mf.with_df, 'vxc atomic', *cpu0)
+        with self.mf.with_df.build_timer('XC') as lap:
+            with lap('Smooth Uniform'):
+                nelec1, exc1, vxc1 = self.nr_uks_uniform_smooth(
+                    xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+                )
+            with lap('Sharp Atomic'):
+                nelec2, exc2, vxc2 = self.nr_uks_atomic_sharp(
+                    xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+                )
+            with lap('Smooth Atomic'):
+                nelec3, exc3, vxc3 = self.nr_uks_atomic_smooth(
+                    xc_code, dms, spin, relativity, hermi, kpt, kpts_band, max_memory, verbose
+                )
         logger.info(self.mf, 'smooth nelec with uniform grids = %s', nelec1)
         logger.info(self.mf, 'all nelec with atomic grids = %s', nelec2)
         logger.info(self.mf, 'smooth nelec with atomic grids = %s', nelec3)
