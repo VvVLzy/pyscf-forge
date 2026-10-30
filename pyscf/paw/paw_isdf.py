@@ -43,9 +43,9 @@ paw_grid_spacing() and is not a knob: ke_cutoff is the single control over grid
 density for the whole program, and passing `d` in isdf_args is an error. Every OTHER
 ISDFGrid knob is forwarded verbatim through isdf_args.
 
-That is a correctness requirement, not tidiness. calculate_alpha0_dict picks alpha0
-as the sharpest exponent PAW's mesh can represent, so PAW's grid resolves its own
-compensating charge by construction and alpha0 CLIMBS WITH ke_cutoff. When d was
+That is a correctness requirement, not tidiness. paw_alpha0 picks alpha0 by
+weighing PAW's mesh error (compensating charge included) against the spheres'
+overlap, so PAW's grid resolves its own compensating charge and alpha0 CLIMBS WITH ke_cutoff. When d was
 independent it stayed put while alpha0 moved, and past the crossover the pivots could
 no longer resolve the shape functions -- gOnR on the pivots went quietly wrong.
 Measured on CH4/cc-pVDZ, 14 bohr, isdf_tol=1e-7, error in E_K:

@@ -689,9 +689,10 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rs=None, Pe
             # nAlpha = c//(2*l+1) # assume spherical GTO
             alphaProj = (l * numpy.log(Rb) - numpy.log(epsilon)) / Rb**2
             alphaAtomL = alphaAtom[Latom==l]
-            isoPrim = alphaAtomL > alpha0_val
+            # one flag per shell (alphaAtomL repeats each shell 2l+1 times); the loops below index by shell
+            isoPrim = alphaAtomL[::2*l+1] > alpha0_val
             numPrimL = len(alphaAtomL) // (2*l+1)
-            numIsoPrimL = sum(isoPrim) // (2*l+1)
+            numIsoPrimL = int(sum(isoPrim))
             assert(c == numPrimL*(2*l+1))
 
             # smallest exponent nees to be contained in the sphere

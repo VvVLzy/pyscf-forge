@@ -15,6 +15,7 @@ import pyscf
 import numpy
 
 from . import PAWutils
+from . import paw_alpha0
 from . import paw_isdf
 from .paw_helper import PAWDataTuple
 from .paw_timing import PAWTimingMixin
@@ -23,12 +24,11 @@ from .paw_timing import PAWTimingMixin
 def getPAWdata(mol,
                timer,
                PAWorbitalCutOff=1.e-8,
-               PWAccuracy=1e-5,
                Periodic = False,
                alpha0=None,
                augRadius=None,
                with_multigrid=2,
-               alpha0_lowmem=True,
+               extended_fit_set=True,
                auto_box=False,
                ao_box_cutoff=1e-13,
                use_new_comp_charge=True,
@@ -41,10 +41,17 @@ def getPAWdata(mol,
             mol                          = PAWutils.prepareMolForPAW(mol, auto_box=auto_box,
                                                                      ao_box_cutoff=ao_box_cutoff)
 
+    # alpha0 needs only the contracted basis and ke_cutoff, and it shapes pmol's fitting set.
+    # A given alpha0 (number or {label: value}) is kept; the rest are chosen (paw_alpha0).
+    with timer.timing_block('Alpha0', report=True):
+        alpha0, expected_error = paw_alpha0.choose_alpha0(mol, mol.ke_cutoff, periodic=Periodic, fixed=alpha0,
+                                                          orbital_cutoff=PAWorbitalCutOff)
+        paw_alpha0.log_expected_error(mol, alpha0, expected_error)
+    alpha0_wf = alpha0 # must be this!
+
     # uncontract basis
     with timer.timing_block('Basis Decontraction', report=True):
-        pmol, ctr_coeff = mol.decontract_basis()
-        pmol._basis = PAWutils.modifyMolBasis(pmol._basis)
+        pmol, ctr_coeff = PAWutils.decontract_basis(mol, alpha0, extended_fit_set)
 
     # initialize grids
     with timer.timing_block('Uniform Grid', report=True):
@@ -54,8 +61,7 @@ def getPAWdata(mol,
     # The molecular Coulomb solve: the PAW mesh zero-padded 2x per axis and convolved
     # with a cached open-boundary kernel (Ewald split, omega = 6/L_min; 'exact' is the
     # sphere-truncated kernel on an auxiliary grid, for validation) -- see
-    # paw_helper.OpenBoundaryCoulomb. None when periodic. Built before alpha0, because
-    # alpha0_lowmem=False probes alpha0 in this same box.
+    # paw_helper.OpenBoundaryCoulomb. None when periodic.
     with timer.timing_block('Coulomb Kernel', report=True):
         coulomb_kernel = (None if Periodic else
                           PAWutils.build_open_boundary_kernel(mesh, pmol, method=coulomb_method))
@@ -63,20 +69,12 @@ def getPAWdata(mol,
     with timer.timing_block('Neighbor List', report=True):
         neighbor_list = PAWutils.get_neighbor_list(mol, epsilon=PAWorbitalCutOff, Periodic=Periodic)
 
-    # get alpha0
-    with timer.timing_block('Alpha0', report=True):
-        alpha0_dict = PAWutils.calculate_alpha0_dict(pmol, Rgrid, mesh, alpha0, PWAccuracy, Periodic, alpha0_lowmem, mol=mol, neighbor_list=neighbor_list,
-                                                     coulomb_kernel=coulomb_kernel)
-
-    alpha0 = alpha0_dict
-    alpha0_wf = alpha0 # must be this!
-
     # The ISDF exchange grid, if K was asked for.
     #
     # This sits HERE, after alpha0 and before the compensating charge, and the order
     # is the point of the whole arrangement. The grid's smooth/sharp basis split is
     # driven by alpha0, and its pivot selection is driven by the compensating-charge
-    # basis gmolSph -- so alpha0 has to be known first (it is, as of the line above)
+    # basis gmolSph -- so alpha0 has to be known first (it is, from the Alpha0 step)
     # and gmolSph has to be built before setup_isdf runs. The old arrangement had the
     # grid built first by the caller, which is why alpha0 had to be read back off it
     # as grid.maxgto instead of being determined here.
@@ -380,8 +378,8 @@ def get_jk_molecule(mydf, dm, hermi=1, with_j=True, with_k=True,
 
 class PAW(PAWTimingMixin, FFTDF):
     _keys = {
-        'PAWorbitalCutOff', 'PWAccuracy', 'Periodic', 'augRadius', 'gdfNuc',
-        'with_multigrid', 'use_merged_multigrid', 'alpha0_lowmem', 'auto_box', 'ao_box_cutoff',
+        'PAWorbitalCutOff', 'Periodic', 'augRadius', 'gdfNuc',
+        'with_multigrid', 'use_merged_multigrid', 'extended_fit_set', 'auto_box', 'ao_box_cutoff',
         'use_new_comp_charge', 'smoothCell', 'mg_ni', 'aoOnR_tilde',
         'mesh', 'PAWdata', 'PAWNucdata', 'Rgrid', 'cell', 'pcell', 'gcell',
         'ctr_coeff', 'alpha0', 'scf_iter', 'kmesh', 'method',
@@ -395,14 +393,13 @@ class PAW(PAWTimingMixin, FFTDF):
             cell,
             kpts=None,
             PAWorbitalCutOff=1e-8,
-            PWAccuracy=1e-6,
             Periodic=False,
             alpha0=None,
             augRadius=None,
             gdfNuc=False,
             with_multigrid=2,
             use_merged_multigrid=True,
-            alpha0_lowmem=True,
+            extended_fit_set=True,
             auto_box=True,
             ao_box_cutoff=1e-13,
             use_new_comp_charge=True,
@@ -436,13 +433,13 @@ class PAW(PAWTimingMixin, FFTDF):
 
         # PAW init
         self.PAWorbitalCutOff = PAWorbitalCutOff
-        self.PWAccuracy = PWAccuracy
         self.Periodic = Periodic
         self.augRadius = augRadius
         self.gdfNuc = gdfNuc
         self.with_multigrid = with_multigrid
         self.use_merged_multigrid = use_merged_multigrid
-        self.alpha0_lowmem = alpha0_lowmem
+        # bisect2 primitives in each atom's one-centre fit (paw_helper.fit_set_extension)
+        self.extended_fit_set = extended_fit_set
         self.auto_box = auto_box
         # AO value at which auto_box cuts each atom's radius (paw_helper.estimate_box_size).
         if not ao_box_cutoff > 0:
@@ -613,12 +610,11 @@ class PAW(PAWTimingMixin, FFTDF):
             cell,
             self,
             PAWorbitalCutOff=self.PAWorbitalCutOff,
-            PWAccuracy=self.PWAccuracy,
             Periodic=self.Periodic,
             alpha0=alpha0,
             augRadius=self.augRadius,
             with_multigrid=self.with_multigrid,
-            alpha0_lowmem=self.alpha0_lowmem,
+            extended_fit_set=self.extended_fit_set,
             auto_box=self.auto_box,
             ao_box_cutoff=self.ao_box_cutoff,
             use_new_comp_charge=self.use_new_comp_charge,
