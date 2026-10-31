@@ -15,6 +15,8 @@ from pyscf.dft import LebedevGrid
 from pyscf.gto.eval_gto import eval_gto
 from pyscf.lib import logger
 
+from .paw_helper import fit_set_extension
+
 # Hartree per unit of each term, from one joint log10 fit to 1526 W4-11 PAW errors (2026-10-30).
 C_GRID, C_SAME, C_UNLIKE, C_FIT = 1.7842369311117017, 3.2654181227294314, 16.359812632154743, 0.37812976204764326
 HALF_BOND = 32.4             # Bohr^2: an unlike neighbour at distance d is given alpha0 = HALF_BOND / d^2
@@ -45,10 +47,10 @@ ALIASING_LOG_F = numpy.log([
     1.011635e-09, 7.757709e-10, 5.950305e-10, 4.564981e-10, 3.502917e-10, 2.688491e-10, 2.063831e-10, 1.584613e-10])
 
 
-def choose_alpha0(mol, ke_cutoff, periodic=False, fixed=None, orbital_cutoff=1e-8):
-    '''({label: alpha0}, expected error per atom in Ha). fixed: one alpha0 for every label, or
-    {label: alpha0} for some; those are kept and only their expected error is evaluated.'''
-    model = _ErrorModel(mol, ke_cutoff, periodic)
+def choose_alpha0(mol, ke_cutoff, periodic=False, fixed=None, orbital_cutoff=1e-8, extended_fit_set=True):
+    '''({label: alpha0}, expected error per atom in Ha). fixed: one alpha0 for every label, or {label: alpha0}
+    for some; those are kept and only their expected error is evaluated. extended_fit_set: as PAW's.'''
+    model = _ErrorModel(mol, ke_cutoff, periodic, extended_fit_set)
     if fixed is not None and not isinstance(fixed, dict):
         fixed = dict.fromkeys(model.types, fixed)
     fixed = {label: a for label, a in (fixed or {}).items() if a is not None}
@@ -140,7 +142,8 @@ class _AtomType:
     '''One basis label alone at the origin: its primitives, contraction and atomic-guess density.
     The error terms that depend only on the label and the gap are cached here.'''
 
-    def __init__(self, mol, label, charge):
+    def __init__(self, mol, label, charge, extended_fit_set):
+        self.extended_fit_set = extended_fit_set
         atom = gto.M(atom=[(label, (0.0, 0.0, 0.0))], basis={label: mol._basis[label]}, unit='B',
                      spin=charge % 2, verbose=0)
         self.prim, self.ctr = atom.decontract_basis(aggregate=True)   # contracted AOs = prim AOs @ ctr
@@ -198,7 +201,7 @@ class _AtomType:
 
     def fit_operator(self, gap):
         '''(grid points, F): F @ (neighbour AOs on the points) = int phi_sharp (phi - P phi), with P the fit
-        onto this atom's smooth primitives, least squares weighted by its sharp density.'''
+        onto the atom's fitting set (its smooth primitives, plus PAW's extension if on), weighted by its sharp density.'''
         if gap not in self._fit_operator:
             r_max = numpy.sqrt(FIT_EDGE / self.exponents[gap])
             x, w = numpy.polynomial.legendre.leggauss(FIT_RADIAL)
@@ -210,7 +213,7 @@ class _AtomType:
             sharp = self.is_sharp(gap)
             sharp_ao = prim_ao[:, sharp] @ self.ctr[sharp]
             weighted_sharp_ao = sharp_ao * weights.reshape(-1, 1)
-            fit_basis = prim_ao[:, ~sharp]
+            fit_basis = numpy.hstack([prim_ao[:, ~sharp], self._extension_ao(gap, points)])
             if not fit_basis.shape[1]:   # nothing smooth to fit with
                 self._fit_operator[gap] = (points, weighted_sharp_ao.T)
                 return self._fit_operator[gap]
@@ -222,17 +225,29 @@ class _AtomType:
             self._fit_operator[gap] = (points, weighted_sharp_ao.T - (weighted_sharp_ao.T @ fit_basis) @ coefficients)
         return self._fit_operator[gap]
 
+    def _extension_ao(self, gap, points):
+        '''The primitives PAW's extended fitting set adds, at the gap's top alpha0, on the points (none if off).
+        Within a gap they shift only slightly, so the fit term stays one value per gap.'''
+        top = self.exponents[gap] * BELOW_EXPONENT
+        shells = [[int(l), [e, 1.0]] for l, e in zip(self.prim._bas[:, gto.ANG_OF], self.prim._env[self.prim._bas[:, gto.PTR_EXP]])]
+        extension = fit_set_extension(shells, top) if self.extended_fit_set else []
+        if not extension:
+            return numpy.zeros((len(points), 0))
+        extra = gto.M(atom=[('X', (0.0, 0.0, 0.0))], basis={'X': [[l, [e, 1.0]] for l, e in extension]}, unit='B', verbose=0)
+        return extra.eval_gto('GTOval_sph', points)
+
 
 class _ErrorModel:
     '''Per-atom error terms of a molecule or cell at trial alpha0 values, one basis label at a time.'''
 
-    def __init__(self, mol, ke_cutoff, periodic):
+    def __init__(self, mol, ke_cutoff, periodic, extended_fit_set):
         self.mol, self.ke_cutoff = mol, ke_cutoff
         self.coords = mol.atom_coords()
         labels = [mol.atom_symbol(i) for i in range(mol.natm)]
         self.labels = numpy.array(labels)
         self.atoms_of = {label: numpy.flatnonzero(self.labels == label) for label in dict.fromkeys(labels)}
-        self.types = {label: _AtomType(mol, label, mol.atom_charge(atoms[0])) for label, atoms in self.atoms_of.items()}
+        self.types = {label: _AtomType(mol, label, mol.atom_charge(atoms[0]), extended_fit_set)
+                      for label, atoms in self.atoms_of.items()}
         self.shell_range = mol.aoslice_by_atom()[:, :2]
         self.pair_i, self.pair_j, self.pair_shift, self.pair_distance = _neighbour_pairs(mol, periodic)
         self.pairs_start = numpy.searchsorted(self.pair_i, numpy.arange(mol.natm + 1))

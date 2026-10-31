@@ -45,7 +45,8 @@ def getPAWdata(mol,
     # A given alpha0 (number or {label: value}) is kept; the rest are chosen (paw_alpha0).
     with timer.timing_block('Alpha0', report=True):
         alpha0, expected_error = paw_alpha0.choose_alpha0(mol, mol.ke_cutoff, periodic=Periodic, fixed=alpha0,
-                                                          orbital_cutoff=PAWorbitalCutOff)
+                                                          orbital_cutoff=PAWorbitalCutOff,
+                                                          extended_fit_set=extended_fit_set)
         paw_alpha0.log_expected_error(mol, alpha0, expected_error)
     alpha0_wf = alpha0 # must be this!
 
