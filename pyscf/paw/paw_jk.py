@@ -1,4 +1,5 @@
 import numpy
+import scipy.fft
 import time
 
 import jax
@@ -7,7 +8,7 @@ jax.config.update('jax_platform_name', 'cpu')
 
 from pyscf.pbc.dft.multigrid import multigrid_pair
 from pyscf.pbc.dft.multigrid import _backend_c as backend
-from pyscf import __config__
+from pyscf import __config__, lib
 import pyscf
 
 from .paw_helper import *
@@ -245,7 +246,7 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False, coulomb_kernel
         dm_val = dm[i, 0, :, :]
         
         # t0 = time.time()
-        rhoR = numpy.fft.ifftn(rhoG[i].reshape(mesh)).real.flatten() * (1./dv)
+        rhoR = scipy.fft.ifftn(rhoG[i].reshape(mesh), workers=lib.num_threads()).real.flatten() * (1./dv)
         # print(f"[getjSmoothPW2] Set {i}: ifftn for rhoR takes: {time.time() - t0:.4f} seconds")
         
         # t0 = time.time()
@@ -294,79 +295,99 @@ def getjSmoothPW2(cell, dm, mg_ni, mesh, PAWdata, Periodic=False, coulomb_kernel
     # print(f"[getjSmoothPW2] Total time: {time.time() - t_start_total:.4f} seconds")
     return J
 
+
+# The four local terms run in C (Gausslets src/jklocal.c, an OpenMP loop over atoms); each
+# function keeps its Python loop, commented out below the C call, as the reference.
+
+def _local_j_c(term, cell, dm, PAWdata):
+    from Gausslets import CWrappers
+    J = numpy.stack([CWrappers.jklocal(term, PAWdata, cell.nao, dm[i, 0]) for i in range(dm.shape[0])])
+    return J[0] if dm.shape[0] == 1 else J
+
+
+def _local_k_c(term, cell, dm, PAWdata, spin):
+    from Gausslets import CWrappers
+    dm_half, scale = _dm_channel(dm, spin)
+    return CWrappers.jklocal(term, PAWdata, cell.nao, dm_half) * scale
+
+
 def getjSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    # TODO: generalize to multiple k-points
-    # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
-    # moments) and must never touch gridIdx/gOnR. Narrowed rather than
-    # unpacked so that staying grid-free is structural, not a convention --
-    # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    return _local_j_c('j_sharp', cell, dm, PAWdata)
+    # # TODO: generalize to multiple k-points
+    # # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
+    # # moments) and must never touch gridIdx/gOnR. Narrowed rather than
+    # # unpacked so that staying grid-free is structural, not a convention --
+    # # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
+    # localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    #
+    # nset = dm.shape[0]
+    # J_all = []
+    # for i in range(nset):
+    #     dm_val = dm[i, 0, :, :]
+    #     Ji = numpy.zeros((cell.nao, cell.nao))
+    #     for atomI in range(cell._atm.shape[0]):
+    #         submat = dm_val[localIdx[atomI]][:,localIdx[atomI]]
+    #         DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
+    #         numpy.add.at(
+    #             Ji, numpy.ix_(localIdx[atomI], localIdx[atomI]),
+    #             smart_einsum('PQ,PQRS,Rm,Sn->mn', DPQ, VPQRSarray[atomI], F_Pmu[atomI], F_Pmu[atomI])
+    #         )
+    #     J_all.append(Ji)
+    #
+    # J = numpy.stack(J_all)
+    # if nset == 1:
+    #     J = J[0]
+    # return J
 
-    nset = dm.shape[0]
-    J_all = []
-    for i in range(nset):
-        dm_val = dm[i, 0, :, :]
-        Ji = numpy.zeros((cell.nao, cell.nao))
-        for atomI in range(cell._atm.shape[0]):
-            submat = dm_val[localIdx[atomI]][:,localIdx[atomI]]
-            DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
-            numpy.add.at(
-                Ji, numpy.ix_(localIdx[atomI], localIdx[atomI]),
-                smart_einsum('PQ,PQRS,Rm,Sn->mn', DPQ, VPQRSarray[atomI], F_Pmu[atomI], F_Pmu[atomI])
-            )
-        J_all.append(Ji)
-
-    J = numpy.stack(J_all)
-    if nset == 1:
-        J = J[0]
-    return J
 
 def getjSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False):
-    # TODO: generalize to multiple k-points
-    # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
-    # moments) and must never touch gridIdx/gOnR. Narrowed rather than
-    # unpacked so that staying grid-free is structural, not a convention --
-    # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    return _local_j_c('j_smooth', cell, dm, PAWdata)
+    # # TODO: generalize to multiple k-points
+    # # Slots 0-6 ONLY: this term is analytic (one-center int2c2e/int3c2e
+    # # moments) and must never touch gridIdx/gOnR. Narrowed rather than
+    # # unpacked so that staying grid-free is structural, not a convention --
+    # # there are two different gOnR in a J+K run. See paw_helper.PAWDataTuple.
+    # localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    #
+    # nset = dm.shape[0]
+    # J_all = []
+    # for i in range(nset):
+    #     dm_val = dm[i, 0, :, :]
+    #     Ji = numpy.zeros((cell.nao, cell.nao))
+    #     for atomI in range(cell._atm.shape[0]):
+    #         submat = dm_val[localIdx[atomI]][:,localIdx[atomI]]
+    #         DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
+    #         DPQtilde = smart_einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
+    #         zg = smart_einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
+    #
+    #         # smooth RHS
+    #         # smoothel-smoothel
+    #         A = -smart_einsum('PQ,PQRS->RS', DPQtilde, VPQRSarray[atomI])
+    #         # smoothel-smoothcomp
+    #         A += smart_einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
+    #         # comp-smoothel
+    #         A -= smart_einsum('L,RSL->RS', zg, V_PQLarr[atomI])
+    #         # comp-smoothcomp
+    #         A += smart_einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
+    #
+    #         # sharp RHS
+    #         # smoothel-sharpcomp
+    #         B = -smart_einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
+    #         # comp-sharpcomp
+    #         B -= smart_einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
+    #
+    #         numpy.add.at(
+    #             Ji, numpy.ix_(localIdx[atomI], localIdx[atomI]),
+    #             smart_einsum('RS,Rm,Sn->mn', A, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])+\
+    #             smart_einsum('RS,Rm,Sn->mn', B, F_Pmu[atomI], F_Pmu[atomI])
+    #         )
+    #     J_all.append(Ji)
+    #
+    # J = numpy.stack(J_all)
+    # if nset == 1:
+    #     J = J[0]
+    # return J
 
-    nset = dm.shape[0]
-    J_all = []
-    for i in range(nset):
-        dm_val = dm[i, 0, :, :]
-        Ji = numpy.zeros((cell.nao, cell.nao))
-        for atomI in range(cell._atm.shape[0]):
-            submat = dm_val[localIdx[atomI]][:,localIdx[atomI]]
-            DPQ = smart_einsum('Pm,Qn,mn->PQ', F_Pmu[atomI], F_Pmu[atomI], submat)
-            DPQtilde = smart_einsum('Pm,Qn,mn->PQ', Ftilde_Pmu[atomI], Ftilde_Pmu[atomI], submat)
-            zg = smart_einsum('PQ,PQL->L', DPQ-DPQtilde, M_PQLarr[atomI])
-
-            # smooth RHS
-            # smoothel-smoothel
-            A = -smart_einsum('PQ,PQRS->RS', DPQtilde, VPQRSarray[atomI])
-            # smoothel-smoothcomp
-            A += smart_einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
-            # comp-smoothel
-            A -= smart_einsum('L,RSL->RS', zg, V_PQLarr[atomI])
-            # comp-smoothcomp
-            A += smart_einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
-
-            # sharp RHS
-            # smoothel-sharpcomp
-            B = -smart_einsum('PQ,PQL,RSL->RS', DPQtilde, V_PQLarr[atomI], M_PQLarr[atomI])
-            # comp-sharpcomp
-            B -= smart_einsum('L,LM,RSM->RS', zg, V_LMarr[atomI], M_PQLarr[atomI])
-
-            numpy.add.at(
-                Ji, numpy.ix_(localIdx[atomI], localIdx[atomI]),
-                smart_einsum('RS,Rm,Sn->mn', A, Ftilde_Pmu[atomI], Ftilde_Pmu[atomI])+\
-                smart_einsum('RS,Rm,Sn->mn', B, F_Pmu[atomI], F_Pmu[atomI])
-            )
-        J_all.append(Ji)
-
-    J = numpy.stack(J_all)
-    if nset == 1:
-        J = J[0]
-    return J
 
 # ---------------------------------------------------------------------------
 # One-center exchange. The counterparts of getjSharpLocal / getjSmoothLocal
@@ -401,69 +422,71 @@ def _dm_channel(dm, spin):
 
 
 def getkSharpLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False, spin=0):
-    # Slots 0-6 ONLY -- analytic, must never touch gridIdx/gOnR.
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
-    dm_half, scale = _dm_channel(dm, spin)
-    K = numpy.zeros((cell.nao, cell.nao))
-    for atomI in range(cell._atm.shape[0]):
-        fpmu = F_Pmu[atomI]
-        localidx = localIdx[atomI]
-        vpqrs = VPQRSarray[atomI]
-
-        DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:, localidx])
-
-        # sharp-sharp
-        Katom = smart_einsum('Pm,PQ,Qn->mn', fpmu, smart_einsum('PQRS, QR->PS', vpqrs, DPQ), fpmu)
-
-        numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
-
-    return K * scale
+    return _local_k_c('k_sharp', cell, dm, PAWdata, spin)
+    # # Slots 0-6 ONLY -- analytic, must never touch gridIdx/gOnR.
+    # localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    # dm_half, scale = _dm_channel(dm, spin)
+    # K = numpy.zeros((cell.nao, cell.nao))
+    # for atomI in range(cell._atm.shape[0]):
+    #     fpmu = F_Pmu[atomI]
+    #     localidx = localIdx[atomI]
+    #     vpqrs = VPQRSarray[atomI]
+    #
+    #     DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:, localidx])
+    #
+    #     # sharp-sharp
+    #     Katom = smart_einsum('Pm,PQ,Qn->mn', fpmu, smart_einsum('PQRS, QR->PS', vpqrs, DPQ), fpmu)
+    #
+    #     numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
+    #
+    # return K * scale
 
 
 def getkSmoothLocal(cell, dm, aoOnR_tilde, mesh, PAWdata, Periodic=False, spin=0):
-    # Slots 0-6 ONLY -- analytic, must never touch gridIdx/gOnR.
-    localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
-    dm_half, scale = _dm_channel(dm, spin)
-    K = numpy.zeros((cell.nao, cell.nao))
-    for atomI in range(cell._atm.shape[0]):
-        fpmu = F_Pmu[atomI]
-        ftildepmu = Ftilde_Pmu[atomI]
-        localidx = localIdx[atomI]
-        vpqrs = VPQRSarray[atomI]
-        vpql = V_PQLarr[atomI]
-        mpql = M_PQLarr[atomI]
-        vlm = V_LMarr[atomI]
-
-        DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:, localidx])
-        DPQtilde = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm_half[localidx][:, localidx])
-
-        E_diffuse = smart_einsum('PQRS, QR->PS', vpqrs, DPQtilde)
-        tmp = smart_einsum('RSg, QR->QSg', mpql, DPQtilde)
-        E_diffuse -= smart_einsum('PQg, QSg->PS', vpql, tmp)
-        tmp = smart_einsum('RSg, QR->QSg', vpql, DPQtilde)
-        E_diffuse -= smart_einsum('PQg, QSg->PS', mpql, tmp)
-        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQtilde)
-        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
-        E_diffuse += smart_einsum('PQg, QSg->PS', mpql, tmp2)
-        Katom = -smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_diffuse, ftildepmu)
-
-        DPQmixed = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm_half[localidx][:, localidx])
-        tmp = smart_einsum('RSg, QR->QSg', mpql, DPQmixed)
-        E_mixed = smart_einsum('PQg, QSg->PS', vpql, tmp)
-        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQmixed)
-        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
-        E_mixed -= smart_einsum('PQg, QSg->PS', mpql, tmp2)
-        Ktemp = smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_mixed, fpmu)
-        Katom -= Ktemp + Ktemp.T
-
-        tmp = smart_einsum('RSf, QR->QSf', mpql, DPQ)
-        tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
-        E_comp = smart_einsum('PQg, QSg->PS', mpql, tmp2)
-        Katom -= smart_einsum('Pm, PS, Sn->mn', fpmu, E_comp, fpmu)
-
-        numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
-
-    return K * scale
+    return _local_k_c('k_smooth', cell, dm, PAWdata, spin)
+    # # Slots 0-6 ONLY -- analytic, must never touch gridIdx/gOnR.
+    # localIdx, F_Pmu, Ftilde_Pmu, VPQRSarray, M_PQLarr, V_PQLarr, V_LMarr = PAWdata[:7]
+    # dm_half, scale = _dm_channel(dm, spin)
+    # K = numpy.zeros((cell.nao, cell.nao))
+    # for atomI in range(cell._atm.shape[0]):
+    #     fpmu = F_Pmu[atomI]
+    #     ftildepmu = Ftilde_Pmu[atomI]
+    #     localidx = localIdx[atomI]
+    #     vpqrs = VPQRSarray[atomI]
+    #     vpql = V_PQLarr[atomI]
+    #     mpql = M_PQLarr[atomI]
+    #     vlm = V_LMarr[atomI]
+    #
+    #     DPQ = smart_einsum('Pm, Qn, mn->PQ', fpmu, fpmu, dm_half[localidx][:, localidx])
+    #     DPQtilde = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, ftildepmu, dm_half[localidx][:, localidx])
+    #
+    #     E_diffuse = smart_einsum('PQRS, QR->PS', vpqrs, DPQtilde)
+    #     tmp = smart_einsum('RSg, QR->QSg', mpql, DPQtilde)
+    #     E_diffuse -= smart_einsum('PQg, QSg->PS', vpql, tmp)
+    #     tmp = smart_einsum('RSg, QR->QSg', vpql, DPQtilde)
+    #     E_diffuse -= smart_einsum('PQg, QSg->PS', mpql, tmp)
+    #     tmp = smart_einsum('RSf, QR->QSf', mpql, DPQtilde)
+    #     tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+    #     E_diffuse += smart_einsum('PQg, QSg->PS', mpql, tmp2)
+    #     Katom = -smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_diffuse, ftildepmu)
+    #
+    #     DPQmixed = smart_einsum('Pm, Qn, mn->PQ', ftildepmu, fpmu, dm_half[localidx][:, localidx])
+    #     tmp = smart_einsum('RSg, QR->QSg', mpql, DPQmixed)
+    #     E_mixed = smart_einsum('PQg, QSg->PS', vpql, tmp)
+    #     tmp = smart_einsum('RSf, QR->QSf', mpql, DPQmixed)
+    #     tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+    #     E_mixed -= smart_einsum('PQg, QSg->PS', mpql, tmp2)
+    #     Ktemp = smart_einsum('Pm, PS, Sn->mn', ftildepmu, E_mixed, fpmu)
+    #     Katom -= Ktemp + Ktemp.T
+    #
+    #     tmp = smart_einsum('RSf, QR->QSf', mpql, DPQ)
+    #     tmp2 = smart_einsum('gf, QSf->QSg', vlm, tmp)
+    #     E_comp = smart_einsum('PQg, QSg->PS', mpql, tmp2)
+    #     Katom -= smart_einsum('Pm, PS, Sn->mn', fpmu, E_comp, fpmu)
+    #
+    #     numpy.add.at(K, numpy.ix_(localidx, localidx), Katom)
+    #
+    # return K * scale
 
 
 # PAW nuclear

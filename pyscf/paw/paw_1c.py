@@ -665,6 +665,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rs=None, Pe
     aoslice = mol.aoslice_by_atom()
 
     logger.debug(mol, 'Building projectors...')
+    projector_cache = {}  # (element, Rb) -> projector basis, overlap pseudo-inverse, count
     for atomI in range(mol._atm.shape[0]):
         Rb = Rs[atomI] if Rs is not None else None
         logger.debug(mol, 'Atom %d:', atomI)
@@ -679,60 +680,63 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rs=None, Pe
         Latom = L[ACenteredId]
         alphaAtom = alpha[ACenteredId]
 
-        primCounts = {}
-        for l in Latom:
-            count = primCounts.get(l, 0)
-            primCounts[l] = count + 1
-        
-        projBasis = []
-        for l, c in primCounts.items():
-            # nAlpha = c//(2*l+1) # assume spherical GTO
-            alphaProj = (l * numpy.log(Rb) - numpy.log(epsilon)) / Rb**2
-            alphaAtomL = alphaAtom[Latom==l]
-            # one flag per shell (alphaAtomL repeats each shell 2l+1 times); the loops below index by shell
-            isoPrim = alphaAtomL[::2*l+1] > alpha0_val
-            numPrimL = len(alphaAtomL) // (2*l+1)
-            numIsoPrimL = int(sum(isoPrim))
-            assert(c == numPrimL*(2*l+1))
-
-            # smallest exponent nees to be contained in the sphere
-            # cp2k way of determining the ratio
-            x = (80.0/alphaProj)**(1.0/max(1, float(numPrimL - numIsoPrimL - 1))) if numPrimL - numIsoPrimL - 1 > 2 else 2.0
-            if x > 2.0: x = 2.0
-            alphasProj = numpy.zeros(numPrimL); zetval = alphaProj
-            for i in range(numPrimL-1, -1, -1):
-                if not isoPrim[i]: alphasProj[i] = zetval; zetval *= x
-            for i in range(numPrimL-1, -1, -1):
-                if isoPrim[i]: alphasProj[i] = zetval; zetval *= x
-
-            projBasis4L = [[l, [a, 1.]] for a in alphasProj]
-            logger.debug(mol, 'L=%d: projExp %s', l, alphasProj)
-            projBasis.extend(projBasis4L)
-
-
         projElem = pmol._atom[atomI][0] + '!' # make sure this doens't coincide with existing elements
+        # The projectors and their overlap pseudo-inverse depend only on the element and Rb: built once.
+        if (elem, Rb) not in projector_cache:
+            primCounts = {}
+            for l in Latom:
+                count = primCounts.get(l, 0)
+                primCounts[l] = count + 1
+        
+            projBasis = []
+            for l, c in primCounts.items():
+                # nAlpha = c//(2*l+1) # assume spherical GTO
+                alphaProj = (l * numpy.log(Rb) - numpy.log(epsilon)) / Rb**2
+                alphaAtomL = alphaAtom[Latom==l]
+                # one flag per shell (alphaAtomL repeats each shell 2l+1 times); the loops below index by shell
+                isoPrim = alphaAtomL[::2*l+1] > alpha0_val
+                numPrimL = len(alphaAtomL) // (2*l+1)
+                numIsoPrimL = int(sum(isoPrim))
+                assert(c == numPrimL*(2*l+1))
 
-        # construct proj-prim overlap 
-        projPrimBasis = pmol._basis.copy()
-        projPrimBasis[projElem] = projBasis
-        projPrimAtom = [pmol._atom[atomI], (projElem, pmol._atom[atomI][1])]
-        projPrimMol = pgto.M(atom=projPrimAtom, basis=projPrimBasis, a = pmol.lattice_vectors(), unit='B', cart = pmol.cart)
-        projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
+                # smallest exponent nees to be contained in the sphere
+                # cp2k way of determining the ratio
+                x = (80.0/alphaProj)**(1.0/max(1, float(numPrimL - numIsoPrimL - 1))) if numPrimL - numIsoPrimL - 1 > 2 else 2.0
+                if x > 2.0: x = 2.0
+                alphasProj = numpy.zeros(numPrimL); zetval = alphaProj
+                for i in range(numPrimL-1, -1, -1):
+                    if not isoPrim[i]: alphasProj[i] = zetval; zetval *= x
+                for i in range(numPrimL-1, -1, -1):
+                    if isoPrim[i]: alphasProj[i] = zetval; zetval *= x
 
-        # isolated projectors
-        sharpAlphaId = numpy.where(alphaAtom > alpha0_val)[0] # could use a different threshold?
-        for i in sharpAlphaId:
-            projPrimOvlp[i, :] = 0
-            projPrimOvlp[:, i] = 0
+                projBasis4L = [[l, [a, 1.]] for a in alphasProj]
+                logger.debug(mol, 'L=%d: projExp %s', l, alphasProj)
+                projBasis.extend(projBasis4L)
 
-        # ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
-        U, s, Vh = numpy.linalg.svd(projPrimOvlp)
-        s_inv = numpy.zeros_like(s)
-        s_inv[s>rtol] = 1/s[s>rtol]
-        ppoinv = Vh.T@numpy.diag(s_inv)@U.T
+
+
+            # construct proj-prim overlap 
+            projPrimBasis = pmol._basis.copy()
+            projPrimBasis[projElem] = projBasis
+            projPrimAtom = [pmol._atom[atomI], (projElem, pmol._atom[atomI][1])]
+            projPrimMol = pgto.M(atom=projPrimAtom, basis=projPrimBasis, a = pmol.lattice_vectors(), unit='B', cart = pmol.cart)
+            projPrimOvlp = projPrimMol.pbc_intor('int1e_ovlp')[numPrim:][:, :numPrim]
+
+            # isolated projectors
+            sharpAlphaId = numpy.where(alphaAtom > alpha0_val)[0] # could use a different threshold?
+            for i in sharpAlphaId:
+                projPrimOvlp[i, :] = 0
+                projPrimOvlp[:, i] = 0
+
+            # ppoinv = numpy.linalg.pinv(projPrimOvlp, rtol=rtol)
+            U, s, Vh = numpy.linalg.svd(projPrimOvlp)
+            s_inv = numpy.zeros_like(s)
+            s_inv[s>rtol] = 1/s[s>rtol]
+            ppoinv = Vh.T@numpy.diag(s_inv)@U.T
+            projector_cache[elem, Rb] = (projBasis, ppoinv, projPrimOvlp.shape[0])
+        projBasis, ppoinv, numProj = projector_cache[elem, Rb]
 
         # construct proj-ao overlap using NEIGHBOR CLUSTER
-        numProj = projPrimOvlp.shape[0]
         neighbors = neighbor_list[atomI] if neighbor_list is not None else range(mol._atm.shape[0])
         
         clusterAOAtom = []
@@ -747,11 +751,18 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rs=None, Pe
             
         global_ao_indices = numpy.array(global_ao_indices)
         
-        clusterAOAtom.append((projElem, mol._atom[atomI][1]))
-        clusterAOBasis[projElem] = projBasis
-        
-        projAOMol = pgto.M(atom=clusterAOAtom, basis=clusterAOBasis, a=mol.lattice_vectors(), unit='B', cart=mol.cart)
-        projAOOvlp_cluster = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
+        if Periodic:
+            clusterAOAtom.append((projElem, mol._atom[atomI][1]))
+            clusterAOBasis[projElem] = projBasis
+            projAOMol = pgto.M(atom=clusterAOAtom, basis=clusterAOBasis, a=mol.lattice_vectors(), unit='B', cart=mol.cart)
+            projAOOvlp_cluster = projAOMol.pbc_intor('int1e_ovlp')[-numProj:][:, :-numProj]
+        else:
+            # Molecular: just the projector x neighbour-AO block, without a Cell build or lattice sums.
+            projMol = pyscf.gto.M(atom=[(projElem, mol._atom[atomI][1])], basis={projElem: projBasis},
+                                  unit='B', cart=mol.cart, spin=None, verbose=0)
+            clusterMol = pyscf.gto.M(atom=clusterAOAtom, basis=clusterAOBasis, unit='B', cart=mol.cart,
+                                     spin=None, verbose=0)
+            projAOOvlp_cluster = pyscf.gto.intor_cross('int1e_ovlp', projMol, clusterMol)
         # determine local functions
         local_locId = numpy.where(numpy.max(numpy.abs(projAOOvlp_cluster), axis=0) > epsilon)[0]
         locId = global_ao_indices[local_locId]

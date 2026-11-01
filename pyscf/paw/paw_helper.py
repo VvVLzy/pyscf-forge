@@ -2,6 +2,7 @@ import itertools
 import time
 import numpy
 import scipy
+import scipy.fft
 
 import jax
 jax.config.update("jax_enable_x64",True)
@@ -78,7 +79,7 @@ def solve_poisson(rhoR, mesh, cell, Periodic=False, coulomb_kernel=None):
         raise ValueError('a molecular Coulomb solve needs the open-boundary kernel '
                          '(PAW.coulomb_kernel, from build_open_boundary_kernel)')
     potential = coulomb_kernel.potential(rhoR)
-    return potential.ravel(), numpy.fft.fftn(potential)
+    return potential.ravel(), scipy.fft.fftn(potential, workers=lib.num_threads())
 
 # ---------------------------------------------------------------------------------
 # Open-boundary Coulomb solve: medium (PAW) mesh, zero-padded 2x, Ewald-split kernel
