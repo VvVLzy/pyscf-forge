@@ -3,12 +3,35 @@ the SCF printed when the PAW object is garbage collected.'''
 import contextlib
 import time
 
+from pyscf import lib
+
+# The SCF cycle's steps that SCFStepTimer times: (SCF method, timer label).
+SCF_STEPS = (
+    ('get_init_guess', 'SCF Init Guess'),
+    ('get_ovlp', 'SCF Overlap'),
+    ('get_hcore', 'SCF Hcore'),
+    ('get_veff', 'SCF Veff'),
+    ('get_fock', 'SCF Fock and DIIS'),
+    ('eig', 'SCF Diagonalization'),
+    ('get_occ', 'SCF Occupations'),
+    ('make_rdm1', 'SCF Density Matrix'),
+    ('energy_tot', 'SCF Energy'),
+    ('get_grad', 'SCF Gradient'),
+    ('dump_chk', 'SCF Checkpoint'),
+)
+
+
+
+def _scf_step_tree(builds):
+    '''The SCF_STEPS as report-tree nodes, with the J/K/XC builds under the Fock build.'''
+    return [(label, builds if label == 'SCF Veff' else []) for _, label in SCF_STEPS]
 
 class PAWTimingMixin:
     '''timings[label] holds the seconds of every call and timing_starts[label] when each
     began; a J, K or XC build records each piece once per build, summed over spins.'''
 
     _report_depth = 0  # timing_block(report=True) blocks currently open
+    _scf_step_open = False  # an SCF step is being timed; steps nested inside it are not
 
     def _init_timing(self):
         self.timings = {}        # label -> seconds of each call
@@ -78,9 +101,25 @@ class PAWTimingMixin:
         self._fock_pending.clear()
 
     def time_scf(self, mf):
-        '''Record each mf.kernel wall time as 'SCF Total' via pyscf's post_kernel hook.'''
+        '''Record each mf.kernel wall time as 'SCF Total' via pyscf's post_kernel hook, and
+        each step of its cycle (SCF_STEPS) through the SCFStepTimer mixin.'''
         mf.post_kernel = self._record_scf
         mf._keys = mf._keys | {'post_kernel'}  # an intended override: no sanity warning
+        if not isinstance(mf, SCFStepTimer):
+            lib.set_class(mf, (SCFStepTimer, mf.__class__))
+
+    @contextlib.contextmanager
+    def _scf_step(self, label):
+        '''Time one SCF step under `label`, unless another step is already being timed.'''
+        if self._scf_step_open:
+            yield
+            return
+        self._scf_step_open = True
+        try:
+            with self.timing_block(label):
+                yield
+        finally:
+            self._scf_step_open = False
 
     def _record_scf(self, envs):
         mf = envs['mf']
@@ -124,10 +163,12 @@ class PAWTimingMixin:
         ]),
     ]
     _TREE_SCF = ('SCF Total', _TREE_BUILDS)
+    # With SCFStepTimer: every step of the cycle, and J/K/XC inside the Fock build (get_veff).
+    _TREE_SCF_STEPS = ('SCF Total', _scf_step_tree(_TREE_BUILDS))
 
     def _split_builds_by_scf(self):
-        '''The J, K and XC timers as two {label: seconds} views: calls that started inside
-        a timed mf.kernel, and the rest (e.g. a get_jk after the SCF).'''
+        '''The J, K, XC and SCF-step timers as two {label: seconds} views: calls that started
+        inside a timed mf.kernel, and the rest (e.g. a get_jk after the SCF).'''
         def in_scf(start):
             return any(scf_start <= start < scf_end
                        for scf_start, scf_end, _ in self.scf_runs)
@@ -135,6 +176,7 @@ class PAWTimingMixin:
         inside, outside = {}, {}
         labels = [label for root, children in self._TREE_BUILDS
                   for label in (root, *(child for child, _ in children))]
+        labels += [label for _, label in SCF_STEPS]
         for label in labels:
             starts = self.timing_starts.get(label, ())
             for seconds, start in zip(self.timings.get(label, ()), starts):
@@ -178,9 +220,10 @@ class PAWTimingMixin:
                 resid = total - sum(seconds(view, child) for child, _ in recorded)
                 row(depth + 1, label + ' [unaccounted]', resid, len(calls), total)
 
+        steps_timed = 'SCF Veff' in inside
         sections = [
             ('SETUP', timings, [self._TREE_SETUP, ('XC Setup', [])]),
-            ('SCF', inside, [self._TREE_SCF]),
+            ('SCF', inside, [self._TREE_SCF_STEPS if steps_timed else self._TREE_SCF]),
             ('J/K/XC OUTSIDE THE SCF', outside, self._TREE_BUILDS),
         ]
 
@@ -208,7 +251,18 @@ class PAWTimingMixin:
         if self.scf_runs:
             builds = [(phase, seconds(inside, f'{phase} Total')) for phase in phases]
             other = seconds(timings, 'SCF Total') - sum(t for _, t in builds)
-            components += builds + [('SCF other (diag, DIIS, hcore)', other)]
+            if steps_timed:
+                # Veff minus J/K/XC is PAW work in the Fock build outside those timers.
+                main = ('SCF Diagonalization', 'SCF Fock and DIIS', 'SCF Density Matrix')
+                step_rows = [(label, seconds(inside, label)) for label in main]
+                rest = sum(seconds(inside, label) for _, label in SCF_STEPS
+                           if label not in main and label != 'SCF Veff')
+                rest += seconds(inside, 'SCF Veff') - sum(t for _, t in builds)
+                step_rows.append(('SCF other steps', rest))
+                step_rows.append(('SCF unaccounted', other - sum(t for _, t in step_rows)))
+                components += builds + step_rows
+            else:
+                components += builds + [('SCF other (diag, DIIS, hcore)', other)]
             outside_total = sum(seconds(outside, f'{phase} Total') for phase in phases)
             if outside_total:
                 components.append(('J/K/XC outside the SCF', outside_total))
@@ -236,3 +290,27 @@ class PAWTimingMixin:
                 self.print_timing_summary()
         except Exception:
             pass
+
+
+class SCFStepTimer:
+    '''Mixed into an SCF object by PAWTimingMixin.time_scf: each SCF_STEPS method is timed
+    into the PAW object that is the SCF's with_df, so the summary splits the SCF by step.'''
+    __name_mixin__ = 'Timed'
+
+    def _paw_step(self, label):
+        timer = getattr(self, 'with_df', None)
+        if isinstance(timer, PAWTimingMixin):
+            return timer._scf_step(label)
+        return contextlib.nullcontext()
+
+
+def _timed_step(name, label):
+    def step(self, *args, **kwargs):
+        with self._paw_step(label):
+            return getattr(super(SCFStepTimer, self), name)(*args, **kwargs)
+    step.__name__ = step.__qualname__ = name
+    return step
+
+
+for _name, _label in SCF_STEPS:
+    setattr(SCFStepTimer, _name, _timed_step(_name, _label))
