@@ -10,9 +10,9 @@ import scipy.optimize
 import scipy.special
 from scipy.spatial import cKDTree
 
-from pyscf import gto, scf
+from pyscf import gto, lib, scf
 from pyscf.dft import LebedevGrid
-from pyscf.gto.eval_gto import eval_gto
+from pyscf.gto.eval_gto import BLKSIZE, eval_gto
 from pyscf.lib import logger
 
 from .paw_helper import fit_set_extension
@@ -26,6 +26,9 @@ NUCLEUS_LEAK = 1e-3          # largest share of a compensating charge allowed be
 NEIGHBOUR_CUTOFF = 8.0       # Bohr: partners in the overlap and fit terms
 BELOW_EXPONENT = 1 - 1e-6    # a gap's top sits just under its exponent; PAW's code paths disagree at equality
 INTERIOR_POINTS, FINE_POINTS = 8, 24
+# OpenMP threads for choose_alpha0: its ~10^4 tiny eval_gto calls slow down and jitter at 64 threads
+# over two sockets (Bridges-2: 17-65 s at W300 DZ), while 8 is the fastest tried and steady.
+ALPHA0_THREADS = 8
 
 # Fit term: Gauss-Legendre out to exp(-FIT_EDGE) of the softest sharp primitive, times a Lebedev sphere.
 FIT_RADIAL, FIT_ANGULAR, FIT_EDGE = 40, 302, 30.0
@@ -50,20 +53,21 @@ ALIASING_LOG_F = numpy.log([
 def choose_alpha0(mol, ke_cutoff, periodic=False, fixed=None, orbital_cutoff=1e-8, extended_fit_set=True):
     '''({label: alpha0}, expected error per atom in Ha). fixed: one alpha0 for every label, or {label: alpha0}
     for some; those are kept and only their expected error is evaluated. extended_fit_set: as PAW's.'''
-    model = _ErrorModel(mol, ke_cutoff, periodic, extended_fit_set)
-    if fixed is not None and not isinstance(fixed, dict):
-        fixed = dict.fromkeys(model.types, fixed)
-    fixed = {label: a for label, a in (fixed or {}).items() if a is not None}
-    sphere_floor = _sphere_floor(mol, orbital_cutoff)
-    alpha0, expected_error = {}, numpy.zeros(mol.natm)
-    for label in model.types:
-        atoms = model.atoms_of[label]
-        if label in fixed:
-            alpha0[label] = fixed[label]
-            expected_error[atoms] = model.errors_at(label, fixed[label])
-        else:
-            lowest = max(sphere_floor, model.nucleus_floor(label))
-            alpha0[label], expected_error[atoms] = model.least_error(label, lowest)
+    with lib.with_omp_threads(min(ALPHA0_THREADS, lib.num_threads())):
+        model = _ErrorModel(mol, ke_cutoff, periodic, extended_fit_set)
+        if fixed is not None and not isinstance(fixed, dict):
+            fixed = dict.fromkeys(model.types, fixed)
+        fixed = {label: a for label, a in (fixed or {}).items() if a is not None}
+        sphere_floor = _sphere_floor(mol, orbital_cutoff)
+        alpha0, expected_error = {}, numpy.zeros(mol.natm)
+        for label in model.types:
+            atoms = model.atoms_of[label]
+            if label in fixed:
+                alpha0[label] = fixed[label]
+                expected_error[atoms] = model.errors_at(label, fixed[label])
+            else:
+                lowest = max(sphere_floor, model.nucleus_floor(label))
+                alpha0[label], expected_error[atoms] = model.least_error(label, lowest)
     return alpha0, expected_error
 
 
@@ -252,6 +256,16 @@ class _ErrorModel:
         self.pair_i, self.pair_j, self.pair_shift, self.pair_distance = _neighbour_pairs(mol, periodic)
         self.pairs_start = numpy.searchsorted(self.pair_i, numpy.arange(mol.natm + 1))
         self._pairs = {}
+        # eval_gto's shell offsets and all-ones masks, built once: per call they span the whole
+        # molecule, which made fit_charge's ~10^4 calls O(N^2).
+        self.ao_loc = gto.moleintor.make_loc(mol._bas, 'GTOval_sph')
+        self._masks = {}
+
+    def _mask(self, n_points):
+        '''All-ones eval_gto shell mask for n_points points (what eval_gto builds when given none).'''
+        if n_points not in self._masks:
+            self._masks[n_points] = numpy.ones(((n_points + BLKSIZE - 1) // BLKSIZE, self.mol.nbas), dtype=numpy.uint8)
+        return self._masks[n_points]
 
     def nucleus_floor(self, label):
         '''Least alpha0 keeping all but NUCLEUS_LEAK of each compensating charge inside the nearest neighbour.'''
@@ -303,7 +317,8 @@ class _ErrorModel:
         charge = 0.0
         for j, shift in zip(self.pair_j[neighbours], self.pair_shift[neighbours]):
             neighbour_ao = eval_gto(self.mol, 'GTOval_sph', points + self.coords[atom] - shift,
-                                    shls_slice=tuple(self.shell_range[j]))
+                                    shls_slice=tuple(self.shell_range[j]), ao_loc=self.ao_loc,
+                                    non0tab=self._mask(len(points)))
             charge += atom_type.fit_weight @ numpy.abs(fit_operator @ neighbour_ao) @ self.types[self.labels[j]].fit_weight
         return charge
 
