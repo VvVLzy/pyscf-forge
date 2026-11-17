@@ -43,7 +43,10 @@ def getPAWdata(mol,
     t_start = time.time()
 
     # initialize grids
-    mesh = pyscf.pbc.tools.cutoff_to_mesh(pmol.lattice_vectors(), pmol.ke_cutoff)
+    # use the cell's own mesh: the multigrid task list is built from cell.mesh,
+    # which can differ from cutoff_to_mesh(ke_cutoff), e.g. for super_cell
+    # (2 x 67 = 134 vs 133) or a user-set cell.mesh
+    mesh = numpy.asarray(pmol.mesh)
     Rgrid = pmol.get_uniform_grids(mesh=mesh, wrap_around=False)
     print(f"Time for grids init: {time.time() - t_start:.4f}s")
     t_start = time.time()
