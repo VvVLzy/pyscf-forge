@@ -24,7 +24,8 @@ ke_cutoff_exact = 2000           # Ha; exact all-electron FFTDF reference
 precision = 1e-8
 alpha0 = 12.5                    # CP2K ALPHA0_HARD 12.5
 Rb = 1.7                         # bohr; CP2K HARD_EXP_RADIUS 1.7
-gdfNuc = False                   # True: nuclear attraction via GDF instead of the PAW nuclear terms
+gdfNuc = False                   # True: nuclear attraction via GDF; False: PAW (long-range erf part with
+                                 # exponent alpha0, as CP2K's He core 12.5) + analytic short-range erfc
 xc = ''                          # no XC (Hartree only); CP2K XC_FUNCTIONAL NONE
 init_guess = '1e'
 

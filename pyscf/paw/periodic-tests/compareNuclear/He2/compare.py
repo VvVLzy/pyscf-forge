@@ -26,8 +26,12 @@ REFERENCE = '#8a8984'   # neutral gray for the reproduced old result
 # series key -> (label, color, marker, linestyle); entity colors match the timing plots
 SERIES = {
     'cp2k':              ('CP2K GAPW', '#2a78d6', 'o', '-'),
-    'paw_gdfNuc_False':  ('PySCF PAW, gdfNuc=False', '#eb6834', 's', '-'),
-    'paw_gdfNuc_True':   ('PySCF PAW, gdfNuc=True', '#1baf7a', '^', '-'),
+    # gdfNuc=False now range-separates the nucleus (erf part with exponent alpha0
+    # via PAW, erfc part analytic); _pointNuc is the earlier point-nucleus PAW,
+    # which the code no longer produces, kept for comparison
+    'paw_gdfNuc_False_pointNuc': ('PySCF PAW, point nucleus (before)', '#eb6834', 's', '-'),
+    'paw_gdfNuc_False':  ('PySCF PAW, range-separated nucleus', '#1baf7a', 'D', '-'),
+    'paw_gdfNuc_True':   ('PySCF PAW, gdfNuc=True', '#7e4fd1', '^', '-'),
 }
 
 def read_csv(path):
@@ -111,7 +115,8 @@ def main():
         writer.writerows(rows)
 
     print('errors vs exact FFTDF (mHa)')
-    short = {'cp2k': 'CP2K', 'paw_gdfNuc_False': 'PAW gdf=F', 'paw_gdfNuc_True': 'PAW gdf=T'}
+    short = {'cp2k': 'CP2K', 'paw_gdfNuc_False': 'PAW RS nuc', 'paw_gdfNuc_True': 'PAW gdf=T',
+             'paw_gdfNuc_False_pointNuc': 'PAW point'}
     print('%7s ' % 'r (A)' + ' '.join('%14s' % short.get(k, k[:14]) for k in keys))
     for row in rows:
         print('%7.4f ' % row['r'] + ' '.join('%+14.4f' % row['err_' + k] for k in keys))

@@ -142,7 +142,57 @@ def getGOnR(pmol, gmolCart, gmolSph, Rgrid, gridIdx, gmax):
 
     return gOnR
 
-def obtainLocal2e(mol, pmol, Periodic):
+def getNucShortRange(cell, omega, kpts=numpy.zeros((1,3))):
+    '''Short-range nuclear attraction; omega is a number or one value per atom.
+
+    With per-atom omega, atoms are grouped by omega and each group is computed
+    with the charges of all other atoms set to zero (the result is linear in Z).
+    '''
+    omega = numpy.asarray(omega, dtype=float)
+    if omega.ndim == 0:
+        return _getNucShortRange(cell, float(omega), kpts)
+    assert omega.shape == (cell.natm,)
+    vsr = 0
+    for w in numpy.unique(omega):
+        sub = cell.copy(deep=False)
+        sub._atm = cell._atm.copy()
+        sub._atm[omega != w, 0] = 0   # CHARGE_OF
+        vsr = vsr + _getNucShortRange(sub, float(w), kpts)
+    return vsr
+
+def _getNucShortRange(cell, omega, kpts=numpy.zeros((1,3))):
+    '''Short-range nuclear attraction  sum_C <mu| -Z_C erfc(omega|r-R_C|)/|r-R_C| |nu>
+    for a periodic cell, analytic 3-center integrals (PySCF RS nuclear builder).
+
+    The G=0 part is removed with the same convention as _RSNucBuilder.get_nuc, so
+    get_nuc() = getNucShortRange(omega) + long-range erf(omega r)/r part.
+    Returns an array of shape (nkpts, nao, nao).
+    '''
+    from pyscf.pbc.df import aft, ft_ao
+    from pyscf.pbc.df.rsdf_builder import estimate_rcut
+    kpts = numpy.reshape(kpts, (-1, 3))
+    builder = _RSNucBuilder(cell, kpts)
+    builder.exclude_dd_block = False   # all AO pairs through the analytic SR integrals
+    builder.build(omega=omega)
+    # build() rounds omega to its PW mesh; the SR integrals need exactly this omega
+    builder.omega = omega
+    fakenuc = aft._fake_nuc(cell, with_pseudo=False)
+    rcut_sr = estimate_rcut(builder.rs_cell, fakenuc, omega, exclude_dd_block=False)
+    supmol = ft_ao.ExtendedMole.from_cell(builder.rs_cell, builder.bvk_kmesh, rcut_sr.max(), builder.verbose)
+    supmol.omega = -omega
+    builder.supmol = supmol.strip_basis(rcut_sr)
+    vsr = builder._int_nuc_vloc(fakenuc)
+    return numpy.asarray([pyscf.lib.unpack_tril(v) for v in vsr])
+
+def obtainLocal2e(mol, pmol, Periodic, alpha0=None):
+    '''One-center 2e integrals (PQ|RS) per atom; index 0 is the nucleus.
+
+    alpha0: compensation exponent (number or {element label: exponent}). If given,
+    the periodic nuclear row (Z|RS) is only the long-range part of the point-nucleus
+    attraction, i.e. the interaction with a Gaussian core charge of exponent
+    a = alpha0[element] (erf(sqrt(a) r)/r); the short-range erfc part is then added
+    analytically for the whole cell in PAW.get_nuc. None: point nucleus.
+    '''
     VPQRSArr = []
 
     # store calculated atom-basis to avoid redundant calculation
@@ -162,7 +212,12 @@ def obtainLocal2e(mol, pmol, Periodic):
         atomZ = mol._atm[atomI, 0]
         atomL = pmol._bas[idx][:, 1]
         atomExp = pmol._env[pmol._bas[idx][:, -3]]
-        atomInfo = numpy.concatenate((atomL, atomExp))
+        if alpha0 is None:
+            coreExp = None
+        else:
+            coreExp = alpha0[mol._atom[atomI][0]] if isinstance(alpha0, dict) else alpha0
+        # the nuclear row depends on the core exponent too, so it is part of the key
+        atomInfo = numpy.concatenate((atomL, atomExp, [-1. if coreExp is None else coreExp]))
         atomBas = atomBass.get(atomZ, [])
         i = getCalcIdx(atomInfo, atomBas)
         if i is not None:
@@ -185,9 +240,14 @@ def obtainLocal2e(mol, pmol, Periodic):
 
             # nuclear
             dfbuilder = _RSNucBuilder(molAtom, kpts=numpy.zeros((1,3))).build()
-            VPQRSWithNuc[0, 0, 1:, 1:] = -dfbuilder.get_nuc()[0]/pmol._atm[atomI, 0]
+            vnuc = dfbuilder.get_nuc()[0]
+            if coreExp is not None: # keep only the long-range erf part
+                vnuc = vnuc - getNucShortRange(molAtom, numpy.sqrt(coreExp))[0]
+            VPQRSWithNuc[0, 0, 1:, 1:] = -vnuc/pmol._atm[atomI, 0]
             VPQRSArr.append(VPQRSWithNuc)
         else:
+            # molecules: nuclear attraction is analytic in PySCF, the PAW nuclear
+            # row is not computed (left zero)
             molAtom = buildPmolAtom(mol, pmol, atomI, pmol.cart)
             # VPQRS = pmol.intor('int2e', shls_slice=(idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1,idx[0], idx[-1]+1))
             VPQRS = molAtom.intor('int2e')

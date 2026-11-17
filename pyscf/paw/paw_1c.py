@@ -161,7 +161,7 @@ def getMPQLarrayAtom(atomI, CG, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax
     
     # 1. Setup Matrix A (Constant for this atomI block)
     # In JAX code, alpha3 was alphaG[0]
-    alpha3_cart = alphaG[0] 
+    alpha3_cart = sub_alphaG[0] # this atom's compensation exponent
     
     N0 = Basisnorm(alpha3_cart, 0)
     N2 = Basisnorm(alpha3_cart, 2)
@@ -296,14 +296,20 @@ def getMPQLarrayAtom(atomI, CG, atoms, L, M, alpha, atomsG, LG, MG, alphaG, gmax
         
         # M_PQLarray.append(combined)
     # do analytical M_00L
-    alpha2 = alphaG[0]
+    alpha2 = sub_alphaG[0] # this atom's compensation exponent
     alpha1 = 2*alpha[idx][0]
     NN2 = (alpha2/numpy.pi)**(3/2)
     # C0_num = -NN2 * (3*alpha2/2/alpha1 - 5/2)
-    C0 = NN2 * 5/2
+    if alpha1 > 1e10: # point nucleus limit
+        C0 = NN2 * 5/2
+    else: # Gaussian core charge of exponent alpha1
+        C0 = -NN2 * (3*alpha2/2/alpha1 - 5/2)
     # C0_num1 = M_PQL[0, 0, 0] * Basisnorm(alpha2, 0) / numpy.sqrt(4*numpy.pi)
     # C2_num = -NN2 * (alpha2 - alpha2**2/alpha1)
-    C2 = -NN2 * alpha2
+    if alpha1 > 1e10:
+        C2 = -NN2 * alpha2
+    else:
+        C2 = -NN2 * (alpha2 - alpha2**2/alpha1)
     # C2_num1 = M_PQL[0, 0, 1] * Basisnorm(alpha2, 2)
     M_000 = C0 / Basisnorm(alpha2, 0) * numpy.sqrt(4*numpy.pi)
     M_002 = C2 / Basisnorm(alpha2, 2)
@@ -479,7 +485,11 @@ def mergeCompensatingCharge(pmol, mol, alpha0, Rgrid, epsilon, Rb=None, Periodic
     print("\n--- Starting mergeCompensatingCharge ---")
     t0 = time.time()
     
-    pmolNuc = addSharpGTO2Atom(pmol)
+    # nucleus: Gaussian core charge with the compensation exponent alpha0[element]
+    # (the primitive is the square root of the density, hence alpha0/2); the
+    # short-range rest of -Z/r is added analytically in PAW.get_nuc
+    pmolNuc = addSharpGTO2Atom(pmol, {el: (alpha0[el] if isinstance(alpha0, dict) else alpha0)/2
+                                      for el in pmol._basis})
     assert(type(pmolNuc.basis) == dict)
     assert(pmolNuc.basis == modifyMolBasis(pmolNuc.basis))
     alpha, atoms, L, M = getAlphaAtomsL(pmolNuc._bas, pmolNuc._env)
@@ -697,7 +707,7 @@ def obtainLocalFnsNewer(pmol, mol, ctr_coeff, alpha0, epsilon=1.e-5, Rs=None, Pe
     t2 = time.time()
     print(f"  [Time] Atom loop (projectors & fitting): {t2 - t1:.4f}s")
 
-    VPQRSArr = obtainLocal2e(mol, pmol, Periodic)
+    VPQRSArr = obtainLocal2e(mol, pmol, Periodic, alpha0=alpha0)
 
     t3 = time.time()
     print(f"  [Time] obtainLocal2e: {t3 - t2:.4f}s")

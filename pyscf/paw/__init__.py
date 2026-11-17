@@ -319,6 +319,10 @@ class PAW(FFTDF):
         self.Periodic = Periodic
         self.augRadius = augRadius
         self.gdfNuc = gdfNuc
+        # gdfNuc=False: nuclear attraction from PAW, range-separated as in CP2K
+        # GAPW: the long-range part -Z erf(sqrt(a) r)/r, a Gaussian core charge
+        # with the compensation exponent a = alpha0[element], goes through PAW;
+        # the short-range erfc part is analytic. gdfNuc=True: PySCF's GDF nuclear.
         self.with_multigrid = with_multigrid
         self.use_merged_multigrid = use_merged_multigrid
         self.alpha0_lowmem = alpha0_lowmem
@@ -420,7 +424,7 @@ class PAW(FFTDF):
         self.gcell = gmol
         self.ctr_coeff = ctr_coeff
         self.alpha0 = alpha0
-        
+
         logger.info(self, "alpha0      : %s", str(alpha0))
         logger.info(self, "Rb          : %10.2f", numpy.max(Rs))
         logger.info(self, "Nelection   : %10d", nelec)
@@ -440,6 +444,11 @@ class PAW(FFTDF):
         else:
             nuc = PAWutils.getnuc_PAW(cell, self.mesh, self.aoOnR_tilde, self.PAWdata,
                                       self.PAWNucdata, self.mg_ni, self.Periodic, self.with_multigrid)
+            if self.use_new_comp_charge: # (legacy path keeps the point nucleus)
+                # PAW gave the long-range erf part; add the short-range erfc part
+                omega = [numpy.sqrt(self.alpha0[cell._atom[i][0]]) for i in range(cell.natm)]
+                nuc = nuc + PAWutils.getNucShortRange(cell, omega,
+                                                      kpts.reshape(-1, 3))
         if is_single_kpt:
             nuc = nuc[0]
         return nuc

@@ -72,11 +72,14 @@ def prepareMolForPAW(mol, auto_box=False):
 
     return pgto.M(atom = atomPos, basis = mol.basis, a = k, ke_cutoff = mol.ke_cutoff, unit='A', max_memory=mol.max_memory)
 
-def addSharpGTO2Atom(mol):
+def addSharpGTO2Atom(mol, exponent=1e12):
+    '''Prepend an s primitive representing the nuclear charge (its square is the
+    unit-charge nuclear density). exponent=1e12 is effectively a point nucleus;
+    exponent=a/2 gives a Gaussian core charge of exponent a. exponent may be a
+    dict {element label: exponent}.'''
     mol = mol.copy()
     # 2. Define the new s-type Gaussian primitive to add
     # Here, we'll add a single s-type primitive with an exponent and a coefficient.
-    new_s_gaussian = [0, [1e12, 1.0]]  # Angular momentum = 0, exponent = 1e12, coefficient = 1.0
 
     # 3. Create a new basis set dictionary
     custom_basis = {}
@@ -84,7 +87,8 @@ def addSharpGTO2Atom(mol):
     # Iterate through each atom in the molecule and modify its basis
     for atm_symbol, basis_def in mol._basis.items():
         # Make a copy of the current basis definition for the atom
-        modified_basis_def = [new_s_gaussian]
+        exp_el = exponent[atm_symbol] if isinstance(exponent, dict) else exponent
+        modified_basis_def = [[0, [exp_el, 1.0]]]  # s primitive, coefficient 1
         
         # Add the new s-type Gaussian to the list of basis functions
         modified_basis_def.extend(list(basis_def))
