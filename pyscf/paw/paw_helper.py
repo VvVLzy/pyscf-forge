@@ -434,28 +434,47 @@ def makeAugmentationSphere_Fast(Rgrid, mol, L, alpha0, Rb=None, epsilon=1.e-5, P
     '''
     O(N log Ng) version of makeAugmentationSphere using a cKDTree
     for fast spatial queries, replacing the O(N*Ng) distance broadcasting.
+
+    Periodic: works for any (also non-orthogonal) lattice. cKDTree's periodic
+    boxsize only supports orthogonal boxes, so the tree is built without PBC and
+    every lattice image of the atom whose sphere can reach the cell is queried;
+    a grid point within maxR of several images is counted once (minimum image).
+    Rgrid must lie inside the cell (get_uniform_grids(wrap_around=False)).
     '''
-    # Build the KDTree - O(Ng log Ng)
-    # boxsize for periodic boundary conditions in cKDTree
-    lattice = mol.lattice_vectors()
-    boxsize = lattice.diagonal() if Periodic else None
-    
-    tree = scipy.spatial.cKDTree(Rgrid, boxsize=boxsize)
-    
+    tree = scipy.spatial.cKDTree(Rgrid)
+
+    if Periodic:
+        lattice = mol.lattice_vectors()
+        lattice_inv = numpy.linalg.inv(lattice)
+        # fractional half-extent of a sphere of radius 1 along each axis
+        frac_extent = numpy.linalg.norm(lattice_inv, axis=0)
+
     gridIdx = []
     Rs = []
     L_max = L.max()
-    
+
     for atomI in range(mol._atm.shape[0]):
         elem = mol._atom[atomI][0]
         alpha0_val = alpha0[elem] if isinstance(alpha0, dict) else alpha0
         maxR = Rb if Rb is not None else get_gaussian_radius(alpha0_val, L_max, epsilon)
         atom_pos = mol.atom_coord(atomI)
-        
-        # Query points within radius - O(log Ng) per atom
-        allIdx = tree.query_ball_point(atom_pos, maxR)
-        
-        gridIdx.append(numpy.array(allIdx, dtype=int))
+
+        if Periodic:
+            frac = atom_pos @ lattice_inv
+            ext = maxR * frac_extent
+            # images frac + n whose sphere overlaps the cell [0, 1)^3
+            ranges = [range(int(numpy.floor(-frac[i] - ext[i])),
+                            int(numpy.ceil(1 - frac[i] + ext[i])) + 1) for i in range(3)]
+            images = numpy.array([(nx, ny, nz) for nx in ranges[0]
+                                  for ny in ranges[1] for nz in ranges[2]], dtype=float)
+            centers = atom_pos + images @ lattice
+            hits = tree.query_ball_point(centers, maxR)
+            allIdx = numpy.unique(numpy.concatenate(
+                [numpy.asarray(h, dtype=int) for h in hits]))
+        else:
+            allIdx = numpy.array(tree.query_ball_point(atom_pos, maxR), dtype=int)
+
+        gridIdx.append(allIdx)
         Rs.append(maxR)
 
     return gridIdx, [None]*len(gridIdx), [None]*len(gridIdx), Rs
